@@ -52,7 +52,7 @@ Six capabilities, deliberately minimal so the OAuth/OIDC topology is the focus:
 - Product complexity is **low** (6 FRs, ~10 UI components, single role, desktop only).
 - Architectural complexity is **medium** — five containerized services in disciplined cooperation, OAuth2/OIDC with no shortcuts, scope-aware authorization, and an E2E bar that includes the real auth flow.
 - Primary domain: full-stack web + API backend with strong AuthN/AuthZ emphasis (`web_app` + `api_backend`).
-- Estimated architectural components: **5 services** (SPA, BFF, Resource Server, Authorization Server, BFF database) + the **archetype-provided observability stack** (OTEL Collector, Jaeger, Prometheus, Grafana) + **1 orchestration layer** (`docker-compose`) + **1 E2E test harness**.
+- Estimated architectural components: **5 services** (SPA, BFF, Resource Server, Authorization Server, BFF database) + **1 orchestration layer** (`docker-compose`) + **1 E2E test harness**.
 
 ### Technical Constraints & Dependencies
 
@@ -76,8 +76,7 @@ Both the BFF and the Resource Server MUST be built from this archetype. This pre
 - **Lint / format / types:** Ruff + Astral's `ty`.
 - **Tests:** pytest (async), coverage target >90%.
 - **Container:** multi-stage `python:3.14-slim`.
-- **Observability:** OpenTelemetry tracing + Prometheus metrics; compose ships OTEL Collector, Jaeger, Prometheus, Grafana.
-- **API versioning:** URL-prefix (`/v1/`, `/v2/`); infra routes (`/health`, `/metrics`, `/docs`, `/redoc`) unversioned.
+- **API versioning:** URL-prefix (`/v1/`, `/v2/`); infra routes (`/health`, `/docs`, `/redoc`) unversioned.
 - **Error contract:** enum `ErrorCode` → JSON `{errorCode, message, detail}`.
 - **Auth scaffolding:** pluggable; ships `none` + `entra` (bearer + JWKS + `RoleMappingProvider`); FastAPI deps `require_auth`, `require_role`.
 - **Logging:** AOP-based `log_io` applied at module import.
@@ -111,12 +110,11 @@ Both the BFF and the Resource Server MUST be built from this archetype. This pre
 4. **Scope enforcement** — Resource-Server middleware maps endpoints to required scopes; the archetype's `RoleMappingProvider` is the natural extension point.
 5. **CSRF posture** — state-changing SPA→BFF endpoints are cookie-authenticated; CSRF protection required (double-submit, origin checks, or `SameSite=Lax/Strict` with care).
 6. **SPA security** — CSP, output escaping, dependency hygiene, no token-handling code paths.
-7. **Container orchestration** — single `docker-compose.yml` merging the archetype's observability stack with Keycloak, SPA, BFF, RS, and the BFF DB; health-check-gated dependency ordering; dev/test compose profiles; secrets not committed.
+7. **Container orchestration** — single `docker-compose.yml` orchestrating Keycloak, SPA, BFF, RS, and the BFF DB; health-check-gated dependency ordering; dev/test compose profiles; secrets not committed.
 8. **Realm-as-code** — version-controlled Keycloak realm JSON imported at startup; no manual post-`up` configuration.
 9. **E2E test harness** — drives the real OAuth round-trip including Keycloak login.
 10. **Honest error mapping** — RS-downtime → BFF 503 (`ErrorCode.resource_server_unavailable`) → SPA-rendered named failure; precondition (no reading speed) → 412 (`ErrorCode.reading_speed_unset`); session-expiry → 401.
 11. **Identity propagation** — `sub` claim is the only user identifier crossing service boundaries; both BFF and RS key their data on it.
-12. **Distributed tracing & metrics** — OTEL trace context propagated SPA → BFF → RS so the OAuth round-trip and the scoped RS call are observable in Jaeger; Prometheus exposes per-service metrics with HTTP labels.
 
 ## Starter Template Evaluation
 
@@ -359,7 +357,7 @@ npm install -D tailwindcss @tailwindcss/postcss postcss
 
 **C1. Path layout**
 
-- **Non-versioned** (mechanics, not domain): `/auth/login`, `/auth/callback`, `/auth/logout`, `/api/me`, `/health`, `/metrics`, `/docs`, `/redoc`.
+- **Non-versioned** (mechanics, not domain): `/auth/login`, `/auth/callback`, `/auth/logout`, `/api/me`, `/health`, `/docs`, `/redoc`.
 - **Versioned** (domain APIs, per archetype): `/v1/books`, `/v1/books/:id`, `/v1/books/:id/estimate` on BFF; `/v1/reading-speed`, `/v1/estimate` on RS.
 
 **C2. BFF endpoints**
@@ -473,7 +471,6 @@ class ErrorCode(str, Enum):
 │   └── realm-bmad-books.json           # version-controlled realm
 ├── e2e/                                # Playwright project (separate package)
 ├── compose/
-│   ├── observability.yml               # OTEL Collector, Jaeger, Prom, Grafana
 │   ├── infra.yml                       # Keycloak
 │   └── app.yml                         # BFF, RS, SPA (prod build only)
 ├── tools/
@@ -483,10 +480,10 @@ class ErrorCode(str, Enum):
 └── README.md
 ```
 
-**I2. Compose composition** — Top-level `docker-compose.yml` uses Compose's `include:` directive (Compose v2.20+) to pull in the three sub-files. Profiles:
+**I2. Compose composition** — Top-level `docker-compose.yml` uses Compose's `include:` directive (Compose v2.20+) to pull in the two sub-files. Profiles:
 
-- `default` — full stack (Keycloak + BFF + RS + SPA + observability).
-- `dev` — Keycloak + BFF + RS + observability; SPA runs on host via `ng serve`.
+- `default` — full stack (Keycloak + BFF + RS + SPA).
+- `dev` — Keycloak + BFF + RS; SPA runs on host via `ng serve`.
 - `e2e` — `default` plus a Playwright runner container that depends on all healthchecks.
 
 **I3. Keycloak realm-as-code** — `keycloak/realm-bmad-books.json`:
@@ -505,7 +502,7 @@ class ErrorCode(str, Enum):
 **I5. Env vars** — Single `.env.example` at repo root documenting all required vars; per-service `.env` files gitignored; compose `env_file:` per service.
 
 Required vars (illustrative):
-`KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `BFF_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/bff.db`), `RS_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/rs.db`), `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`, `OTEL_EXPORT_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`.
+`KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `BFF_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/bff.db`), `RS_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/rs.db`), `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`.
 
 **Persistence:** each backend service mounts a named Docker volume at `/data` (e.g., `bff_data`, `rs_data`), and its SQLite file lives there. The volumes survive container recreation but are removed on `docker compose down -v`.
 
@@ -559,7 +556,7 @@ These rules exist to prevent AI agents working in parallel from making divergent
 - Resource paths: `kebab-case`, plural for collections — `/v1/books`, `/v1/reading-speed` (singular because it's a singleton per user, not a collection), `/v1/estimate` (action endpoint).
 - Path parameters: `{id}` (FastAPI brace syntax); type-annotated in the handler signature.
 - Query parameters: `snake_case` — `return_to`, `state`, `code`.
-- Headers (custom): `X-CSRF-Token`, `X-Request-Id` (the latter set by OTEL middleware, not handcrafted).
+- Headers (custom): `X-CSRF-Token`, `X-Request-Id` (the latter set by a simple UUID middleware in the request pipeline; used for log correlation).
 - JSON field names in **both directions: `snake_case`**. The BFF does not transform field names for the SPA. The SPA's TypeScript models also use `snake_case` field names to keep wire and model identical. *(This is the deliberate boring choice — no case conversion layer.)*
 
 **Python code (backend services):**
@@ -604,9 +601,8 @@ services/<svc>/
 │   ├── auth/               # auth plugins (`keycloak_cookie_session.py` on BFF; `oidc_bearer.py` on RS)
 │   ├── core/               # config (pydantic-settings), DI, exceptions
 │   ├── aop/                # logging decorator wiring
-│   ├── observability/      # OTEL + Prometheus setup
 │   └── db/                 # SQLModel models, session helpers, Alembic env
-├── tests/                  # mirrors src/<svc>/ structure: api/, services/, auth/, core/, aop/, observability/
+├── tests/                  # mirrors src/<svc>/ structure: api/, services/, auth/, core/, aop/
 ├── alembic/                # migrations
 ├── pyproject.toml
 ├── uv.lock
@@ -759,7 +755,6 @@ spa/src/app/
 
 - BFF → RS calls go through a single client class `ResourceServerClient` (in `services/`) that:
   - Adds `Authorization: Bearer <access_token>` from the current session,
-  - Propagates OTEL trace context (handled by the OTEL httpx instrumentor),
   - Catches httpx connection errors / timeouts and raises `ResourceServerUnavailableError`,
   - Catches RS-401 and performs the single refresh-and-replay cycle.
 - Components/handlers never call the RS directly; they always go through this client.
@@ -790,7 +785,7 @@ spa/src/app/
 - **WARN:** Expected-but-noteworthy paths — 401-from-RS triggering refresh, JWKS key rotation re-fetch, settle/retry interactions.
 - **ERROR:** Unhandled exceptions, RS unreachable surfaced as 503, configuration failures at startup.
 - **No PII in any log.** `sub` is acceptable (it's an opaque UUID-like identifier). Never log tokens, access codes, refresh tokens, JWT bodies, full session ids — log first 8 chars + ellipsis when correlation is needed.
-- All logs structured (JSON output via the archetype's logging config), with OTEL trace_id / span_id injected so logs cross-link to traces.
+- All logs structured (JSON output via the archetype's logging config). The per-request `X-Request-Id` (set by the request-id middleware) is included in each log line so requests can be correlated across services.
 
 **Testing patterns:**
 
@@ -877,7 +872,6 @@ bmad-books/                                      # repo root (monorepo)
 ├── CLAUDE.md                                    # project conventions (already in repo)
 │
 ├── compose/
-│   ├── observability.yml                        # OTEL Collector, Jaeger, Prometheus, Grafana
 │   ├── infra.yml                                # Keycloak
 │   └── app.yml                                  # BFF + Resource Server + SPA (prod build only)
 │
@@ -927,10 +921,6 @@ bmad-books/                                      # repo root (monorepo)
 │   │   │   ├── aop/
 │   │   │   │   ├── __init__.py
 │   │   │   │   └── logging.py                   # apply_logging + log_io decorator
-│   │   │   ├── observability/
-│   │   │   │   ├── __init__.py
-│   │   │   │   ├── tracing.py                   # OTEL setup + httpx instrumentor
-│   │   │   │   └── metrics.py                   # Prometheus + custom counters
 │   │   │   ├── db/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── session_factory.py           # async engine + session (sqlite+aiosqlite)
@@ -997,10 +987,6 @@ bmad-books/                                      # repo root (monorepo)
 │       │   ├── aop/
 │       │   │   ├── __init__.py
 │       │   │   └── logging.py
-│       │   ├── observability/
-│       │   │   ├── __init__.py
-│       │   │   ├── tracing.py
-│       │   │   └── metrics.py
 │       │   └── db/
 │       │       ├── __init__.py
 │       │       ├── session_factory.py           # async engine + session (sqlite+aiosqlite)
@@ -1209,7 +1195,6 @@ bmad-books/                                      # repo root (monorepo)
 | Error mapping | `services/{bff,resource-server}/src/.../core/error_handlers.py`; `spa/src/app/shared/errors/error-service.ts` |
 | Container orchestration | `docker-compose.yml`, `compose/*.yml` |
 | Realm-as-code | `keycloak/realm-bmad-books.json` |
-| Tracing + metrics | `services/{bff,resource-server}/src/.../observability/` |
 | E2E harness | `e2e/` |
 
 ### Integration Points
@@ -1220,8 +1205,6 @@ bmad-books/                                      # repo root (monorepo)
 2. **BFF → Keycloak (HTTP, OAuth flows).** `/authorize` (redirect), `/token` (POST), `/end_session` (POST), `/revocation` (POST). PKCE on every authorize.
 3. **BFF → Resource Server (HTTP, bearer JWT).** Forwards the user's access token. Single 401-refresh-replay cycle. Honest timeouts: 5s connect / 10s read.
 4. **Resource Server → Keycloak (HTTP, JWKS).** Cached 24h, re-fetched on `kid` miss.
-5. **All services → OTEL Collector (gRPC OTLP).** Trace context propagated via W3C headers across all HTTP boundaries above.
-6. **Prometheus → services (HTTP scrape).** `/metrics` endpoint on each service.
 
 **External integrations:**
 
@@ -1277,7 +1260,7 @@ bmad-books/                                      # repo root (monorepo)
 
 **Source:**
 
-- Backend: feature-by-layer (`api/`, `services/`, `auth/`, `core/`, `db/`, `aop/`, `observability/`) per archetype.
+- Backend: feature-by-layer (`api/`, `services/`, `auth/`, `core/`, `db/`, `aop/`) per archetype.
 - Frontend: feature-folder (`books/`, `settings/`, `login/`, `auth/`, `shared/`) per Angular 2025 style guide.
 
 **Tests:**
@@ -1289,7 +1272,7 @@ bmad-books/                                      # repo root (monorepo)
 **Assets:**
 
 - SPA static assets: `spa/public/`. In production they end up in `spa/dist/spa/browser/` and are copied into the BFF image under `src/bff/static/`.
-- No backend static assets (`/health`, `/metrics`, `/docs`, `/redoc` are dynamic).
+- No backend static assets (`/health`, `/docs`, `/redoc` are dynamic).
 
 ### Development Workflow Integration
 
@@ -1303,7 +1286,7 @@ docker compose --profile dev up
 cd spa && npm ci && ng serve  # :4200, proxies /auth, /api, /v1 → BFF :8000
 ```
 
-`docker compose --profile dev up` brings up Keycloak + BFF + RS + OTEL/Jaeger/Prometheus/Grafana; the SPA is excluded so `ng serve` provides HMR. Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation.
+`docker compose --profile dev up` brings up Keycloak + BFF + RS; the SPA is excluded so `ng serve` provides HMR. Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation.
 
 **Full stack (production-shaped):**
 
@@ -1343,7 +1326,6 @@ Every container exposes a health probe. Compose `depends_on: { condition: servic
 - **BFF** — `GET /health` returns 200 once the DB is reachable, Alembic migrations are at head, and the OIDC discovery doc (`OIDC_ISSUER_URL/.well-known/openid-configuration`) is fetchable. Depends on Keycloak (because discovery is fetched at startup).
 - **Resource Server** — `GET /health` returns 200 once the DB is reachable, Alembic migrations are at head, and the JWKS endpoint is fetchable. Depends on Keycloak.
 - **SPA prod container** — n/a (the SPA is baked into the BFF image; no separate container in prod). In the `e2e` profile the Playwright runner depends on BFF + RS + Keycloak healthchecks.
-- **OTEL / Jaeger / Prometheus / Grafana** — these are observability sidecars; nothing app-side depends on them. They depend on no one.
 
 **Migrations on startup:**
 
@@ -1362,7 +1344,7 @@ This makes the container's "ready" state coincide with "schema at head," which t
 
 The BFF mounts routes in this order — first match wins:
 
-1. `/health`, `/metrics`, `/docs`, `/redoc`
+1. `/health`, `/docs`, `/redoc`
 2. `/auth/*`, `/api/*`
 3. `/v1/*`
 4. Static SPA bundle at `/` — falls back to `index.html` for any unmatched path that does not match (1)–(3) so HTML5 history routing works on direct URL visits (e.g., reloading `/settings`).
@@ -1409,7 +1391,7 @@ The fallback is implemented as a catch-all route that serves `index.html` only f
 
 **Structure alignment:**
 
-- Repository layout maps cleanly to the boundaries: backend services are independent deployables with no Python cross-imports; SPA features are isolated folders that import only from `shared/`; observability lives in its own compose include.
+- Repository layout maps cleanly to the boundaries: backend services are independent deployables with no Python cross-imports; SPA features are isolated folders that import only from `shared/`.
 - Every FR has a concrete file path in §"Requirements to Structure Mapping."
 - The added BFF `/v1/reading-speed` proxy endpoints (post-validation fix) close the structure-vs-decisions inconsistency that existed in the draft.
 
@@ -1527,7 +1509,7 @@ All 16 checklist items are `[x]`; no critical or important gaps remain open. The
 
 - The defining architectural interaction (J3 estimate) is fully traced end-to-end at every layer — diagram, sequence flow, file paths, error path.
 - Service-ownership boundaries are unambiguous: BFF owns books + sessions; RS owns reading-speed; Keycloak owns users + tokens. No service trespasses.
-- The backend archetype eliminates an entire category of bike-shedding (lint config, error envelope shape, observability wiring) by mandate.
+- The backend archetype eliminates an entire category of bike-shedding (lint config, error envelope shape, pydantic-settings config, AOP logging wiring) by mandate.
 - Honest-failure behavior (J6) is enforced by both a coded rule (`ResourceServerClient` raises `ResourceServerUnavailableError`; SPA renders the named state) and a Playwright spec that asserts it by killing the RS container.
 
 **Areas for Future Enhancement:**

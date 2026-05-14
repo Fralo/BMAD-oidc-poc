@@ -127,4 +127,5 @@ These are the journeys the system must support end-to-end and that the E2E test 
 - Bulk import or export of books.
 - Authorization server downtime handling beyond a graceful error to the user.
 - Token revocation propagation beyond standard refresh-token invalidation on logout.
+- Observability tooling: no distributed-tracing collector, metrics aggregator, or dashboards. The project does not deploy OTEL Collector, Jaeger, Prometheus, or Grafana. Structured logging is the only operational-visibility surface.
 - Any feature whose implementation would dilute the architectural focus of the project.
