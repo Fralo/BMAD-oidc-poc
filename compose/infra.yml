@@ -1,6 +1,58 @@
 # compose/infra.yml
 # Included from the top-level docker-compose.yml via the `include:` directive.
-# This file owns infrastructure-tier services. Story 1.2 lands Keycloak here.
-# Keeping the services map empty for Story 1.1 makes `docker compose config`
-# pass cleanly while reserving the file as the known home for infra services.
-services: {}
+# This file owns infrastructure-tier services.
+#
+# Story 1.2 introduces Keycloak with its realm-as-code baked in. The service is
+# attached to all three profiles (default, dev, e2e) — `dev` only excludes the
+# SPA per AR26, not the auth server.
+services:
+  keycloak:
+    build:
+      context: ../keycloak
+    container_name: keycloak
+    env_file:
+      - ../.env
+    environment:
+      # Public-facing hostname (browser-side OIDC redirects + admin console).
+      # Internal back-channel calls from the BFF/RS still resolve `keycloak:8080`
+      # via Docker DNS; the iss-vs-redirect reconciliation lands in Stories 1.4/1.5.
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      # Exposes /health, /health/ready, /health/live on management port 9000.
+      KC_HEALTH_ENABLED: "true"
+      # AR29 mandates `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` as the
+      # canonical env-var names in this project's `.env`. Keycloak 26 instead
+      # reads `KC_BOOTSTRAP_ADMIN_USERNAME` / `KC_BOOTSTRAP_ADMIN_PASSWORD` for
+      # the initial admin bootstrap (the older `KEYCLOAK_ADMIN` was renamed in
+      # 26.0). We bridge the two here so the AR29 contract is preserved.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    ports:
+      # 8080: OIDC + admin console (browser-facing).
+      # 9000: management/health endpoint (enabled by KC_HEALTH_ENABLED=true).
+      #       Published so the literal AC #9 bullet 2 host-side check
+      #       `curl -fsS http://localhost:9000/health/ready` is executable from
+      #       the dev's machine. No auth on /health/*; acceptable for a
+      #       local-only educational demo over http://localhost.
+      - "8080:8080"
+      - "9000:9000"
+    healthcheck:
+      # The official Keycloak 26.0 image has no curl/wget and no package manager,
+      # so the healthcheck uses bash's /dev/tcp virtual device against port 9000
+      # (management endpoint, enabled by KC_HEALTH_ENABLED=true above) and greps
+      # the response status line for the literal "HTTP/1.1 200" prefix — anchoring
+      # the match avoids false positives from "200" appearing in headers (e.g.
+      # Content-Length: 200) or in JSON response bodies. bash, grep, and printf
+      # are all present in the base image.
+      test:
+        - "CMD"
+        - "bash"
+        - "-c"
+        - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '^HTTP/1.1 200' <&3"
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    profiles: [default, dev, e2e]
+    restart: unless-stopped

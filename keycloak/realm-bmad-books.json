@@ -1,0 +1,117 @@
+{
+  "realm": "bmad-books",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+
+  "clientScopes": [
+    {
+      "name": "reading-speed:read",
+      "description": "Read the user's reading-speed value and compute estimates",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    },
+    {
+      "name": "reading-speed:write",
+      "description": "Modify the user's reading-speed value",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "bmad-books-bff",
+      "name": "BMAD_books Backend-for-Frontend",
+      "description": "Confidential OAuth client used by the BFF. Authorization Code + PKCE only; no password grant.",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${BFF_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8000/*"
+      },
+      "redirectUris": [
+        "http://localhost:8000/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8000"
+      ],
+      "protocolMappers": [
+        {
+          "name": "aud-resource-server",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "bmad-books-resource-server",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ],
+      "optionalClientScopes": [
+        "reading-speed:read",
+        "reading-speed:write",
+        "offline_access"
+      ]
+    }
+  ],
+
+  "users": [
+    {
+      "username": "testuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "testuser@example.test",
+      "firstName": "Test",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "testpassword",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "freshuser",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "freshuser@example.test",
+      "firstName": "Fresh",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "freshpassword",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 # generated: 2026-05-14
-# last_updated: 2026-05-14 (CR closed)
+# last_updated: 2026-05-14 (story 1.2 done)
 # project: BMAD_books
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-14 (CR closed)
+last_updated: 2026-05-14 (story 1.2 done)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -45,7 +45,7 @@ development_status:
   # Epic 1: Foundational Login & Identity (J1, J5)
   epic-1: in-progress
   1-1-repo-scaffold-compose-skeleton: done
-  1-2-keycloak-realm-as-code-compose-service: backlog
+  1-2-keycloak-realm-as-code-compose-service: done
   1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates: backlog
   1-4-bff-session-and-auth-state-schema-alembic-migration: backlog
   1-5-bff-cookie-session-oidc-plugin-pkce-synthetic-idp-test-harness: backlog
