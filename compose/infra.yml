@@ -1,0 +1,6 @@
+# compose/infra.yml
+# Included from the top-level docker-compose.yml via the `include:` directive.
+# This file owns infrastructure-tier services. Story 1.2 lands Keycloak here.
+# Keeping the services map empty for Story 1.1 makes `docker compose config`
+# pass cleanly while reserving the file as the known home for infra services.
+services: {}

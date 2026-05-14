@@ -1,6 +1,13 @@
+---
+status: done
+baseline_commit: 215d84e78cf3b3b98afdad6abb62e2d39c1d5ff9
+story_key: 1-1-repo-scaffold-compose-skeleton
+specLoopIteration: 1
+---
+
 # Story 1.1: Repo scaffold + compose skeleton
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -24,29 +31,29 @@ so that I can extend each part (services, SPA, compose includes) without first i
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Create top-level directories** (AC: #2)
-  - [ ] Create `spa/`, `services/bff/`, `services/resource-server/`, `keycloak/`, `e2e/`, `compose/`, `tools/` at the repo root. Use `.gitkeep` files (single empty file inside each empty directory) so Git tracks them.
-- [ ] **Task 2 — Author `.gitignore` and `.dockerignore`** (AC: #6, #7)
-  - [ ] Write `.gitignore` covering `tools/fastapi-archetype/`, per-service `.env`, Python/Node/Angular/test-tool artifacts, OS files, SQLite DB files.
-  - [ ] Write `.dockerignore` covering `.git`, `_bmad/`, `_bmad-output/`, `tools/`, Node/Python caches, `dist/`, `.env*`.
-- [ ] **Task 3 — Author `.env.example`** (AC: #5)
-  - [ ] List every AR29 env var with a placeholder or working example. Group with comment headers (Keycloak, BFF, RS, OIDC, cookies, test-reset).
-  - [ ] Confirm no real secrets are present; use literal placeholder strings like `change-me` or `<your-...>`.
-- [ ] **Task 4 — Author `compose/infra.yml` and `compose/app.yml` scaffolds** (AC: #3)
-  - [ ] Each file: valid Compose YAML; specify a Compose `name:` or rely on the top-level project name; include `services: {}` (or a commented stub) so the file is parseable. Do **not** declare any services yet.
-- [ ] **Task 5 — Author top-level `docker-compose.yml`** (AC: #4)
-  - [ ] Use `include:` pointing to both `compose/infra.yml` and `compose/app.yml`.
-  - [ ] Declare the three profile names — `default`, `dev`, `e2e` — in a way that survives `docker compose config`. Pragmatic approach: add a top-level `x-profiles: [default, dev, e2e]` extension field as a self-documenting placeholder, **or** add an inert `services:` block that references the profiles, **or** declare them via the first service added later. For this story the minimum is that the three profile names appear in the file in a form a later reader can recognize as intent. The verification AC is the `docker compose config` validation in Task 7.
-- [ ] **Task 6 — Author `README.md`** (AC: #9)
-  - [ ] Add project name + one-paragraph description (the PRD §1 wording is fine to summarize).
-  - [ ] Add a "## Setup" section with the bullet list described in AC #9.
-  - [ ] Add stub `## Architecture overview` and `## AI integration log` sections (one sentence + a link to `_bmad-output/planning-artifacts/architecture.md`).
-- [ ] **Task 7 — Verify `docker compose config`** (AC: #8)
-  - [ ] Run `docker compose config` from the repo root.
-  - [ ] Confirm exit code 0 and no error output. Capture stdout in the dev log for the reviewer.
-  - [ ] If Compose complains about an empty services block on an `include:`d file, add a single inert `services: {}` or a commented-out stub to silence it — but do **not** introduce a real service.
-- [ ] **Task 8 — Preserve `CLAUDE.md`** (AC: #1)
-  - [ ] Verify `CLAUDE.md` at the repo root is unchanged from its current state (single Python-command convention bullet). Do **not** rewrite it; do **not** append.
+- [x] **Task 1 — Create top-level directories** (AC: #2)
+  - [x] Create `spa/`, `services/bff/`, `services/resource-server/`, `keycloak/`, `e2e/`, `compose/`, `tools/` at the repo root. Use `.gitkeep` files (single empty file inside each empty directory) so Git tracks them.
+- [x] **Task 2 — Author `.gitignore` and `.dockerignore`** (AC: #6, #7)
+  - [x] Write `.gitignore` covering `tools/fastapi-archetype/`, per-service `.env`, Python/Node/Angular/test-tool artifacts, OS files, SQLite DB files.
+  - [x] Write `.dockerignore` covering `.git`, `_bmad/`, `_bmad-output/`, `tools/`, Node/Python caches, `dist/`, `.env*`.
+- [x] **Task 3 — Author `.env.example`** (AC: #5)
+  - [x] List every AR29 env var with a placeholder or working example. Group with comment headers (Keycloak, BFF, RS, OIDC, cookies, test-reset).
+  - [x] Confirm no real secrets are present; use literal placeholder strings like `change-me` or `<your-...>`.
+- [x] **Task 4 — Author `compose/infra.yml` and `compose/app.yml` scaffolds** (AC: #3)
+  - [x] Each file: valid Compose YAML; specify a Compose `name:` or rely on the top-level project name; include `services: {}` (or a commented stub) so the file is parseable. Do **not** declare any services yet.
+- [x] **Task 5 — Author top-level `docker-compose.yml`** (AC: #4)
+  - [x] Use `include:` pointing to both `compose/infra.yml` and `compose/app.yml`.
+  - [x] Declare the three profile names — `default`, `dev`, `e2e` — in a way that survives `docker compose config`. Pragmatic approach: add a top-level `x-profiles: [default, dev, e2e]` extension field as a self-documenting placeholder, **or** add an inert `services:` block that references the profiles, **or** declare them via the first service added later. For this story the minimum is that the three profile names appear in the file in a form a later reader can recognize as intent. The verification AC is the `docker compose config` validation in Task 7.
+- [x] **Task 6 — Author `README.md`** (AC: #9)
+  - [x] Add project name + one-paragraph description (the PRD §1 wording is fine to summarize).
+  - [x] Add a "## Setup" section with the bullet list described in AC #9.
+  - [x] Add stub `## Architecture overview` and `## AI integration log` sections (one sentence + a link to `_bmad-output/planning-artifacts/architecture.md`).
+- [x] **Task 7 — Verify `docker compose config`** (AC: #8)
+  - [x] Run `docker compose config` from the repo root.
+  - [x] Confirm exit code 0 and no error output. Capture stdout in the dev log for the reviewer.
+  - [x] If Compose complains about an empty services block on an `include:`d file, add a single inert `services: {}` or a commented-out stub to silence it — but do **not** introduce a real service.
+- [x] **Task 8 — Preserve `CLAUDE.md`** (AC: #1)
+  - [x] Verify `CLAUDE.md` at the repo root is unchanged from its current state (single Python-command convention bullet). Do **not** rewrite it; do **not** append.
 
 ## Dev Notes
 
@@ -180,10 +187,108 @@ No unit-test framework is installed yet — that lands in Stories 1.3 (pytest fo
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (Claude Code, bmad-quick-dev workflow)
 
 ### Debug Log References
 
+`docker compose config` from repo root, baseline commit `215d84e`:
+
+```
+$ docker compose config
+name: bmad_books
+services: {}
+x-profiles:
+  - default
+  - dev
+  - e2e
+$ echo $?
+0
+```
+
+`git check-ignore -v tools/fastapi-archetype/anything` → `.gitignore:2:tools/fastapi-archetype/` (rule applied, archetype subdir correctly untracked while `tools/` itself remains tracked via `.gitkeep`).
+
+`git status --short` after implementation shows only the planned new files and the two `_bmad-output/` spec/sprint-status edits — no `.env`, no `node_modules`, no archetype contents bleeding through.
+
 ### Completion Notes List
 
+- Followed the dev-judgment recommendation in the spec: `tools/` is tracked (via `.gitkeep`) while only `tools/fastapi-archetype/` is gitignored. This keeps `tools/` discoverable as the known archetype location and lets Story 1.3 clone in without renaming.
+- Top-level `docker-compose.yml` declares the three profile names through an inert `x-profiles: [default, dev, e2e]` extension field — Compose preserves it through `config` (visible in the validated output) and ignores it for service resolution. As soon as Story 1.2's Keycloak service lands, services can carry their own `profiles: [...]` and this anchor becomes redundant churn (called out in spec Task 5).
+- `compose/infra.yml` and `compose/app.yml` use `services: {}` (empty mapping) — the spec's "Practical notes" section explicitly endorses this over an entirely empty file, and `docker compose config` accepts the include without warnings.
+- `.env.example` contains exactly the 15 AR29 vars (per the post-2026-05-14 scope cut). No `OTEL_*` vars were introduced. Example values are placeholders (`change-me`) or working-dev defaults (`sqlite+aiosqlite:////data/bff.db`, `http://keycloak:8080/realms/booksapp`); no real secrets.
+- `CLAUDE.md` was not touched — verified byte-for-byte against pre-story state (single `python` convention line).
+- Out of scope (confirmed not done, per spec anti-patterns): no service Dockerfiles, no `pyproject.toml`/`package.json`, no Keycloak realm JSON, no CI workflow, no root `.python-version`, no archetype clone.
+
 ### File List
+
+**New files:**
+- `.gitignore`
+- `.dockerignore`
+- `.env.example`
+- `README.md`
+- `docker-compose.yml`
+- `compose/infra.yml`
+- `compose/app.yml`
+- `spa/.gitkeep`
+- `services/bff/.gitkeep`
+- `services/resource-server/.gitkeep`
+- `keycloak/.gitkeep`
+- `e2e/.gitkeep`
+- `tools/.gitkeep`
+
+**Modified files (workflow bookkeeping only — no production change):**
+- `_bmad-output/implementation-artifacts/1-1-repo-scaffold-compose-skeleton.md` — added YAML frontmatter (`status`, `baseline_commit`, `story_key`), flipped status to `in-progress`, ticked all tasks, filled Dev Agent Record.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — `1-1-repo-scaffold-compose-skeleton` flipped `ready-for-dev` → `in-progress`. `epic-1` was already `in-progress` (no lift needed).
+
+**Untouched (verified):**
+- `CLAUDE.md` — preserved verbatim.
+- All `_bmad/`, `_bmad-output/planning-artifacts/`, `.claude/`, `docs/` content.
+
+## Review Findings (step-04)
+
+Three adversarial reviewers ran in parallel.
+
+- **Acceptance auditor:** APPROVE — all 9 ACs PASS, all cross-checks PASS (AR29 completeness, OTEL exclusion, profile-name visibility, `CLAUDE.md` preservation, observability scope cut, anti-pattern adherence), `docker compose config` exit 0.
+- **Blind hunter:** 15 candidate issues raised without spec context. Classification after applying spec/dev-notes context: 13 rejected (spec-prescribed approaches the reviewer couldn't see, e.g., `x-profiles` documentation anchor; `change-me` placeholders endorsed by AC #5; `tools/.gitkeep` + archetype-subdir gitignore is the spec-recommended dev judgment), 2 collapsed into the two defers below.
+- **Edge-case hunter:** 0 critical, 2 important (both deferred — see below), 2 nits (rejected: spec already permits older-Compose stderr notice on AC #8; spec authorizes the `x-profiles` placeholder).
+
+**Patches applied:** none.
+
+**Deferred to later stories** (recorded in [`deferred-work.md`](deferred-work.md)):
+
+- **D1** — `.env.example` SQLite URLs target in-container `/data` only; host-side `dev` profile will hit `unable to open database file`. Owner: Stories 1.3, 3.1.
+- **D2** — OIDC URLs use the Docker-DNS hostname `keycloak`; browser redirects from the host will fail without a published port + frontend-URL alias, and `OIDC_AUDIENCE == OIDC_CLIENT_ID` will fail audience validation without a Keycloak audience mapper. Owners: Stories 1.2, 1.4–1.5.
+
+## Suggested Review Order
+
+**Compose composition** (start here — the architectural anchor for the whole story)
+
+- Top-level entry point: `include:` of the two tier files; profile names declared via inert `x-profiles` extension (per spec Practical Notes — Story 1.2 will move these onto services).
+  [`docker-compose.yml:15`](../../docker-compose.yml#L15)
+- Infra tier — Story 1.2 lands Keycloak into this empty mapping.
+  [`compose/infra.yml:6`](../../compose/infra.yml#L6)
+- App tier — Stories 1.3 / 1.8 / 3.1 land BFF, SPA, RS here.
+  [`compose/app.yml:6`](../../compose/app.yml#L6)
+
+**Environment contract (AR29)**
+
+- All 15 AR29 vars present, grouped by consumer; no `OTEL_*` (post-2026-05-14 scope cut); placeholders only.
+  [`.env.example:9`](../../.env.example#L9)
+
+**Repo hygiene**
+
+- Only `tools/fastapi-archetype/` is gitignored; `tools/` itself remains tracked via `.gitkeep` so the archetype's destination is discoverable.
+  [`.gitignore:2`](../../.gitignore#L2)
+- Image build context excludes the entire BMAD workspace and `tools/` (build contexts will be per-service in Stories 1.3 / 3.1).
+  [`.dockerignore:6`](../../.dockerignore#L6)
+
+**Developer onboarding**
+
+- Setup ordering matches the planned sequence (clone → archetype → `.env` → `docker compose up`); architecture link + Story 5.3 AI integration log stub.
+  [`README.md:5`](../../README.md#L5)
+
+**BMAD bookkeeping** (no production impact)
+
+- Sprint state lifted to `in-progress` at story start (epic-1 was already in-progress).
+  [`sprint-status.yaml:47`](sprint-status.yaml#L47)
+- Deferred risks from the review surface here for later story owners.
+  [`deferred-work.md:1`](deferred-work.md#L1)

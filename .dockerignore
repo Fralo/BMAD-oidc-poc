@@ -1,0 +1,28 @@
+.git
+.gitignore
+.dockerignore
+
+# BMAD framework + planning artifacts — not needed in any image build context
+_bmad/
+_bmad-output/
+
+# Local tooling (cloned archetype lives here)
+tools/
+
+# Language artifacts
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/dist
+**/.pytest_cache
+**/.coverage
+**/.uv
+
+# Local environment files (never bake secrets into images)
+**/.env
+**/.env.local
+
+# Editor / OS
+**/.DS_Store
+**/.idea
+**/.vscode
