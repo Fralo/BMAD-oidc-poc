@@ -258,6 +258,20 @@ Three adversarial reviewers ran in parallel.
 - **D1** — `.env.example` SQLite URLs target in-container `/data` only; host-side `dev` profile will hit `unable to open database file`. Owner: Stories 1.3, 3.1.
 - **D2** — OIDC URLs use the Docker-DNS hostname `keycloak`; browser redirects from the host will fail without a published port + frontend-URL alias, and `OIDC_AUDIENCE == OIDC_CLIENT_ID` will fail audience validation without a Keycloak audience mapper. Owners: Stories 1.2, 1.4–1.5.
 
+### Second-pass code review (2026-05-14)
+
+Three adversarial reviewers ran again via `bmad-code-review`. **Acceptance Auditor:** APPROVE — all 9 ACs PASS. **Edge Case Hunter:** APPROVE — 0 critical; 3 forward-looking concerns surfaced (deferred). **Blind Hunter:** REQUEST_CHANGES — 9 candidate issues; 3 are duplicates of existing D1/D2; 6 are spec-prescribed approaches or cosmetic (see dismissals below).
+
+**Patches applied:** none. Story spec was met cleanly; no production-code change required.
+
+**New defers (appended to [`deferred-work.md`](deferred-work.md)):**
+
+- [x] [Review][Defer] D3 — `change-me` placeholder credentials accepted silently at runtime [.env.example:11,15,41] — deferred to Stories 1.2 / 1.4 (startup-time refusal in non-dev profiles).
+- [x] [Review][Defer] D4 — Per-service `.dockerignore` strategy is implicit (root context vs. service context unspecified) — deferred to Stories 1.3 / 3.1.
+- [x] [Review][Defer] D5 — `.gitignore` `**/.env` + only `!.env.example` whitelist silently blocks future per-service env templates (e.g., `services/bff/.env.dev`) — deferred to whichever later story introduces per-service env templates.
+
+**Dismissals (notable):** the inert `x-profiles` extension is spec-prescribed (Dev Notes §Practical Notes); the `change-me` literal in `.env.example` is endorsed by AC #5 (the runtime-acceptance angle is D3, separate); `.dockerignore` excluding itself is a no-op convention; minimum-Compose-version is not a current portability risk (Compose ≥ v2.20 is standard on supported developer environments by 2026-05-14).
+
 ## Suggested Review Order
 
 **Compose composition** (start here — the architectural anchor for the whole story)
