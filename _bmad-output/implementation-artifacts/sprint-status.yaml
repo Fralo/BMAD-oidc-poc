@@ -51,7 +51,7 @@ development_status:
   1-5-bff-cookie-session-oidc-plugin-pkce-synthetic-idp-test-harness: backlog
   1-6-bff-csrf-middleware-csp-header: backlog
   1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: backlog
-  1-8-spa-scaffold-tailwind-v4-design-tokens: backlog
+  1-8-spa-scaffold-tailwind-v4-design-tokens: done
   1-9-spa-authservice-interceptors-functional-guards: backlog
   1-10-spa-loginview-topchrome-route-table: backlog
   1-11-playwright-project-setup-fixtures-helpers: backlog
