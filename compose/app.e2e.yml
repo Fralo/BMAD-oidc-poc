@@ -1,0 +1,27 @@
+# compose/app.e2e.yml
+# Story 1.12 — `e2e` profile override for the BFF service.
+#
+# Applies the `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` env-var pair
+# that activates the `POST /v1/test/reset` route (mounted conditionally
+# by `bff.api.test_reset.register_test_reset_router`). The Playwright
+# `resetState(...)` fixture (Story 1.11) authenticates against the
+# endpoint via `Authorization: Bearer ${TEST_RESET_TOKEN}`.
+#
+# Usage (the `-f` form is required because compose's top-level
+# `include:` directive is unconditional — the `${TEST_RESET_TOKEN:?...}`
+# fail-fast must NOT fire on `default` / `dev` profile invocations):
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f compose/app.e2e.yml \
+#     --profile e2e up
+#
+# The `:?` form on TEST_RESET_TOKEN closes the Story-1.1 D3 concern
+# (the `change-me` placeholder accepted silently): if the operator
+# forgets to set `TEST_RESET_TOKEN` in their shell or repo-root .env,
+# compose refuses to start with a clear error.
+services:
+  bff:
+    environment:
+      ENABLE_TEST_RESET: "true"
+      TEST_RESET_TOKEN: "${TEST_RESET_TOKEN:?TEST_RESET_TOKEN is required when the e2e profile is up}"

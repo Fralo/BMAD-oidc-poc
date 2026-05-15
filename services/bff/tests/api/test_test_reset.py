@@ -1,0 +1,753 @@
+"""Route-level tests for POST /v1/test/reset (Story 1.12).
+
+Covers gating, bearer auth, truncation, CSRF exemption, OpenAPI exposure,
+and startup-log signaling for the 22 scenarios enumerated in AC10.
+
+The production module under test is `bff.api.test_reset`; this file is
+named `test_test_reset.py` (doubled `test_` prefix) so pytest discovers it
+without colliding with the module name.
+"""
+
+import logging
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel
+
+from bff.api.auth import router as auth_router
+from bff.api.health import router as health_router
+from bff.api.me import router as me_router
+from bff.api.test_reset import register_test_reset_router
+from bff.api.v1 import router as v1_router
+from bff.auth.csrf import CsrfMiddleware
+from bff.core.config import settings
+from bff.core.database import get_session
+from bff.core.errors import (
+    AppException,
+    app_exception_handler,
+    validation_exception_handler,
+)
+from bff.middleware.security_headers import SecurityHeadersMiddleware
+from bff.models import entities
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_TOKEN = "secret-xyz"
+_UNAUTHORIZED_BODY = {
+    "errorCode": "session_expired",
+    "message": "Session expired or not present",
+    "detail": None,
+}
+
+
+def _build_app(*, enable: bool, token: str) -> FastAPI:
+    """Build a fresh FastAPI app whose `enable_test_reset` / `test_reset_token`
+    values are evaluated AT REGISTRATION TIME (not at import time).
+
+    Mirrors the construction in `bff/main.py` but skips CORS (the test
+    suite doesn't exercise it from here) and crucially patches the global
+    `settings` instance BEFORE calling `register_test_reset_router` so the
+    gate evaluation sees the test-supplied values.
+
+    The CSRF middleware is wired in to exercise scenario #15 (exemption
+    must actually fire on a real app, not on a mocked one). The
+    SecurityHeadersMiddleware is wired in for parity.
+    """
+    # We deliberately mutate the global settings singleton — the helper's
+    # caller is expected to restore via `monkeypatch.setattr` (which we
+    # use throughout). Snapshot here only to keep call-site explicit.
+    settings.enable_test_reset = enable
+    settings.test_reset_token = token
+
+    app = FastAPI(title="bff-test", lifespan=None)
+    app.add_middleware(SecurityHeadersMiddleware)  # ty: ignore[invalid-argument-type]
+    app.add_middleware(CsrfMiddleware)  # ty: ignore[invalid-argument-type]
+    app.add_exception_handler(AppException, app_exception_handler)
+    app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.include_router(health_router)
+    app.include_router(me_router)
+    app.include_router(auth_router)
+    app.include_router(v1_router)
+    register_test_reset_router(app, settings)
+    return app
+
+
+class _AppContext:
+    """Bundles a fresh app, engine, sessionmaker, and a dependency-overriding
+    `client()` factory so each test can build its own world.
+    """
+
+    def __init__(self, app: FastAPI, engine, factory) -> None:
+        self.app = app
+        self.engine = engine
+        self.factory = factory
+
+    def make_client(self) -> AsyncClient:
+        return AsyncClient(
+            transport=ASGITransport(app=self.app),
+            base_url="http://test",
+        )
+
+
+async def _build_context(*, enable: bool, token: str) -> _AppContext:
+    """Build a fresh app + in-memory SQLite engine + session factory.
+
+    Wires `get_session` via `app.dependency_overrides` so each request
+    gets a session bound to the per-test engine.
+    """
+    app = _build_app(enable=enable, token=token)
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _override():
+        async with factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _override
+    return _AppContext(app, engine, factory)
+
+
+async def _seed_session_row(ctx: _AppContext, *, suffix: str) -> None:
+    async with ctx.factory() as db:
+        row = entities.Session(
+            id=f"seeded-session-{suffix}",
+            sub=f"sub-{suffix}",
+            access_token="at",
+            refresh_token="rt",
+            id_token="it",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+            csrf_secret="cs",
+        )
+        db.add(row)
+        await db.commit()
+
+
+async def _seed_auth_state_row(ctx: _AppContext, *, suffix: str) -> None:
+    async with ctx.factory() as db:
+        row = entities.AuthState(
+            id=f"seeded-auth-{suffix}",
+            code_verifier="cv",
+            state=f"state-{suffix}",
+            nonce=f"nonce-{suffix}",
+            return_to=None,
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        db.add(row)
+        await db.commit()
+
+
+async def _count_sessions(ctx: _AppContext) -> int:
+    async with ctx.factory() as db:
+        result = await db.execute(select(entities.Session))
+        return len(result.scalars().all())
+
+
+async def _count_auth_states(ctx: _AppContext) -> int:
+    async with ctx.factory() as db:
+        result = await db.execute(select(entities.AuthState))
+        return len(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 1–3: route NOT registered when gate fails
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "PUT", "DELETE"])
+async def test_scenario_1_route_not_registered_when_gate_off(
+    method: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1: ENABLE_TEST_RESET=false → 404 on every method."""
+    monkeypatch.setattr(settings, "enable_test_reset", False)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=False, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.request(
+                method,
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 404
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_2_route_not_registered_when_token_empty(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#2: gate ON but token is "" → 404 and WARN log fires."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", "")
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token="")
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": "Bearer anything"},
+            )
+        assert response.status_code == 404
+        assert any("test_reset_route_skipped" in r.message for r in caplog.records)
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_3_route_not_registered_when_token_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#3: gate ON but token is "   " → 404 and WARN log fires."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", "   ")
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token="   ")
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post("/v1/test/reset")
+        assert response.status_code == 404
+        assert any("test_reset_route_skipped" in r.message for r in caplog.records)
+    finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 4–10: bearer auth failure modes
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_4_missing_authorization_header(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#4: no Authorization header → 401 missing_header; no DB writes."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        await _seed_session_row(ctx, suffix="4")
+        async with ctx.make_client() as client:
+            response = await client.post("/v1/test/reset")
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        # No DB writes: the seeded session still exists.
+        assert await _count_sessions(ctx) == 1
+        assert any(
+            "test_reset_unauthorized: missing_header" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_5_empty_authorization_header(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#5: Authorization: "" → 401 missing_header."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": ""},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: missing_header" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_6_non_bearer_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#6: Basic auth → 401 wrong_scheme."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": "Basic dGVzdA=="},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: wrong_scheme" in r.message for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+@pytest.mark.parametrize("header_value", ["Bearer ", "Bearer   "])
+async def test_scenario_7_bearer_with_no_token(
+    header_value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#7: "Bearer " (no token) or "Bearer    " → 401 empty_token."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": header_value},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: empty_token" in r.message for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_8_wrong_token(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#8: wrong bearer → 401 token_mismatch; bearer NOT in log text."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": "Bearer wrong-value-do-not-log"},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: token_mismatch" in r.message
+            for r in caplog.records
+        )
+        # Bearer string itself MUST NOT appear anywhere in captured logs.
+        assert "wrong-value-do-not-log" not in caplog.text
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_9_trailing_whitespace_token(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#9: bearer with trailing whitespace → 401 token_mismatch.
+
+    Trailing whitespace is part of the candidate token. The constant-time
+    compare against the raw env value rejects.
+    """
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            # httpx normalizes single-line header values; embed the trailing
+            # space directly.
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN} "},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: token_mismatch" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_10_bearer_with_extra_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#10: "Bearer foo bar" → 401 token_mismatch (scheme correct, value not)."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": "Bearer foo bar"},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_reset_unauthorized: token_mismatch" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 11–14: happy path with various seed states
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_11_correct_bearer_empty_tables(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#11: empty tables → 204 empty body; counts pre/post both 0."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        assert await _count_sessions(ctx) == 0
+        assert await _count_auth_states(ctx) == 0
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        # Empty body — Starlette/FastAPI omit content-length entirely on
+        # 204 responses (per RFC 7230 §3.3.2 — content-length MUST NOT be
+        # sent for 1xx/204). The empty-body check is the load-bearing one.
+        assert response.content == b""
+        assert await _count_sessions(ctx) == 0
+        assert await _count_auth_states(ctx) == 0
+        assert any(
+            "test_reset_truncated" in r.message
+            and "sessions_deleted=0" in r.message
+            and "auth_states_deleted=0" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_12_correct_bearer_sessions_populated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#12: 3 sessions seeded → 204; sessions=0 post; log reflects 3 / 0."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        for i in range(3):
+            await _seed_session_row(ctx, suffix=f"s12-{i}")
+        assert await _count_sessions(ctx) == 3
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        assert await _count_sessions(ctx) == 0
+        assert any(
+            "sessions_deleted=3" in r.message and "auth_states_deleted=0" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_13_correct_bearer_auth_states_populated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#13: 2 auth_states seeded → 204; auth_states=0; log reflects 0 / 2."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        for i in range(2):
+            await _seed_auth_state_row(ctx, suffix=f"s13-{i}")
+        assert await _count_auth_states(ctx) == 2
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        assert await _count_auth_states(ctx) == 0
+        assert any(
+            "sessions_deleted=0" in r.message and "auth_states_deleted=2" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_14_correct_bearer_both_tables_populated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#14: 5 sessions + 3 auth_states → 204; both 0; log reflects 5 / 3."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        for i in range(5):
+            await _seed_session_row(ctx, suffix=f"s14-{i}")
+        for i in range(3):
+            await _seed_auth_state_row(ctx, suffix=f"s14-{i}")
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        assert await _count_sessions(ctx) == 0
+        assert await _count_auth_states(ctx) == 0
+        assert any(
+            "sessions_deleted=5" in r.message and "auth_states_deleted=3" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 15–16: CSRF exemption and non-regression
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_15_csrf_exemption_post_without_csrf_material(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#15: POST /v1/test/reset succeeds even with NO csrf cookie/header/origin.
+
+    Demonstrates that `_CSRF_EXEMPT_PATHS` in `bff/auth/csrf.py` correctly
+    short-circuits the middleware for this path. The same request shape
+    (no CSRF material) would 403 on any other state-changing route — see
+    scenario 16.
+    """
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.auth.csrf")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        # The exemption log line must be present.
+        assert any(
+            "csrf_exempt_path" in r.message
+            and "path=/v1/test/reset" in r.message
+            and "method=POST" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_16_csrf_still_enforced_on_other_state_changing_paths(
+    client: AsyncClient,
+) -> None:
+    """#16: POST /test/open (the stub) without CSRF still 403s.
+
+    Proves the exemption is path-scoped, not a global bypass. Uses the
+    bare `client` fixture from conftest (no CSRF cookie / header).
+    """
+    response = await client.post("/test/open", json={"value": "x"})
+    assert response.status_code == 403
+    assert response.json() == {
+        "errorCode": "csrf_invalid",
+        "message": "CSRF token missing or invalid",
+        "detail": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 17–19: idempotency + edge cases
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_17_idempotent_successive_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#17: POST twice in a row → both 204; counts 0 throughout."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        await _seed_session_row(ctx, suffix="s17")
+        async with ctx.make_client() as client:
+            r1 = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+            r2 = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert r1.status_code == 204
+        assert r2.status_code == 204
+        assert await _count_sessions(ctx) == 0
+        truncated_logs = [
+            r for r in caplog.records if "test_reset_truncated" in r.message
+        ]
+        assert len(truncated_logs) == 2
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_18_bearer_with_special_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#18: token with special chars (`:`, `@`, etc.) compared as bytes."""
+    special_token = "!@#$%^&*():_+abc"
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", special_token)
+    ctx = await _build_context(enable=True, token=special_token)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {special_token}"},
+            )
+        assert response.status_code == 204
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_19_env_token_with_leading_trailing_whitespace(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#19: env token "  abc  " vs client "Bearer abc" → 401 token_mismatch.
+
+    Spec choice: do NOT silently strip secrets. The env-supplied value is
+    compared verbatim. (`.strip()` is only applied at gate-evaluation
+    time, not at compare time.)
+    """
+    spaced_token = "  abc  "
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", spaced_token)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=spaced_token)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": "Bearer abc"},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any("token_mismatch" in r.message for r in caplog.records)
+    finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 20–22: OpenAPI + startup-log signaling
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_20a_openapi_lists_route_when_gate_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#20a: gate ON → `/v1/test/reset` appears in GET /openapi.json."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get("/openapi.json")
+        assert response.status_code == 200
+        body = response.json()
+        assert "/v1/test/reset" in body["paths"]
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_20b_openapi_omits_route_when_gate_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#20b: gate OFF → `/v1/test/reset` NOT in GET /openapi.json."""
+    monkeypatch.setattr(settings, "enable_test_reset", False)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=False, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get("/openapi.json")
+        assert response.status_code == 200
+        body = response.json()
+        assert "/v1/test/reset" not in body["paths"]
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_21_startup_log_when_gate_on(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#21: gate ON during _build_context → INFO log fires once."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        registered = [
+            r for r in caplog.records if "test_reset_route_registered" in r.message
+        ]
+        assert len(registered) >= 1
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_22_no_startup_log_when_gate_off(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#22: gate OFF during _build_context → no `test_reset_route_registered`."""
+    monkeypatch.setattr(settings, "enable_test_reset", False)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=False, token=_DEFAULT_TOKEN)
+    try:
+        assert not any(
+            "test_reset_route_registered" in r.message for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from bff.api.auth import router as auth_router
 from bff.api.health import router as health_router
 from bff.api.me import router as me_router
+from bff.api.test_reset import register_test_reset_router
 from bff.api.v1 import router as v1_router
 from bff.auth.csrf import CsrfMiddleware
 from bff.core.config import settings
@@ -63,3 +64,8 @@ app.include_router(health_router)
 app.include_router(me_router)
 app.include_router(auth_router)
 app.include_router(v1_router)
+# Story 1.12: conditionally mount POST /v1/test/reset when
+# ENABLE_TEST_RESET=true AND TEST_RESET_TOKEN is set. In production
+# (default compose profile) this is a no-op; the e2e profile flips the
+# gate via compose/app.e2e.yml.
+register_test_reset_router(app, settings)
