@@ -1,6 +1,6 @@
 # Story 1.12: BFF `POST /v1/test/reset` endpoint
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -493,5 +493,43 @@ claude-opus-4-7
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- **Task 1 decision:** took the **alternative** path — no `build_app(cfg)` factory refactor of `main.py`. The new helper `register_test_reset_router(app, settings)` is called once at the bottom of `main.py` after `app.include_router(v1_router)`. Gate-state tests build their own fresh `FastAPI` apps via a local `_build_app` helper in `tests/api/test_test_reset.py` that mirrors `main.py`'s construction (CORS skipped — not exercised by these tests). This keeps `main.py`'s diff to two lines (import + call) and zero risk of regressing the 300-test baseline.
+- **Task 4 decision:** added the path-exemption to `services/bff/src/bff/auth/csrf.py` per the story's prescribed shape — `_CSRF_EXEMPT_PATHS: Final[frozenset[str]] = frozenset({"/v1/test/reset"})` module-level constant + a 4-line early-exit in `CsrfMiddleware.dispatch` immediately after the `_SAFE_METHODS` short-circuit. Logged at WARN with classifier-style format `csrf_exempt_path path=... method=...`.
+- **Task 6 decision (AC9):** picked **Option B (overlay file)** — `compose/app.e2e.yml` is a classic compose override applied with the explicit `-f` flag pattern. Tried Option A (sibling `bff-e2e` service inside `compose/app.yml`) first and discovered that compose's `include:` directive at the top-level `docker-compose.yml` is unconditional, so `${TEST_RESET_TOKEN:?...}` interpolation fires on the `default` profile as well — defeating the purpose. The overlay file pattern keeps the fail-fast scoped to e2e invocations: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up`. The base `bff` service in `compose/app.yml` retains its original `profiles: [default, dev, e2e]` (no diff to its env-var block).
+- **Bearer comparison:** uses `hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))` with NO `.strip()` on either side — secrets are compared verbatim. Empty/whitespace `TEST_RESET_TOKEN` is treated as gate-off at registration time (defense-in-depth), but a non-empty token with leading/trailing whitespace IS compared literally; scenario 19 enforces "no silent stripping of secrets".
+- **`rowcount` access:** SQLAlchemy `AsyncSession.execute(...)` returns the broad `Result[Any]` static type even though the runtime object is `CursorResult` with `.rowcount`. Used `getattr(result, "rowcount", -1)` to keep `ty` clean without importing `sqlalchemy.engine.CursorResult`.
+- **AC1 helper signature:** `register_test_reset_router(app: FastAPI, cfg: AppSettings) -> None` — exactly as specified. `__all__ = ["register_test_reset_router", "router"]`.
+- **Coverage:** `src/bff/api/test_reset.py` 54/54 stmts → 100%; project total 97.63% (gate is 90%). Full BFF suite: 328 tests, all green.
+- **Gates run from `services/bff/`:**
+  - `uv sync --frozen` → exit 0 (no dep changes; pyproject.toml untouched)
+  - `uv run ruff check` → All checks passed!
+  - `uv run ruff format --check` → 65 files already formatted (clean)
+  - `uv run ty check` → All checks passed!
+  - `uv run pytest --cov` → 328 passed, 97.63% coverage
+- **Compose gates run from repo root:**
+  - `docker compose --profile default config` → valid; `bff` service environment shows `ENABLE_TEST_RESET=false`.
+  - `TEST_RESET_TOKEN=test-token-abc docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` → valid; `bff` service environment shows `ENABLE_TEST_RESET=true` and `TEST_RESET_TOKEN=test-token-abc`.
+  - `env -i HOME=$HOME PATH=$PATH docker compose -f docker-compose.yml -f compose/app.e2e.yml --env-file /dev/null --profile e2e config` → fails fast with `required variable TEST_RESET_TOKEN is missing a value: TEST_RESET_TOKEN is required when the e2e profile is up`.
+  - `docker compose build bff` → image built successfully.
+- **Python invocation convention:** all command examples and inline documentation written in this story (story file, code docstrings, README-style comments in `compose/app.e2e.yml`) use `python` — never `python3` — per `CLAUDE.md`. The existing Dockerfile / compose healthchecks / pytest commands already followed this convention; nothing changed.
 
 ### File List
+
+**New files (created by this story):**
+- `services/bff/src/bff/api/test_reset.py` — `POST /v1/test/reset` handler + `register_test_reset_router(app, cfg)` helper + `_classify_auth_failure` / `_unauthorized_response` helpers. Module docstring describes purpose, gating, auth, safety, and source references.
+- `services/bff/tests/api/test_test_reset.py` — pytest module covering all 22 AC10 scenarios. Doubled `test_` prefix is intentional (pytest discovers it; the BFF route module is `test_reset.py` without the prefix). Helper `_build_context(enable, token)` builds a fresh `FastAPI` app + in-memory SQLite engine per test for full isolation.
+- `compose/app.e2e.yml` — `e2e` profile override that adds `ENABLE_TEST_RESET=true` and `TEST_RESET_TOKEN=${TEST_RESET_TOKEN:?...}` to the `bff` service. Applied with `-f compose/app.e2e.yml` flag; NOT in the top-level `include:` (compose's include is unconditional and would fail-fast even on the default profile).
+
+**Modified files:**
+- `services/bff/src/bff/main.py` — added `from bff.api.test_reset import register_test_reset_router` import and a single `register_test_reset_router(app, settings)` call after `app.include_router(v1_router)` (line 65).
+- `services/bff/src/bff/auth/csrf.py` — added `_CSRF_EXEMPT_PATHS: Final[frozenset[str]] = frozenset({"/v1/test/reset"})` module-level constant and a 4-line early-exit in `CsrfMiddleware.dispatch` immediately after the `_SAFE_METHODS` short-circuit. Updated module docstring to mention the exemption.
+- `services/bff/tests/auth/test_csrf.py` — added one new test `test_csrf_exempt_for_test_reset_path` that POSTs `/v1/test/reset` without CSRF material on the live `bff.main:app` (where the route is NOT registered) and asserts the response is 404 (not 403) AND the WARN `csrf_exempt_path` log line is present — proves the exemption is path-scoped.
+- `compose/app.yml` — header comment updated to point readers at `compose/app.e2e.yml` for the e2e profile override. The base `bff` service definition itself is unchanged.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — flipped `1-12-bff-post-v1-test-reset-endpoint: backlog` → `in-progress` → `review`.
+- `_bmad-output/implementation-artifacts/deferred-work.md` — appended a "Partial resolution" note to D3 closing the `TEST_RESET_TOKEN` half (the `KEYCLOAK_ADMIN_PASSWORD` and `BFF_CLIENT_SECRET` halves remain deferred to their respective stories).
+
+**NOT modified (intentional — per story spec):**
+- `services/bff/src/bff/core/config.py` — `enable_test_reset` (line 95) and `test_reset_token` (line 96) were already declared by Story 1.3's archetype-baseline.
+- `services/bff/.env.example` — `ENABLE_TEST_RESET=false` and `TEST_RESET_TOKEN=change-me` were already present (lines 47–48, Story 1.1).
+- `services/bff/pyproject.toml` — no new dependencies.
+- Alembic migrations — no schema changes.

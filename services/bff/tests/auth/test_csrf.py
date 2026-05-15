@@ -365,3 +365,54 @@ async def test_post_with_malformed_bff_base_url_returns_403(
     assert response.status_code == 403
     _assert_reject_envelope(response.json())
     assert any("csrf_misconfig_bff_base_url" in r.message for r in caplog.records)
+
+
+# -- Path exemption — Story 1.12 ---------------------------------------------
+
+
+async def test_csrf_exempt_for_test_reset_path(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Story 1.12 carves out `/v1/test/reset` from CSRF enforcement so the
+    # bearer-authenticated test-reset endpoint can be reached by the
+    # Playwright fixture without minting a CSRF cookie/header pair.
+    #
+    # In the live test app (built from `bff.main`) the route itself is
+    # NOT registered (`settings.enable_test_reset` is False by default),
+    # so the request reaches FastAPI's default 404 — what matters here
+    # is that the response is NOT a CSRF 403. The exemption WARN log
+    # MUST fire to prove the middleware short-circuited.
+    caplog.set_level(logging.WARNING, logger="bff.auth.csrf")
+    response = await client.post("/v1/test/reset", json={"value": "x"})
+    assert response.status_code != 403
+    # 404 is the expected fall-through when the route isn't mounted; the
+    # important non-regression is that we did NOT 403 the request.
+    assert response.status_code == 404
+    assert any(
+        "csrf_exempt_path" in r.message
+        and "path=/v1/test/reset" in r.message
+        and "method=POST" in r.message
+        for r in caplog.records
+    )
+
+
+async def test_csrf_exempt_for_test_reset_path_with_trailing_slash(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Patch P2: `/v1/test/reset/` (trailing slash) must ALSO bypass CSRF.
+    # FastAPI's `redirect_slashes=True` 307 still flows through the CSRF
+    # middleware on the original URL — without the trailing-slash entry
+    # in `_CSRF_EXEMPT_PATHS`, this request would 403 BEFORE the
+    # slash-redirect could ever fire. Asserts the bypass log line for the
+    # exact path the request was made against.
+    caplog.set_level(logging.WARNING, logger="bff.auth.csrf")
+    response = await client.post("/v1/test/reset/", json={"value": "x"})
+    assert response.status_code != 403
+    assert any(
+        "csrf_exempt_path" in r.message
+        and "path=/v1/test/reset/" in r.message
+        and "method=POST" in r.message
+        for r in caplog.records
+    )
