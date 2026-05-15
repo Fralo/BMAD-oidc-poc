@@ -40,6 +40,9 @@ test-results/
 .vscode/
 *.swp
 
+# Claude Code harness-managed worktrees
+.claude/worktrees/
+
 # OS junk
 .DS_Store
 Thumbs.db
