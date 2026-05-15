@@ -136,11 +136,35 @@ async def test_check_database_returns_failure_when_engine_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_check_alembic_at_head_passes_with_no_migrations(engine) -> None:
-    """With zero migrations defined, head=None and current=None ⇒ at head."""
-    ok, detail = await health_module._check_alembic_at_head(engine)
-    assert ok is True, detail
-    assert detail == ""
+async def test_check_alembic_at_head_passes_when_current_matches_head(
+    engine,
+) -> None:
+    """With current==head, the probe returns success and an empty detail."""
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+        )
+        await conn.execute(text("DELETE FROM alembic_version"))
+        await conn.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES ('0001_init')")
+        )
+
+    try:
+        ok, detail = await health_module._check_alembic_at_head(engine)
+        assert ok is True, detail
+        assert detail == ""
+    finally:
+        # Engine is session-scoped; a failed assertion above must not leak
+        # `alembic_version` into sibling tests (notably the
+        # `current=None`-expecting test below).
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
 
 
 async def test_check_alembic_at_head_fails_on_exception(
