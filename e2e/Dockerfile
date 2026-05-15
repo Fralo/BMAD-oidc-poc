@@ -2,7 +2,7 @@
 # Pinned to Node 20 LTS (Playwright 1.49.x requires Node >=18; choose 20 for stability).
 # Only chromium is installed to keep the image lean — the AC scopes the harness
 # to a single browser project.
-FROM node:20-bookworm-slim AS playwright
+FROM node:20-bookworm-slim
 
 # `--with-deps` pulls the OS libs chromium needs (libnss3, libxss1, etc.) so the
 # final image runs out of the box. `playwright install` itself downloads only the
