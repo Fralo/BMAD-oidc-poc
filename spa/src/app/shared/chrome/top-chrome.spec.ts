@@ -1,0 +1,151 @@
+import { provideHttpClient, withFetch } from '@angular/common/http';
+import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { Router, provideRouter } from '@angular/router';
+
+import { AuthService } from '../../auth/auth-service';
+import { Me } from '../../auth/auth.types';
+
+import { TopChrome } from './top-chrome';
+
+function makeAuthServiceStub(initial: Me | null) {
+  const _me = signal<Me | null>(initial);
+  return {
+    me: _me.asReadonly(),
+    setMe: (m: Me | null) => _me.set(m),
+    clear: vi.fn(() => _me.set(null)),
+    loadMe: vi.fn(async () => undefined),
+  };
+}
+
+async function setupHarness(initialMe: Me | null) {
+  const authStub = makeAuthServiceStub(initialMe);
+  TestBed.configureTestingModule({
+    imports: [TopChrome],
+    providers: [
+      provideZonelessChangeDetection(),
+      provideRouter([
+        { path: 'books', children: [] },
+        { path: 'settings', children: [] },
+        { path: 'login', children: [] },
+      ]),
+      provideHttpClient(withFetch()),
+      provideHttpClientTesting(),
+      { provide: AuthService, useValue: authStub },
+    ],
+  });
+  await TestBed.compileComponents();
+  const router = TestBed.inject(Router);
+  const http = TestBed.inject(HttpTestingController);
+  return { authStub, router, http };
+}
+
+describe('TopChrome', () => {
+  it('unauthenticated variant renders product name only — no identity, no link', async () => {
+    const { router } = await setupHarness(null);
+    await router.navigateByUrl('/login');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.top-chrome-brand')?.textContent?.trim()).toBe(
+      'Reading Time Estimator',
+    );
+    expect(el.querySelector('.top-chrome-identity')).toBeNull();
+    expect(el.querySelector('.top-chrome-link')).toBeNull();
+  });
+
+  it('authenticated variant on /books renders Settings link + identity block', async () => {
+    const { router } = await setupHarness({ sub: 's1', preferred_username: 'alice' });
+    await router.navigateByUrl('/books');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.top-chrome-brand')?.textContent?.trim()).toBe(
+      'Reading Time Estimator',
+    );
+    const link = el.querySelector('.top-chrome-link');
+    expect(link?.textContent?.trim()).toBe('Settings');
+    expect(link?.getAttribute('href')).toBe('/settings');
+
+    const identity = el.querySelector('.top-chrome-identity');
+    expect(identity?.textContent).toContain('Signed in as ');
+    expect(identity?.textContent).toContain('alice');
+    expect(identity?.textContent).toContain('·');
+
+    const logoutBtn = el.querySelector('.top-chrome-logout');
+    expect(logoutBtn?.textContent?.trim()).toBe('Log out');
+  });
+
+  it('authenticated variant on /settings renders Books link instead of Settings', async () => {
+    const { router } = await setupHarness({ sub: 's1', preferred_username: 'alice' });
+    await router.navigateByUrl('/settings');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const link = (fixture.nativeElement as HTMLElement).querySelector('.top-chrome-link');
+    expect(link?.textContent?.trim()).toBe('Books');
+    expect(link?.getAttribute('href')).toBe('/books');
+  });
+
+  it('clicking Log out POSTs /auth/logout, clears auth state, and navigates to /login', async () => {
+    const { router, http, authStub } = await setupHarness({
+      sub: 's1',
+      preferred_username: 'alice',
+    });
+    await router.navigateByUrl('/books');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const navSpy = vi.spyOn(router, 'navigateByUrl');
+
+    const logoutBtn = (fixture.nativeElement as HTMLElement).querySelector(
+      '.top-chrome-logout',
+    ) as HTMLButtonElement;
+    const clickPromise = (fixture.componentInstance as TopChrome).logout();
+    void logoutBtn; // button presence asserted earlier
+
+    const req = http.expectOne('/auth/logout');
+    expect(req.request.method).toBe('POST');
+    req.flush({});
+
+    await clickPromise;
+
+    expect(authStub.clear).toHaveBeenCalledTimes(1);
+    expect(navSpy).toHaveBeenCalledWith('/login');
+  });
+
+  it('logout still clears state + navigates even when /auth/logout fails (degrade-open per J5)', async () => {
+    const { router, http, authStub } = await setupHarness({
+      sub: 's1',
+      preferred_username: 'alice',
+    });
+    await router.navigateByUrl('/books');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const navSpy = vi.spyOn(router, 'navigateByUrl');
+
+    const clickPromise = (fixture.componentInstance as TopChrome).logout();
+
+    const req = http.expectOne('/auth/logout');
+    req.flush({ errorCode: 'oops', message: 'no' }, { status: 500, statusText: 'ISE' });
+
+    await clickPromise;
+
+    expect(authStub.clear).toHaveBeenCalledTimes(1);
+    expect(navSpy).toHaveBeenCalledWith('/login');
+  });
+});

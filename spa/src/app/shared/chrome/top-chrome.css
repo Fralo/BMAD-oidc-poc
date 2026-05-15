@@ -1,0 +1,65 @@
+.top-chrome {
+  width: 100%;
+  height: 48px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.top-chrome-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  max-width: 720px;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 var(--spacing-4);
+}
+
+.top-chrome-brand {
+  color: var(--color-text);
+  font: var(--text-page-title);
+}
+
+.top-chrome-link {
+  color: var(--color-accent);
+  text-decoration: none;
+  font: var(--text-body);
+}
+
+.top-chrome-link:hover {
+  text-decoration: underline;
+}
+
+.top-chrome-identity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font: var(--text-body);
+}
+
+.top-chrome-signed-as {
+  color: var(--color-text-muted);
+}
+
+.top-chrome-username {
+  color: var(--color-text);
+}
+
+.top-chrome-sep {
+  color: var(--color-text-muted);
+}
+
+.top-chrome-logout {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: var(--text-body);
+}
+
+.top-chrome-logout:hover {
+  text-decoration: underline;
+}
