@@ -23,6 +23,7 @@ class ErrorCode(enum.Enum):
         "A required dependency is unavailable",
         503,
     )
+    AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
 
     def __init__(self, code: str, message: str, http_status: int) -> None:
         self.code = code

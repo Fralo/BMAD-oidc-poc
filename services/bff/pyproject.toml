@@ -23,6 +23,9 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "greenlet>=3.3.2",
     "alembic>=1.18.4",
+    "authlib>=1.6.0",
+    "pyjwt[crypto]>=2.10.0",
+    "itsdangerous>=2.2.0",
 ]
 
 [build-system]
@@ -36,6 +39,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.25",
     "pytest-cov>=6.0",
+    "respx>=0.21.0",
     "ruff>=0.15.4",
     "ty",
 ]

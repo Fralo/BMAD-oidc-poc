@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+from bff.api.auth import router as auth_router
 from bff.api.health import router as health_router
 from bff.api.me import router as me_router
 from bff.api.v1 import router as v1_router
@@ -48,4 +49,5 @@ app.add_exception_handler(AppException, app_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.include_router(health_router)
 app.include_router(me_router)
+app.include_router(auth_router)
 app.include_router(v1_router)

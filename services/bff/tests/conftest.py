@@ -15,6 +15,11 @@ os.environ["ENV_FILE"] = ""
 # settings instance — built when `bff.main` is imported below — validates
 # successfully without leaking a real secret into pytest output.
 os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
+# Story 1.5 added OIDC_AUTHORIZE_URL_BROWSER as a required-fail-fast config var
+# (browser-vs-container hostname split — see deferred-work.md#D2/#D8). Provide
+# a stable default here so the test settings instance — built when `bff.main`
+# is imported below — validates successfully.
+os.environ.setdefault("OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/test")
 
 from bff.core.database import get_session
 from bff.main import app
@@ -77,6 +82,25 @@ async def client_fixture(session):
     app.dependency_overrides[get_session] = _override
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="client_no_redirects")
+async def client_no_redirects_fixture(session):
+    """Like `client`, but with `follow_redirects=False` so 302 responses from
+    /auth/login and /auth/callback are inspectable rather than auto-followed.
+    """
+
+    async def _override():
+        yield session
+
+    app.dependency_overrides[get_session] = _override
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        follow_redirects=False,
     ) as c:
         yield c
     app.dependency_overrides.clear()

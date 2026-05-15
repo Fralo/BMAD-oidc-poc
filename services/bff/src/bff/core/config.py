@@ -82,6 +82,13 @@ class AppSettings(BaseSettings):
     oidc_jwks_url: str = ""
     oidc_audience: str = ""
     oidc_client_id: str = ""
+    # Browser-facing authorize URL — used in the 302 from /auth/login. Differs
+    # from `oidc_issuer_url` (the BFF↔IdP back-channel URL) because the browser
+    # cannot resolve compose-internal hostnames like `keycloak:8080`. In
+    # compose with `KC_HOSTNAME=localhost`, the discovery doc emits
+    # `http://localhost:8080/...` and the BFF MUST use that for redirects.
+    # (See deferred-work.md#D2 / #D8, closed by Story 1.5.)
+    oidc_authorize_url_browser: str = ""
     bff_session_cookie_name: str = "bff_session"
     bff_csrf_cookie_name: str = "bff_csrf"
     bff_session_cookie_secure: bool = False
@@ -98,6 +105,28 @@ class AppSettings(BaseSettings):
         if self.cors_allow_credentials and "*" in self.cors_allow_origins_list:
             msg = (
                 "CORS_ALLOW_ORIGINS cannot include '*' when CORS_ALLOW_CREDENTIALS=true"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oidc_authorize_url_browser(self) -> AppSettings:
+        # Story 1.5 closes deferred-work.md#D2 / #D8: a browser-facing authorize
+        # URL is required so /auth/login can redirect through a hostname the
+        # user's browser actually resolves. Fail-fast at startup so the misconfig
+        # surfaces at first boot rather than at first OIDC redirect.
+        val = self.oidc_authorize_url_browser.strip()
+        if not val:
+            msg = (
+                "OIDC_AUTHORIZE_URL_BROWSER is required and must be non-empty "
+                "(the browser-facing authorize URL — typically "
+                "http://localhost:8080/realms/<realm> in compose)"
+            )
+            raise ValueError(msg)
+        if not val.startswith(("http://", "https://")):
+            msg = (
+                "OIDC_AUTHORIZE_URL_BROWSER must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)
         return self

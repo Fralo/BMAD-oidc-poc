@@ -34,6 +34,13 @@ def test_error_code_forbidden() -> None:
     assert ErrorCode.FORBIDDEN.http_status == 403
 
 
+def test_error_code_auth_state_invalid() -> None:
+    # Story 1.5 — wire value is lower_snake_case per architecture §C5.
+    assert ErrorCode.AUTH_STATE_INVALID.code == "auth_state_invalid"
+    assert ErrorCode.AUTH_STATE_INVALID.message == "Authorization state invalid"
+    assert ErrorCode.AUTH_STATE_INVALID.http_status == 400
+
+
 def test_app_exception_carries_error_code() -> None:
     exc = AppException(ErrorCode.NOT_FOUND)
     assert exc.error_code is ErrorCode.NOT_FOUND

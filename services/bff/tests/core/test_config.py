@@ -166,3 +166,33 @@ def test_profile_invalid_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROFILE", "staging")
     with pytest.raises(ValidationError, match="Invalid profile"):
         AppSettings()
+
+
+def test_oidc_authorize_url_browser_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Story 1.5: fail-fast when OIDC_AUTHORIZE_URL_BROWSER is unset — without it
+    # the BFF cannot build a browser-redirectable /authorize URL (D2/D8).
+    monkeypatch.delenv("OIDC_AUTHORIZE_URL_BROWSER", raising=False)
+    with pytest.raises(ValidationError, match="OIDC_AUTHORIZE_URL_BROWSER is required"):
+        AppSettings()
+
+
+def test_oidc_authorize_url_browser_blank_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OIDC_AUTHORIZE_URL_BROWSER", "   ")
+    with pytest.raises(ValidationError, match="OIDC_AUTHORIZE_URL_BROWSER is required"):
+        AppSettings()
+
+
+def test_oidc_authorize_url_browser_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/bmad-books"
+    )
+    settings = AppSettings()
+    assert (
+        settings.oidc_authorize_url_browser == "http://localhost:8080/realms/bmad-books"
+    )

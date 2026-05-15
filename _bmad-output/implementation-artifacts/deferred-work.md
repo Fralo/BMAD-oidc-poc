@@ -20,6 +20,7 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 **Issue 2:** `OIDC_AUDIENCE == OIDC_CLIENT_ID == bff-client`. Keycloak does not put the client ID in the `aud` claim by default; without an audience mapper on the `bff-client` (or with token-introspection rather than local JWT validation in the RS), audience validation will fail.
 **Belongs to:** Story 1.2 (Keycloak realm-as-code — owns the audience mapper) and Stories 1.4/1.5 (BFF OIDC plugin — owns the browser-facing redirect topology).
 **Severity:** important (deferred; will cause real failures in Stories 1.4/1.5/3.2 if not handled there).
+**Resolution (2026-05-15, Story 1.5):** Closed. Added `OIDC_AUTHORIZE_URL_BROWSER` env var (required-fail-fast) for the browser-facing 302 from `/auth/login`; `OIDC_ISSUER_URL` remains the back-channel value. Issue 2 (audience mapper) was already closed by Story 1.2's realm-as-code (`aud-resource-server` mapper).
 
 ## Deferred from: code review of 1-1-repo-scaffold-compose-skeleton (second pass, 2026-05-14)
 
@@ -72,6 +73,7 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 **Issue:** This story closes the realm side of D2 (audience mapper + `.env.example` alignment) but explicitly leaves the browser-vs-container hostname split open per its own Dev Notes ("Closing D2 (deferred from Story 1.1)"). `KC_HOSTNAME=localhost` + `KC_HOSTNAME_STRICT=false` makes Keycloak emit `http://localhost:8080` in discovery — browser-correct — but the BFF's back-channel `OIDC_ISSUER_URL=http://keycloak:8080/...` will see a JWT `iss` of `http://localhost:8080/...`, an issuer-mismatch that must be reconciled before Story 1.5's token validation can succeed.
 **Belongs to:** Stories 1.4/1.5 (BFF auth-state schema + cookie/OIDC plugin) — they own the actual back-channel OIDC discovery + token exchange, and therefore own the choice of how to reconcile internal vs external issuer.
 **Severity:** important (deferred; will block Story 1.5 if not handled there).
+**Resolution (2026-05-15, Story 1.5):** Closed via the two-URL config (D2 resolution). `verify_id_token` uses `OIDC_AUTHORIZE_URL_BROWSER` as the expected `iss` claim — matching what Keycloak signs under `KC_HOSTNAME=localhost`. Documented as a load-bearing caveat in the auth router (`src/bff/api/auth.py`) and the story file Dev Notes.
 
 ### D9 — No build-time validation of `realm-bmad-books.json`
 
@@ -267,6 +269,7 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 **Issue:** `return_to: str | None = Field(default=None, nullable=True)` accepts arbitrary unbounded strings. The OIDC plugin (Story 1.5) writes the SPA-supplied post-login redirect path into this column — a classic open-redirect vector if not validated upstream. Model layer makes no claim either way.
 **Belongs to:** Story 1.5 (OIDC plugin — owns `/auth/login` query-param validation) and Story 1.6 (CSRF middleware — orthogonal but related). A model-level `Field(max_length=2048)` could also land defensively.
 **Severity:** important (security boundary, but not in 1.4's scope per "What this story is — and is not").
+**Resolution (2026-05-15, Story 1.5):** Closed. `safe_return_to(raw)` in `bff/services/session_service.py` validates: must start with `/`, must NOT start with `//`, must NOT contain `:` before the first slash boundary, max length 1024. Falls back silently to `/` on any failure (no signal to attackers). 13 parametrized test cases cover the rule.
 
 ### D34 — Token / verifier columns are unbounded `AutoString` (`max_length` only on `sub`)
 
@@ -324,3 +327,38 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 **Decision (2026-05-15 code review):** Defer. 256-bit entropy from `secrets.token_urlsafe(32)` makes collisions astronomically unlikely; consumer (Story 1.5) owns the catch-and-retry semantic if it ever surfaces.
 **Belongs to:** Story 1.5 (OIDC plugin) — generator contract + consumer retry path.
 **Severity:** nit (entropy-bounded; no real-world collision risk under the planned generator).
+**Resolution (2026-05-15, Story 1.5):** Closed. `SessionService.create_auth_state` / `create_session` retry up to 3 times on `IntegrityError` (PK collision) before raising `RuntimeError`. Generator is `secrets.token_urlsafe(32)` (256 bits). Tests force collisions via `monkeypatch` to exercise both retry-then-succeed and retry-exhaust paths.
+
+## Deferred from: code review of 1-5-bff-cookie-session-oidc-plugin-pkce-synthetic-idp-test-harness (2026-05-15)
+
+### D41 — `consume_auth_state` non-atomic SELECT+DELETE — duplicate concurrent callbacks could both succeed
+
+**Surfaced by:** Edge-case hunter
+**Files:** `services/bff/src/bff/services/session_service.py`
+**Issue:** Two concurrent `/auth/callback` requests for the same `state` can both SELECT the row before either DELETE commits. Both proceed past `consume_auth_state` with the same Python row object. Keycloak's single-use code semantics prevents a duplicate session, but the auth_state "atomic consume" invariant is violated. A SELECT FOR UPDATE or an UPDATE-based CAS pattern would close this race.
+**Belongs to:** Future story (Epic 2+ or Story 5.x) if the DB is ever switched to PostgreSQL, which supports `SELECT … FOR UPDATE`.
+**Severity:** low (SQLite's deferred locking + Keycloak's code single-use provides practical protection at demo scale).
+
+### D42 — `code_verifier` stored plaintext in `auth_states` table
+
+**Surfaced by:** Blind hunter
+**Files:** `services/bff/src/bff/services/session_service.py`, `services/bff/src/bff/models/entities/auth_state.py`
+**Issue:** The PKCE `code_verifier` is the high-value secret of the login flow. Storing it plaintext means any process with DB read access can impersonate the BFF at Keycloak's `/token` endpoint if they also intercept the authorization code. Acceptable accepted risk for SQLite dev context; becomes a real concern if the DB backend is shared.
+**Belongs to:** Story 5.2 (security review document).
+**Severity:** low (accepted risk per architecture §Operational Details lines 1362–1368; same accepted-risk envelope as token-column plaintext storage).
+
+### D43 — Zero leeway in PyJWT `exp` validation — clock skew causes false auth failures
+
+**Surfaced by:** Edge-case hunter
+**Files:** `services/bff/src/bff/auth/keycloak_cookie_session.py`
+**Issue:** `jwt.decode(…)` with no `leeway` parameter uses 0-second leeway. A BFF clock skewed by even 1–2 seconds behind Keycloak's clock will reject valid id_tokens with `ExpiredSignatureError → OidcVerificationError → 400 auth_state_invalid`. Fix: add `leeway=timedelta(seconds=10)` to `jwt.decode`.
+**Belongs to:** Story 5.x infra hardening, or can be patched in this story.
+**Severity:** low (not an issue in dev with co-located processes; surfaces in production with NTP drift).
+
+### D44 — Module-level `_session_service` singleton bypasses FastAPI DI lifecycle
+
+**Surfaced by:** Blind hunter
+**Files:** `services/bff/src/bff/api/auth.py`, `services/bff/src/bff/api/me.py`
+**Issue:** `_session_service = SessionService()` at module scope bypasses FastAPI's dependency injection and makes it impossible to swap the service in tests without `monkeypatch`. Both files should inject via `Depends(SessionService)`. Currently harmless (stateless service) but will become an obstacle if `SessionService` ever acquires constructor dependencies.
+**Belongs to:** Any future story that touches these files or refactors the service layer.
+**Severity:** nit (no correctness impact; code quality / testability improvement).
