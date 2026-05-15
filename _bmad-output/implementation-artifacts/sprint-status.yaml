@@ -1,5 +1,5 @@
 # generated: 2026-05-14
-# last_updated: 2026-05-15 (epic-1 closed; stories 1.10/1.11/1.12 code-reviewed and patched → done)
+# last_updated: 2026-05-15 (epic-1 reopened to admit Story 1.14 — BFF multi-stage Dockerfile / SPA bundle / history fallback per AR24, closes D46, unblocks Story 5.4)
 # project: BMAD_books
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (epic-1 closed; stories 1.10/1.11/1.12 code-reviewed in parallel worktrees, 6 patches applied across SPA + compose + e2e, 6 defers added (D47-D48 + 4 unnumbered) → done)
+last_updated: 2026-05-15 (epic-1 reopened — Story 1.14 added to admit AR24 SPA-serving fix that closes D46 and unblocks Story 5.4 final smoke)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -43,7 +43,7 @@ story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
   # Epic 1: Foundational Login & Identity (J1, J5)
-  epic-1: done
+  epic-1: in-progress
   1-1-repo-scaffold-compose-skeleton: done
   1-2-keycloak-realm-as-code-compose-service: done
   1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates: done
@@ -57,6 +57,7 @@ development_status:
   1-11-playwright-project-setup-fixtures-helpers: done
   1-12-bff-post-v1-test-reset-endpoint: done
   1-13-e2e-spec-j1-first-time-login-j5-logout: done
+  1-14-bff-multi-stage-build-serves-spa-bundle: backlog
   epic-1-retrospective: optional
 
   # Epic 2: Personal Book List (J2)
