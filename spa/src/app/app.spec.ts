@@ -1,10 +1,32 @@
+import { provideHttpClientTesting } from '@angular/common/http/testing';
+import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+
 import { App } from './app';
+import { AuthService } from './auth/auth-service';
+import { Me } from './auth/auth.types';
+
+function makeAuthServiceStub(initial: Me | null) {
+  const _me = signal<Me | null>(initial);
+  return {
+    me: _me.asReadonly(),
+    setMe: (m: Me | null) => _me.set(m),
+    clear: () => _me.set(null),
+    loadMe: async () => undefined,
+  };
+}
 
 describe('App', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [App],
+      providers: [
+        provideZonelessChangeDetection(),
+        provideRouter([]),
+        provideHttpClientTesting(),
+        { provide: AuthService, useValue: makeAuthServiceStub(null) },
+      ],
     }).compileComponents();
   });
 
@@ -14,15 +36,16 @@ describe('App', () => {
     expect(app).toBeTruthy();
   });
 
-  it('should render the AC7 smoke fragment with token-derived utility classes', async () => {
+  it('renders <app-top-chrome /> and the router outlet at the root', async () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     await fixture.whenStable();
     const compiled = fixture.nativeElement as HTMLElement;
-    const smoke = compiled.querySelector('main > div');
-    expect(smoke?.textContent?.trim()).toBe('SPA scaffold is alive');
-    expect(smoke?.classList.contains('bg-surface-muted')).toBe(true);
-    expect(smoke?.classList.contains('text-accent')).toBe(true);
-    expect(smoke?.classList.contains('p-3')).toBe(true);
+    expect(compiled.querySelector('app-top-chrome')).not.toBeNull();
+    expect(compiled.querySelector('router-outlet')).not.toBeNull();
+    // The 720px-wide content column wraps the router outlet.
+    const main = compiled.querySelector('main.app-content');
+    expect(main).not.toBeNull();
+    expect(main?.querySelector('router-outlet')).not.toBeNull();
   });
 });

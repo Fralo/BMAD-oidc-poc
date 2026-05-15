@@ -1,0 +1,13 @@
+<header class="top-chrome">
+  <div class="top-chrome-inner">
+    <span class="top-chrome-brand">Reading Time Estimator</span>
+    @if (me() && contextualLink(); as link) {
+      <a class="top-chrome-link" [routerLink]="link.path">{{ link.label }}</a>
+    }
+    @if (me(); as user) {
+      <span class="top-chrome-identity">
+        <span class="top-chrome-signed-as">Signed in as </span><span class="top-chrome-username">{{ user.preferred_username }}</span><span class="top-chrome-sep"> · </span><button type="button" class="top-chrome-logout" (click)="logout()">Log out</button>
+      </span>
+    }
+  </div>
+</header>
