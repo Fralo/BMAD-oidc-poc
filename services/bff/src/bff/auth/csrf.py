@@ -39,9 +39,15 @@ _DEFAULT_PORTS: Final[dict[str, int]] = {"http": 80, "https": 443}
 # the gate so a malicious POST under gate-off still bypasses CSRF — but
 # it then hits FastAPI's default 404 (no handler is registered), which
 # is acceptable because there's no state-change downstream. Hard-coded
-# string (not a prefix, not a config var) so an operator can't broaden
-# the exemption via env.
-_CSRF_EXEMPT_PATHS: Final[frozenset[str]] = frozenset({"/v1/test/reset"})
+# strings (not a prefix, not a config var) so an operator can't broaden
+# the exemption via env. Both the canonical path and its trailing-slash
+# variant are listed because FastAPI's `redirect_slashes=True` 307 still
+# flows through this middleware on the original request URL — a POST to
+# `/v1/test/reset/` without the explicit entry would 403 here BEFORE
+# the slash-redirect ever fires.
+_CSRF_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
+    {"/v1/test/reset", "/v1/test/reset/"}
+)
 
 
 class CsrfMiddleware(BaseHTTPMiddleware):

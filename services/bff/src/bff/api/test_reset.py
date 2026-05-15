@@ -50,6 +50,7 @@ References
   Story 1.7 (Response(status_code=204) pattern).
 """
 
+import contextlib
 import hmac
 import logging
 from typing import Annotated, Final
@@ -57,11 +58,12 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete as _delete
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
-from bff.core.errors import ErrorCode
+from bff.core.errors import ErrorCode, build_error_body
 from bff.models import entities
 
 logger = logging.getLogger(__name__)
@@ -85,9 +87,18 @@ def _unauthorized_response() -> JSONResponse:
     """401 envelope reused from `/api/me`'s missing-session response.
 
     The wire-level errorCode is `session_expired` (lower_snake_case per
-    architecture §C5). REUSING this code — rather than adding a fresh
-    `INVALID_TEST_RESET_BEARER` — is intentional: a unique code would
-    leak that the endpoint exists to an attacker probing for it.
+    architecture §C5). Reusing this code — rather than adding a fresh
+    `INVALID_TEST_RESET_BEARER` — minimizes the unique-errorCode
+    side-channel; an attacker scraping bodies on this path sees the
+    same envelope the unauthenticated `/api/me` already emits.
+
+    Note this does NOT fully hide the gate state. The shape difference
+    between the gate-off 404 (FastAPI default `{"detail": "Not Found"}`)
+    and the gate-on 401 (project envelope `{"errorCode": "session_expired",
+    ...}`) lets a probe distinguish the two. That asymmetry is an
+    unavoidable consequence of the gate-off-means-route-not-registered
+    design and is documented as accepted risk per PRD §4 "out of scope"
+    (bearer-token leakage in `ENABLE_TEST_RESET=true` deployments).
     """
     return JSONResponse(
         status_code=ErrorCode.SESSION_EXPIRED.http_status,
@@ -154,17 +165,17 @@ async def test_reset(
     """
     auth_header = request.headers.get("authorization")
     classification = _classify_auth_failure(auth_header)
-    if classification is not None or auth_header is None:
+    if classification is not None:
         # Never log the bearer string itself — only the classifier tag.
         # Architecture §Logging conventions: token material is forbidden
-        # from any log line. The `auth_header is None` half is a
-        # belt-and-braces type narrow for `ty`; the classifier already
-        # returns "missing_header" in that case.
-        logger.warning(
-            "test_reset_unauthorized: %s", classification or "missing_header"
-        )
+        # from any log line.
+        logger.warning("test_reset_unauthorized: %s", classification)
         return _unauthorized_response()
 
+    # `_classify_auth_failure` returns "missing_header" for a None header,
+    # so reaching here implies `auth_header is not None` — the assert is
+    # a no-op at runtime that lets `ty` narrow the type for the slice below.
+    assert auth_header is not None
     # The classifier guarantees the prefix and the non-None header.
     provided = auth_header[len(_BEARER_PREFIX) :]
     expected = cfg.test_reset_token
@@ -180,15 +191,37 @@ async def test_reset(
     # evaluator step — Story 1.4's D31 mitigation for SQLite naive-datetime
     # mismatches; harmless here because the truncate has no WHERE clause.
     # The pattern mirrors `SessionService.delete_session` (session_service.py:226).
-    sessions_result = await db.execute(
-        _delete(entities.Session),
-        execution_options={"synchronize_session": False},
-    )
-    auth_states_result = await db.execute(
-        _delete(entities.AuthState),
-        execution_options={"synchronize_session": False},
-    )
-    await db.commit()
+    #
+    # The truncate+commit is wrapped in a try/except so a DB failure
+    # produces the project's standard `{errorCode, message, detail}` 500
+    # envelope — Story 1.7's honest-degradation pattern (auth.py:487) —
+    # rather than escaping to FastAPI's default 500 handler which emits
+    # the non-conforming `{"detail": "Internal Server Error"}` shape.
+    try:
+        sessions_result = await db.execute(
+            _delete(entities.Session),
+            execution_options={"synchronize_session": False},
+        )
+        auth_states_result = await db.execute(
+            _delete(entities.AuthState),
+            execution_options={"synchronize_session": False},
+        )
+        await db.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        # Best-effort rollback — itself may fail (e.g. dropped connection)
+        # but we ignore that secondary error to preserve the original
+        # signal. Never log the bearer token; the exception type alone is
+        # sufficient for triage.
+        with contextlib.suppress(SQLAlchemyError, OSError):
+            await db.rollback()
+        logger.error("test_reset_db_failure: %s", type(exc).__name__)
+        return JSONResponse(
+            status_code=ErrorCode.INTERNAL_ERROR.http_status,
+            content=build_error_body(
+                ErrorCode.INTERNAL_ERROR.code,
+                ErrorCode.INTERNAL_ERROR.message,
+            ),
+        )
 
     # SQLAlchemy `Result` from a `DELETE` execution is in fact a
     # `CursorResult` that exposes `.rowcount`. The static signature of

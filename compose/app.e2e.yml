@@ -8,13 +8,18 @@
 # endpoint via `Authorization: Bearer ${TEST_RESET_TOKEN}`.
 #
 # Usage (the `-f` form is required because compose's top-level
-# `include:` directive is unconditional — the `${TEST_RESET_TOKEN:?...}`
-# fail-fast must NOT fire on `default` / `dev` profile invocations):
+# `include:` directive is unconditional — its nominal `profiles:` field
+# on `include:` entries is silently ignored, so the
+# `${TEST_RESET_TOKEN:?...}` fail-fast would fire on `default` / `dev`
+# profile invocations if this file lived in `include:`):
 #
 #   docker compose \
 #     -f docker-compose.yml \
 #     -f compose/app.e2e.yml \
 #     --profile e2e up
+#
+# The repo-root `Justfile` wraps that invocation as `just e2e-up` /
+# `just e2e-config` so an operator cannot omit the `-f` flag.
 #
 # The `:?` form on TEST_RESET_TOKEN closes the Story-1.1 D3 concern
 # (the `change-me` placeholder accepted silently): if the operator

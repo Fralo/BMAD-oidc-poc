@@ -425,7 +425,13 @@ async def test_scenario_11_correct_bearer_empty_tables(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """#11: empty tables → 204 empty body; counts pre/post both 0."""
+    """#11: empty tables → 204 empty body; counts pre/post both 0.
+
+    Also covers Patch P4 (AC6 load-bearing assertion): the 204 response
+    MUST NOT carry a Content-Security-Policy header. CSP is the SPA's
+    runtime contract; emitting it on a server-internal e2e endpoint
+    would mislead readers about response provenance.
+    """
     monkeypatch.setattr(settings, "enable_test_reset", True)
     monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
     caplog.set_level(logging.INFO, logger="bff.api.test_reset")
@@ -443,6 +449,8 @@ async def test_scenario_11_correct_bearer_empty_tables(
         # 204 responses (per RFC 7230 §3.3.2 — content-length MUST NOT be
         # sent for 1xx/204). The empty-body check is the load-bearing one.
         assert response.content == b""
+        # Patch P4: AC6 — no CSP on the 204 path.
+        assert "content-security-policy" not in response.headers
         assert await _count_sessions(ctx) == 0
         assert await _count_auth_states(ctx) == 0
         assert any(
@@ -750,4 +758,105 @@ async def test_scenario_22_no_startup_log_when_gate_off(
             "test_reset_route_registered" in r.message for r in caplog.records
         )
     finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 23+: post-review hardening regressions (Patches P2, P6)
+# ---------------------------------------------------------------------------
+
+
+async def test_scenario_23_trailing_slash_path_is_csrf_exempt_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Patch P2: POST `/v1/test/reset/` (trailing slash) MUST behave like
+    the canonical path — bypass CSRF and reach the handler.
+
+    FastAPI's `redirect_slashes=True` 307 still flows through the CSRF
+    middleware on the original request URL; without the trailing-slash
+    entry in `_CSRF_EXEMPT_PATHS`, the middleware would 403 the request
+    BEFORE the slash-redirect could fire. With `follow_redirects=True`,
+    httpx follows the 307 and the underlying handler returns 204. The
+    load-bearing assertion is `!= 403` — a 204 (route mounted, gate on)
+    or even a 404 (gate off, after the redirect) would both be fine; we
+    must NOT see the CSRF 403 envelope.
+    """
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.auth.csrf")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=ctx.app),
+            base_url="http://test",
+            follow_redirects=True,
+        ) as client:
+            response = await client.post(
+                "/v1/test/reset/",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        # The load-bearing non-regression: NOT a CSRF 403.
+        assert response.status_code != 403
+        assert response.status_code == 204
+        # And the bypass log line for the trailing-slash path must fire.
+        assert any(
+            "csrf_exempt_path" in r.message and "path=/v1/test/reset/" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_24_db_failure_returns_project_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Patch P6 / AC10 honest-degradation: a DB error during truncate must
+    produce the project's `{errorCode, message, detail}` 500 envelope and
+    log a single ERROR line with NO bearer-token material.
+
+    Monkeypatches `AsyncSession.execute` so the first DELETE raises
+    `SQLAlchemyError`. The handler is expected to:
+      - roll back (best-effort)
+      - log `test_reset_db_failure: <ExcType>` at ERROR
+      - return 500 with the `INTERNAL_ERROR` envelope
+      - emit NO logs containing the bearer token bytes
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+    bearer = "secret-do-not-log-xyz"
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", bearer)
+    caplog.set_level(logging.ERROR, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=bearer)
+
+    original_execute = _AsyncSession.execute
+
+    async def _failing_execute(self, *args, **kwargs):
+        raise SQLAlchemyError("simulated db failure")
+
+    monkeypatch.setattr(_AsyncSession, "execute", _failing_execute)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+        assert response.status_code == 500
+        body = response.json()
+        # Project envelope keys present and correctly populated.
+        assert body["errorCode"] == "INTERNAL_ERROR"
+        assert "message" in body
+        assert "detail" in body
+        # Exactly one ERROR line, naming the exception type — not the token.
+        failures = [r for r in caplog.records if "test_reset_db_failure" in r.message]
+        assert len(failures) == 1
+        assert "SQLAlchemyError" in failures[0].getMessage()
+        # The bearer token MUST NOT appear anywhere in captured logs.
+        assert bearer not in caplog.text
+    finally:
+        # Restore the patched method before disposing the engine.
+        monkeypatch.setattr(_AsyncSession, "execute", original_execute)
         await ctx.engine.dispose()
