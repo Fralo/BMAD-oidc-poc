@@ -1,6 +1,6 @@
 # Story 1.12: BFF `POST /v1/test/reset` endpoint
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -426,6 +426,12 @@ Python 3.14 is the project floor (pyproject.toml:9 `requires-python = ">=3.14"`)
 
 **From Story 1.9 review (SPA AuthService):**
 - AuthService.logout() POSTs to `/auth/logout` (BFF). This story's endpoint is BFF-only and not consumed by the SPA at all — only by Playwright fixtures (Story 1.11).
+
+### Review Findings
+
+- [x] [Review][Patch] Stale forward-pointer comment in `compose/app.yml` [compose/app.yml:23-25] — "Story 1.12 will add ENABLE_TEST_RESET=true..." comment remained after story 1.12 was implemented; updated to past-tense accurate description of the e2e overlay approach.
+- [x] [Review][Defer] Non-idiomatic `except ValueError, TypeError:` in `csrf.py` [services/bff/src/bff/auth/csrf.py:103] — pre-existing from Story 1.6; deferred to future style cleanup.
+- [x] [Review][Defer] `_build_app` test helper mutates global `settings` singleton before `monkeypatch` scope [services/bff/tests/api/test_test_reset.py:75-76] — low-risk; deferred to test-quality cleanup pass.
 
 ### Git intelligence summary
 
