@@ -1,5 +1,5 @@
 # generated: 2026-05-14
-# last_updated: 2026-05-15 (story 1.6 implementation complete; status → review)
+# last_updated: 2026-05-15 (story 1.7 code review complete; status → done)
 # project: BMAD_books
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (story 1.6 implementation complete; status → review)
+last_updated: 2026-05-15 (story 1.7 code review complete; status → done)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -50,7 +50,7 @@ development_status:
   1-4-bff-session-and-auth-state-schema-alembic-migration: done
   1-5-bff-cookie-session-oidc-plugin-pkce-synthetic-idp-test-harness: done
   1-6-bff-csrf-middleware-csp-header: review
-  1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: ready-for-dev
+  1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: done
   1-8-spa-scaffold-tailwind-v4-design-tokens: done
   1-9-spa-authservice-interceptors-functional-guards: done
   1-10-spa-loginview-topchrome-route-table: backlog

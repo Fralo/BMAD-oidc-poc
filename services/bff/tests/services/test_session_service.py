@@ -218,6 +218,48 @@ async def test_get_session_returns_row_or_none(session: AsyncSession) -> None:
     assert missing is None
 
 
+async def test_delete_session_removes_row(session: AsyncSession) -> None:
+    """`delete_session` removes the row regardless of `expires_at` (the
+    explicit logout case)."""
+    service = SessionService()
+    row = entities.Session(
+        id="logout-sess",
+        sub="sub-l",
+        access_token="a",
+        refresh_token="r",
+        id_token="i",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        csrf_secret="c",
+    )
+    session.add(row)
+    await session.commit()
+
+    await service.delete_session(session, session_id="logout-sess")
+    assert await service.get_session(session, session_id="logout-sess") is None
+
+
+async def test_delete_session_is_idempotent_when_missing(
+    session: AsyncSession,
+) -> None:
+    """Calling delete_session against an unknown id is a no-op (no exception)."""
+    service = SessionService()
+    # Seed an unrelated row to confirm we don't nuke neighbors by mistake.
+    row = entities.Session(
+        id="neighbor",
+        sub="sub-n",
+        access_token="a",
+        refresh_token="r",
+        id_token="i",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        csrf_secret="c",
+    )
+    session.add(row)
+    await session.commit()
+
+    await service.delete_session(session, session_id="does-not-exist")
+    assert await service.get_session(session, session_id="neighbor") is not None
+
+
 async def test_delete_expired_session_removes_only_expired(
     session: AsyncSession,
 ) -> None:

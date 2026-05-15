@@ -5,9 +5,13 @@ without touching a real Keycloak. Exercises the AC9 scenario matrix: happy
 path, all callback failure modes, cookie attributes, return_to validation.
 """
 
-from datetime import UTC, datetime
+import base64
+import logging
+from datetime import UTC, datetime, timedelta
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import jwt
 import pytest
 import respx
@@ -25,6 +29,7 @@ from tests.auth.synthetic_idp import (
     DEFAULT_AUDIENCE,
     DEFAULT_ISSUER,
     DEFAULT_JWKS_URL,
+    DEFAULT_TOKEN_URL,
     SyntheticIdp,
     build_synthetic_idp,
     stash_authorization_code,
@@ -616,3 +621,768 @@ async def test_auth_callback_jwks_fetch_failure_returns_400(
     )
     assert response.status_code == 400
     assert response.json()["errorCode"] == "auth_state_invalid"
+
+
+# ===========================================================================
+# /auth/logout (Story 1.7)
+# ===========================================================================
+
+
+@pytest.fixture
+def logout_setup(monkeypatch: pytest.MonkeyPatch, configured_idp):
+    """Build on `configured_idp`, but override `bff_base_url` to match the
+    test client's `base_url` so the CSRF middleware's Origin check accepts
+    the request. Yields `(respx_mock, SyntheticIdp)` like `configured_idp`.
+    """
+    monkeypatch.setattr(settings, "bff_base_url", "http://test")
+    return configured_idp
+
+
+async def _seed_session(
+    client: AsyncClient,
+    session: AsyncSession,
+    idp: SyntheticIdp,
+) -> tuple[str, str, entities.Session]:
+    """Run /auth/login + /auth/callback; return cookies + the persisted row."""
+    response = await _complete_login(client, session, idp)
+    assert response.status_code == 302
+    session_cookie = response.cookies.get(settings.bff_session_cookie_name)
+    csrf_value = response.cookies.get(settings.bff_csrf_cookie_name)
+    assert session_cookie, "bff_session cookie was not issued on login"
+    assert csrf_value, "bff_csrf cookie was not issued on login"
+
+    rows = (await session.execute(select(entities.Session))).scalars().all()
+    assert len(rows) == 1, "exactly one sessions row should exist after login"
+    return session_cookie, csrf_value, rows[0]
+
+
+async def _logout(
+    client: AsyncClient,
+    *,
+    session_cookie: str | None,
+    csrf_value: str | None,
+    csrf_header: str | None = "__from_cookie__",
+    origin: str = "http://test",
+) -> Response:
+    """POST /auth/logout with cookies + CSRF header + Origin.
+
+    `csrf_header="__from_cookie__"` (default) mirrors the cookie value (happy
+    path / honest client). Pass an explicit value (or `None` to omit) to
+    exercise the CSRF middleware's reject path.
+    """
+    cookies: dict[str, str] = {}
+    if session_cookie is not None:
+        cookies[settings.bff_session_cookie_name] = session_cookie
+    if csrf_value is not None:
+        cookies[settings.bff_csrf_cookie_name] = csrf_value
+
+    headers: dict[str, str] = {"Origin": origin}
+    header_value: str | None = (
+        csrf_value if csrf_header == "__from_cookie__" else csrf_header
+    )
+    if header_value is not None:
+        headers["X-CSRF-Token"] = header_value
+
+    return await client.post("/auth/logout", cookies=cookies, headers=headers)
+
+
+def _parse_set_cookies(response: Response, name: str) -> list[SimpleCookie]:
+    """Return one parsed `SimpleCookie` per `Set-Cookie` header that defines
+    a cookie named `name`. We parse each header individually so multiple
+    `Set-Cookie` lines for the same cookie don't collapse together.
+    """
+    out: list[SimpleCookie] = []
+    for raw in response.headers.get_list("set-cookie"):
+        jar = SimpleCookie()
+        jar.load(raw)
+        if name in jar:
+            out.append(jar)
+    return out
+
+
+def _cookie_attr(set_cookie_line: str, attr: str) -> str | None:
+    """Extract a Set-Cookie attribute value by exact key match.
+
+    `"Path=/" in line` falsely matches `"Path=/api"` — splitting on `;` and
+    comparing the trimmed key ensures the attribute value is exactly `/`
+    (or whatever else the production code set).
+    """
+    for chunk in set_cookie_line.split(";"):
+        key, _, value = chunk.strip().partition("=")
+        if key.lower() == attr.lower():
+            return value
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Scenario 1: happy path
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_happy_path_returns_204_and_clears_session(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, row = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    stored_id_token = row.id_token
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    # 204 with empty body (AC2 + AC8 scenario 13). Per RFC 7230 §3.3.2 a 204
+    # response MUST NOT carry a content-length header; FastAPI omits it
+    # correctly, so we only assert the body is empty.
+    assert response.status_code == 204
+    assert response.content == b""
+    assert "content-length" not in response.headers
+
+    # Revocation captured with correct form fields (AC8 scenario 1).
+    assert len(idp.captured_revocations) == 1
+    rev = idp.captured_revocations[0]
+    assert rev["token"] == "synthetic-refresh-token"
+    assert rev["token_type_hint"] == "refresh_token"
+
+    # End-session captured with the stored id_token (AC8 scenario 1).
+    assert len(idp.captured_end_sessions) == 1
+    es = idp.captured_end_sessions[0]
+    assert es["id_token_hint"] == stored_id_token
+    assert es["client_id"] == DEFAULT_AUDIENCE
+    assert es["client_secret"] == "test-bff-secret"
+
+    # The sessions row was deleted.
+    result = await session.execute(select(entities.Session))
+    assert result.scalars().all() == []
+
+    # Both clearing cookies carry Max-Age=0.
+    session_cookies = _parse_set_cookies(response, settings.bff_session_cookie_name)
+    csrf_cookies = _parse_set_cookies(response, settings.bff_csrf_cookie_name)
+    assert session_cookies and csrf_cookies
+    assert session_cookies[0][settings.bff_session_cookie_name]["max-age"] == "0"
+    assert csrf_cookies[0][settings.bff_csrf_cookie_name]["max-age"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Scenario 14: HTTP Basic auth on /revocation (RFC 7009 §2.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_uses_http_basic_auth_on_revocation(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    auth_header = idp.captured_revocations[0]["_authorization"]
+    assert auth_header.startswith("Basic ")
+    decoded = base64.b64decode(auth_header[len("Basic ") :]).decode("ascii")
+    assert decoded == f"{DEFAULT_AUDIENCE}:test-bff-secret"
+
+
+# ---------------------------------------------------------------------------
+# Scenario 2: revocation 5xx → 204; end-session still called
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_revocation_5xx_still_returns_204(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    idp.revocation_response_override = httpx.Response(500)
+    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert response.status_code == 204
+    # Both upstream calls happened — revocation 500'd (caught) and end-session
+    # still ran per A7. Without explicitly asserting captured_revocations, a
+    # regression that no-ops the revoke call would slip through silently.
+    assert len(idp.captured_revocations) == 1
+    assert len(idp.captured_end_sessions) == 1
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    assert any(
+        "auth_logout_revocation_failed" in rec.message
+        and "HTTPStatusError" in rec.message
+        for rec in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 3/4: revocation ConnectError / ReadTimeout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "classifier"),
+    [
+        (httpx.ConnectError("refused"), "ConnectError"),
+        (httpx.ReadTimeout("slow"), "ReadTimeout"),
+        (httpx.ConnectTimeout("dns hang"), "ConnectTimeout"),
+    ],
+)
+async def test_logout_revocation_transport_failure_still_returns_204(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+    override: httpx.HTTPError,
+    classifier: str,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    idp.revocation_response_override = override
+    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert response.status_code == 204
+    # Revocation transport call DID happen (it threw before reaching the AS,
+    # but the BFF still attempted it — captured by the synthetic IdP's
+    # handler-raise path before the request_content was even parsed).
+    assert len(idp.captured_revocations) == 1
+    assert len(idp.captured_end_sessions) == 1
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    assert any(
+        f"auth_logout_revocation_failed: {classifier}" in rec.message
+        for rec in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenarios 5/6: end-session 5xx / ConnectError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("override", "classifier"),
+    [
+        (httpx.Response(500), "HTTPStatusError"),
+        (httpx.ConnectError("refused"), "ConnectError"),
+    ],
+)
+async def test_logout_end_session_failure_still_returns_204(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+    override,
+    classifier: str,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    idp.end_session_response_override = override
+    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert response.status_code == 204
+    # Revocation still happened normally.
+    assert len(idp.captured_revocations) == 1
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    assert any(
+        f"auth_logout_end_session_failed: {classifier}" in rec.message
+        for rec in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scenario 7: both revocation AND end-session fail
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_both_upstream_failures_still_returns_204(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    idp.revocation_response_override = httpx.Response(502)
+    idp.end_session_response_override = httpx.ConnectError("down")
+    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert response.status_code == 204
+    # Both upstream calls were attempted before being short-circuited by
+    # their respective overrides; assert the captures so a regression that
+    # silently skips either call is detected.
+    assert len(idp.captured_revocations) == 1
+    assert len(idp.captured_end_sessions) == 1
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    messages = [rec.message for rec in caplog.records]
+    assert any("auth_logout_revocation_failed" in m for m in messages)
+    assert any("auth_logout_end_session_failed" in m for m in messages)
+
+
+# ---------------------------------------------------------------------------
+# Scenario 8: missing session cookie → 401 session_expired
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_missing_session_cookie_returns_401(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    # Send a CSRF cookie+header so the CSRF middleware lets the request through;
+    # the handler then sees a missing session cookie and emits the 401 envelope.
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=None,
+        csrf_value="csrf-without-session",
+    )
+
+    assert response.status_code == 401
+    body = response.json()
+    assert body["errorCode"] == "session_expired"
+    # No IdP calls.
+    assert idp.captured_revocations == []
+    assert idp.captured_end_sessions == []
+    # Defensive cookie clears emitted.
+    session_clears = _parse_set_cookies(response, settings.bff_session_cookie_name)
+    csrf_clears = _parse_set_cookies(response, settings.bff_csrf_cookie_name)
+    assert session_clears and csrf_clears
+    assert session_clears[0][settings.bff_session_cookie_name]["max-age"] == "0"
+    assert csrf_clears[0][settings.bff_csrf_cookie_name]["max-age"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Scenario 9: unknown session cookie → 401 session_expired
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_unknown_session_cookie_returns_401(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    response = await _logout(
+        client_no_redirects,
+        session_cookie="does-not-exist",
+        csrf_value="csrf-irrelevant",
+    )
+
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    assert idp.captured_revocations == []
+    assert idp.captured_end_sessions == []
+
+
+# ---------------------------------------------------------------------------
+# Scenario 10: expired session row → 401, row deleted lazily
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_expired_session_returns_401_and_deletes_row(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    # Seed a directly-inserted expired session row.
+    expired = entities.Session(
+        id="expired-session-id",
+        sub="sub-expired",
+        access_token="a",
+        refresh_token="r",
+        id_token="i",
+        expires_at=datetime.now(UTC) - timedelta(hours=1),
+        csrf_secret="csrf-expired",
+    )
+    session.add(expired)
+    await session.commit()
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie="expired-session-id",
+        csrf_value="csrf-irrelevant",
+    )
+
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    # No IdP calls; row was cleaned up lazily.
+    assert idp.captured_revocations == []
+    assert idp.captured_end_sessions == []
+    result = await session.execute(
+        select(entities.Session).where(entities.Session.id == "expired-session-id")
+    )
+    assert result.scalars().first() is None
+
+
+# ---------------------------------------------------------------------------
+# Scenario 11: refresh-replay rejection after revocation (AC7)
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_revokes_refresh_token_at_idp(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    mock, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    assert idp.revoked_refresh_tokens == set()
+
+    await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert "synthetic-refresh-token" in idp.revoked_refresh_tokens
+
+    # Now replay the revoked refresh_token at the IdP's /token endpoint;
+    # the synthetic IdP must return 400 invalid_grant.
+    async with httpx.AsyncClient() as raw:
+        replay = await raw.post(
+            DEFAULT_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": "synthetic-refresh-token",
+                "client_id": DEFAULT_AUDIENCE,
+                "client_secret": "test-bff-secret",
+            },
+        )
+    assert replay.status_code == 400
+    assert replay.json() == {"error": "invalid_grant"}
+    _ = mock  # mock context kept alive by the fixture; lint sees it as unused.
+
+
+# ---------------------------------------------------------------------------
+# Scenario 12: cookie attributes on clear (HttpOnly / SameSite / Path / Secure)
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_clear_cookies_have_correct_attributes(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    raw_lines = response.headers.get_list("set-cookie")
+    session_prefix = f"{settings.bff_session_cookie_name}="
+    csrf_prefix = f"{settings.bff_csrf_cookie_name}="
+    session_line = next(line for line in raw_lines if line.startswith(session_prefix))
+    csrf_line = next(line for line in raw_lines if line.startswith(csrf_prefix))
+
+    # Session cookie clear: HttpOnly + SameSite=lax + Path=/ + Max-Age=0.
+    assert "HttpOnly" in session_line
+    assert "SameSite=lax" in session_line or "SameSite=Lax" in session_line
+    # Substring "Path=/" matches "Path=/api" too; assert the attribute
+    # value is exactly "/" by walking the parsed attribute list.
+    assert _cookie_attr(session_line, "Path") == "/"
+    assert "Max-Age=0" in session_line
+
+    # CSRF cookie clear: NOT HttpOnly + SameSite=lax + Path=/ + Max-Age=0.
+    assert "HttpOnly" not in csrf_line
+    assert "SameSite=lax" in csrf_line or "SameSite=Lax" in csrf_line
+    assert _cookie_attr(csrf_line, "Path") == "/"
+    assert "Max-Age=0" in csrf_line
+
+    # bff_session_cookie_secure=False (logout_setup default) → no Secure flag.
+    assert "Secure" not in session_line
+    assert "Secure" not in csrf_line
+
+
+async def test_logout_clear_cookies_carry_secure_when_setting_enabled(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, idp = logout_setup
+    monkeypatch.setattr(settings, "bff_session_cookie_secure", True)
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    raw_lines = response.headers.get_list("set-cookie")
+    cleared_session = [
+        line
+        for line in raw_lines
+        if line.startswith(f"{settings.bff_session_cookie_name}=")
+        and "Max-Age=0" in line
+    ]
+    cleared_csrf = [
+        line
+        for line in raw_lines
+        if line.startswith(f"{settings.bff_csrf_cookie_name}=") and "Max-Age=0" in line
+    ]
+    assert cleared_session and "Secure" in cleared_session[0]
+    assert cleared_csrf and "Secure" in cleared_csrf[0]
+
+
+# ---------------------------------------------------------------------------
+# Scenario 15: missing CSRF → 403 csrf_invalid (Story 1.6 middleware)
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_missing_csrf_header_returns_403(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+        csrf_header=None,  # omit X-CSRF-Token entirely
+    )
+
+    assert response.status_code == 403
+    assert response.json()["errorCode"] == "csrf_invalid"
+    # Handler was never reached, so no IdP traffic and the row is intact.
+    assert idp.captured_revocations == []
+    assert idp.captured_end_sessions == []
+    rows = (await session.execute(select(entities.Session))).scalars().all()
+    assert len(rows) == 1
+
+
+async def test_logout_mismatched_csrf_header_returns_403(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+        csrf_header="not-the-real-secret",
+    )
+    assert response.status_code == 403
+    assert response.json()["errorCode"] == "csrf_invalid"
+    _ = idp
+
+
+# ---------------------------------------------------------------------------
+# Empty-token guards (post-review P4): skip upstream calls when the stored
+# token is empty so the WARN log doesn't fabricate phantom "AS failures".
+# ---------------------------------------------------------------------------
+
+
+async def _insert_logout_row(
+    session: AsyncSession,
+    *,
+    session_id: str = "row-with-empty-tokens",
+    refresh_token: str = "",
+    id_token: str = "",
+) -> str:
+    row = entities.Session(
+        id=session_id,
+        sub="sub-empty-tokens",
+        access_token="a",
+        refresh_token=refresh_token,
+        id_token=id_token,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        csrf_secret="csrf-empty",
+    )
+    session.add(row)
+    await session.commit()
+    return session_id
+
+
+async def test_logout_empty_refresh_token_skips_revoke(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, idp = logout_setup
+    session_id = await _insert_logout_row(
+        session, refresh_token="", id_token="some-id-token"
+    )
+    caplog.set_level(logging.INFO, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_id,
+        csrf_value="csrf-empty",
+    )
+
+    assert response.status_code == 204
+    # No revocation request fired — the BFF didn't try to revoke ``.
+    assert idp.captured_revocations == []
+    # End-session still runs because id_token IS present.
+    assert len(idp.captured_end_sessions) == 1
+    # Row deleted, classifier log emitted.
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    assert any("auth_logout_no_refresh_token" in r.message for r in caplog.records)
+
+
+async def test_logout_empty_id_token_skips_end_session(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, idp = logout_setup
+    session_id = await _insert_logout_row(
+        session, refresh_token="some-refresh-token", id_token=""
+    )
+    caplog.set_level(logging.INFO, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_id,
+        csrf_value="csrf-empty",
+    )
+
+    assert response.status_code == 204
+    # Revocation DID fire (refresh_token was present).
+    assert len(idp.captured_revocations) == 1
+    # End-session SKIPPED — no captured request.
+    assert idp.captured_end_sessions == []
+    assert (await session.execute(select(entities.Session))).scalars().all() == []
+    assert any("auth_logout_no_id_token" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# DB-failure guard (post-review P2): a SQLAlchemyError raised by
+# `delete_session` after upstream success must NOT crash the handler — the
+# cookies still clear and the response is still 204, honoring UX §J5.
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_db_delete_failure_still_returns_204_and_clears_cookies(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    from bff.api import auth as auth_module
+
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    caplog.set_level(logging.ERROR, logger="bff.api.auth")
+
+    async def _boom(*args, **kwargs):
+        raise OperationalError("statement", {}, Exception("db connection lost"))
+
+    monkeypatch.setattr(auth_module._session_service, "delete_session", _boom)
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    # UX §J5: a half-logged-out state is forbidden. Even though the DB
+    # delete failed, the user receives 204 with cookie-clear headers — the
+    # browser-side session ends, and operations sees the failure in logs.
+    assert response.status_code == 204
+    raw_set_cookies = response.headers.get_list("set-cookie")
+    assert any(
+        line.startswith(f"{settings.bff_session_cookie_name}=") and "Max-Age=0" in line
+        for line in raw_set_cookies
+    )
+    assert any("auth_logout_session_delete_failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Status-code classifier (post-review P6): HTTPStatusError WARN log carries
+# the response status code so 401 / 429 / 5xx are distinguishable from each
+# other in operations.
+# ---------------------------------------------------------------------------
+
+
+async def test_logout_revocation_4xx_classifier_includes_status_code(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    logout_setup,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, idp = logout_setup
+    session_cookie, csrf_value, _ = await _seed_session(
+        client_no_redirects, session, idp
+    )
+    idp.revocation_response_override = httpx.Response(401)
+    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+
+    response = await _logout(
+        client_no_redirects,
+        session_cookie=session_cookie,
+        csrf_value=csrf_value,
+    )
+
+    assert response.status_code == 204
+    assert any(
+        "auth_logout_revocation_failed: HTTPStatusError(401)" in rec.message
+        for rec in caplog.records
+    )

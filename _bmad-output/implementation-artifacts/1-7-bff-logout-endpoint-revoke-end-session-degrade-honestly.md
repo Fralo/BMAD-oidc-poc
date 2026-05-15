@@ -1,6 +1,6 @@
 # Story 1.7: BFF logout endpoint (revoke + end-session + degrade honestly)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -68,39 +68,39 @@ Coverage of `src/bff/api/auth.py` (with the new handler) AND the new functions i
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Add OIDC helpers — `revoke_refresh_token` + `end_session`** (AC: #2, #3, #4, #14)
-  - [ ] In `services/bff/src/bff/auth/keycloak_cookie_session.py`, add `async def revoke_refresh_token(*, refresh_token: str, revocation_url: str, client_id: str, client_secret: str) -> None`:
+- [x] **Task 1: Add OIDC helpers — `revoke_refresh_token` + `end_session`** (AC: #2, #3, #4, #14)
+  - [x] In `services/bff/src/bff/auth/keycloak_cookie_session.py`, add `async def revoke_refresh_token(*, refresh_token: str, revocation_url: str, client_id: str, client_secret: str) -> None`:
     - Constructs a fresh `httpx.AsyncClient(timeout=_TOKEN_EXCHANGE_TIMEOUT)` (5s connect / 10s read — reuse the existing module constant at keycloak_cookie_session.py:34).
     - POSTs to `revocation_url` with `data={"token": refresh_token, "token_type_hint": "refresh_token"}` AND `auth=(client_id, client_secret)` (httpx auto-base64s for `Authorization: Basic` per RFC 7009 §2.1).
     - Calls `response.raise_for_status()` so any non-2xx raises `httpx.HTTPStatusError`.
     - Does NOT swallow exceptions — caller (`/auth/logout` handler) wraps in try/except and degrades.
     - **Authlib note:** `AsyncOAuth2Client` does NOT expose a clean revocation method (it's primarily for token-fetching). Use bare `httpx.AsyncClient` here — simpler than constructing an Authlib client.
-  - [ ] Add `async def end_session(*, id_token: str, end_session_url: str, client_id: str, client_secret: str) -> None`:
+  - [x] Add `async def end_session(*, id_token: str, end_session_url: str, client_id: str, client_secret: str) -> None`:
     - Same `httpx.AsyncClient(timeout=_TOKEN_EXCHANGE_TIMEOUT)` pattern.
     - POSTs to `end_session_url` with form body `data={"id_token_hint": id_token, "client_id": client_id, "client_secret": client_secret}`. **Important:** Keycloak's RP-Initiated Logout (OIDC) accepts the `client_id`/`client_secret` form fields for confidential clients; the `id_token_hint` value comes from the `sessions.id_token` column.
     - `raise_for_status()`; caller handles the exception.
-  - [ ] Both helpers MUST NOT log the token values; log at INFO level on entry/exit with first-8-chars of the relevant id (e.g., `auth_logout_revocation_call session_id=<first-8>...`); rely on the caller to log the failure classifier at WARN.
-  - [ ] Create `services/bff/tests/auth/test_keycloak_cookie_session.py` test cases (extend existing file):
+  - [x] Both helpers MUST NOT log the token values; log at INFO level on entry/exit with first-8-chars of the relevant id (e.g., `auth_logout_revocation_call session_id=<first-8>...`); rely on the caller to log the failure classifier at WARN. **Implementation note:** to match Story 1.5's `exchange_code` style (no INFO logs inside the helper; the route handler logs the lifecycle line with `session_id` correlation), the helpers themselves are silent. The caller emits `auth_logout_start` / `auth_logout_complete` with `_safe_session_id_log(session_id)` and `_safe_session_id_log(sub)`.
+  - [x] Create `services/bff/tests/auth/test_keycloak_cookie_session.py` test cases (extend existing file):
     - `test_revoke_refresh_token_posts_form_body_and_basic_auth` — uses `respx.mock` to assert the URL, method, form fields, and `Authorization: Basic` header.
     - `test_revoke_refresh_token_raises_on_5xx` — asserts `httpx.HTTPStatusError` propagates.
     - `test_revoke_refresh_token_raises_on_connect_error` — asserts `httpx.ConnectError` propagates.
     - `test_end_session_posts_form_body_with_id_token_hint` — same shape as revocation tests.
     - `test_end_session_raises_on_5xx` and `test_end_session_raises_on_connect_error`.
-  - [ ] Run `uv run pytest tests/auth/test_keycloak_cookie_session.py -v` — all new + existing tests pass.
+  - [x] Run `uv run pytest tests/auth/test_keycloak_cookie_session.py -v` — all new + existing tests pass.
 
-- [ ] **Task 2: Add `SessionService.delete_session`** (AC: #2 step 4, #5)
-  - [ ] In `services/bff/src/bff/services/session_service.py`, add `async def delete_session(self, db: AsyncSession, *, session_id: str) -> None`:
+- [x] **Task 2: Add `SessionService.delete_session`** (AC: #2 step 4, #5)
+  - [x] In `services/bff/src/bff/services/session_service.py`, add `async def delete_session(self, db: AsyncSession, *, session_id: str) -> None`:
     - Single indexed `delete(entities.Session).where(Session.id == session_id)` — symmetric with `delete_expired_session` at session_service.py:193–210 but without the `expires_at < now` predicate (this is the explicit logout case, not the lazy-cleanup case).
     - `synchronize_session=False` for the same D31 reason as `delete_expired_session` (SQLite naive datetime / ORM evaluator mismatch).
     - `await db.commit()` after the execute.
     - One-line INFO log `session_deleted id=<first-8>...` per architecture lines 783–788.
-  - [ ] In `services/bff/tests/services/test_session_service.py` (extend existing), add:
+  - [x] In `services/bff/tests/services/test_session_service.py` (extend existing), add:
     - `test_delete_session_removes_row` — seed a `sessions` row, call `delete_session`, query confirms `None`.
     - `test_delete_session_is_idempotent_when_missing` — call `delete_session` against a non-existent id; no exception; row count unchanged.
-  - [ ] Run `uv run pytest tests/services/test_session_service.py -v` — all new + existing tests pass.
+  - [x] Run `uv run pytest tests/services/test_session_service.py -v` — all new + existing tests pass.
 
-- [ ] **Task 3: Author `POST /auth/logout` handler** (AC: #1, #2, #3, #4, #5)
-  - [ ] In `services/bff/src/bff/api/auth.py`, add a new handler `@router.post("/auth/logout", status_code=204)`:
+- [x] **Task 3: Author `POST /auth/logout` handler** (AC: #1, #2, #3, #4, #5)
+  - [x] In `services/bff/src/bff/api/auth.py`, add a new handler `@router.post("/auth/logout", status_code=204)`:
     - Signature: `async def auth_logout(request: Request, db: Annotated[AsyncSession, Depends(get_session)], cfg: Annotated[AppSettings, Depends(_settings_dep)]) -> Response` (return `from fastapi import Response`; FastAPI emits 204 with empty body when `Response(status_code=204)` is returned).
     - Step 1 (session resolution): Read `request.cookies.get(cfg.bff_session_cookie_name)` → `session_id`. If absent → call `_clear_cookies_and_session_expired(cfg)` (new helper in same file) which returns `JSONResponse(status_code=401, content={errorCode:"session_expired", ...})` with `Set-Cookie` clearing both `bff_session` and `bff_csrf` (defensive).
     - Step 2: `row = await _session_service.get_session(db, session_id=session_id)`. If `None` OR `_as_utc_aware(row.expires_at) < datetime.now(UTC)` → call `_session_service.delete_expired_session(...)` (only if `row is not None`) → return the 401 envelope as in Step 1.
@@ -109,28 +109,28 @@ Coverage of `src/bff/api/auth.py` (with the new handler) AND the new functions i
     - Step 5 (delete row): `await _session_service.delete_session(db, session_id=session_id)`.
     - Step 6 (build response): Construct `response = Response(status_code=204)`. Apply Set-Cookie clearing for `bff_session` and `bff_csrf` via two `response.set_cookie(...)` calls — see "cookie-clearing helper" below.
     - Final INFO log: `auth_logout_complete sub=<first-8>... session_id=<first-8>...` (reuse the existing `_safe_session_id_log` helper at auth.py:68).
-  - [ ] Add a helper `_clear_session_cookies(response: Response, cfg: AppSettings) -> None` at module scope (auth.py):
+  - [x] Add a helper `_clear_session_cookies(response: Response, cfg: AppSettings) -> None` at module scope (auth.py):
     - Encapsulates the two `set_cookie(value="", max_age=0, ...)` calls so the success and the AC5 401-path share one implementation.
     - Session cookie clear: `key=cfg.bff_session_cookie_name, value="", max_age=0, httponly=True, samesite="lax", secure=cfg.bff_session_cookie_secure, path="/"`.
     - CSRF cookie clear: `key=cfg.bff_csrf_cookie_name, value="", max_age=0, httponly=False, samesite="lax", secure=cfg.bff_session_cookie_secure, path="/"` (non-HttpOnly to mirror the original `httponly=False` at auth.py:282).
     - **Do NOT** use `response.delete_cookie(...)` — Story 1.5 Review Findings established that `delete_cookie` omits `secure`/`samesite` args and breaks RFC 6265bis browsers under `BFF_SESSION_COOKIE_SECURE=True`. Use `set_cookie` with `max_age=0` explicitly.
-  - [ ] Add a helper `_session_expired_with_cookie_clear(cfg: AppSettings) -> JSONResponse`:
+  - [x] Add a helper `_session_expired_with_cookie_clear(cfg: AppSettings) -> JSONResponse`:
     - Returns the 401 `session_expired` envelope with both cookies cleared (calls `_clear_session_cookies` on the JSONResponse).
     - Defensive: even though the cookie is stale, clearing it prevents browser-side replay.
-  - [ ] Imports to add at the top of auth.py: `from fastapi import APIRouter, Depends, Request, Response`; ensure `httpx` is imported for the exception types in the try/except (`import httpx`). `from bff.auth.keycloak_cookie_session import (... revoke_refresh_token, end_session, ...)` extends the existing import block.
+  - [x] Imports to add at the top of auth.py: `from fastapi import APIRouter, Depends, Request, Response`; ensure `httpx` is imported for the exception types in the try/except (`import httpx`). `from bff.auth.keycloak_cookie_session import (... revoke_refresh_token, end_session, ...)` extends the existing import block.
 
-- [ ] **Task 4: Extend synthetic IdP for revocation enforcement** (AC: #7, #11)
-  - [ ] In `services/bff/tests/auth/synthetic_idp.py`:
+- [x] **Task 4: Extend synthetic IdP for revocation enforcement** (AC: #7, #11)
+  - [x] In `services/bff/tests/auth/synthetic_idp.py`:
     - Add `revoked_refresh_tokens: set[str] = field(default_factory=set)` to the `SyntheticIdp` dataclass (after `pending_claims` at line 88).
     - Modify `_revocation_handler` (line 227–229): parse the form body, extract the `token` field, add to `idp.revoked_refresh_tokens`, return 200. The captured-revocations list is still appended for assertion access.
     - Modify `_token_handler` (line 196–223): add a new branch BEFORE the existing PKCE-verifier check — if `body.get("grant_type") == "refresh_token"`, then check `body.get("refresh_token") in idp.revoked_refresh_tokens`. If yes → return `httpx.Response(400, json={"error": "invalid_grant"})`. If the token is NOT revoked AND the request is otherwise valid, return a fresh token bundle (reuse the existing claims-stash pattern — for refresh-grant, mint a new access/id-token with the same `sub` from the original session; for the AC11 test, the refresh attempt is EXPECTED to fail so the "happy-path refresh" branch doesn't need to be fully implemented — a `400 invalid_request` for unknown `refresh_token` is acceptable as a fallthrough).
     - **Backward compatibility:** existing Story 1.5 tests call `/token` only with `grant_type=authorization_code`; the new `grant_type=refresh_token` branch is additive and doesn't break them.
-  - [ ] Run `uv run pytest tests/auth/ -v` — Story 1.5's auth tests still pass.
+  - [x] Run `uv run pytest tests/auth/ -v` — Story 1.5's auth tests still pass.
 
-- [ ] **Task 5: Route-level tests for `/auth/logout`** (AC: #2, #3, #4, #5, #7, #8 — scenarios 1–14)
-  - [ ] In `services/bff/tests/api/test_auth.py` (extend), add a `class TestAuthLogout` (or top-level test functions following the existing style — Story 1.5 used top-level `async def test_...` functions; match the same style).
-  - [ ] Add a helper `async def _seed_session(client, session, idp) -> tuple[str, str, entities.Session]` that runs `_complete_login` and returns `(session_cookie_value, csrf_cookie_value, sessions_row)` for use by logout tests. This avoids each test re-doing the full login round-trip.
-  - [ ] Implement scenarios 1–10 from AC8 matrix (#11 is below):
+- [x] **Task 5: Route-level tests for `/auth/logout`** (AC: #2, #3, #4, #5, #7, #8 — scenarios 1–14)
+  - [x] In `services/bff/tests/api/test_auth.py` (extend), add a `class TestAuthLogout` (or top-level test functions following the existing style — Story 1.5 used top-level `async def test_...` functions; match the same style).
+  - [x] Add a helper `async def _seed_session(client, session, idp) -> tuple[str, str, entities.Session]` that runs `_complete_login` and returns `(session_cookie_value, csrf_cookie_value, sessions_row)` for use by logout tests. This avoids each test re-doing the full login round-trip.
+  - [x] Implement scenarios 1–10 from AC8 matrix (#11 is below):
     - **Scenario 1 (happy path):** Seed via login. POST `/auth/logout` with cookies + `X-CSRF-Token` header. Assert 204; assert empty body (`response.content == b""`); assert `idp.captured_revocations[0]["token"] == "synthetic-refresh-token"` AND `idp.captured_revocations[0]["token_type_hint"] == "refresh_token"`; assert `idp.captured_end_sessions[0]["id_token_hint"]` equals the seeded id_token; query confirms the `sessions` row is gone; both Set-Cookie headers carry `Max-Age=0`.
     - **Scenario 2 (revocation 5xx):** Use `respx_mock.post(DEFAULT_REVOCATION_URL).mock(return_value=httpx.Response(500))` to override the default 200. Assert 204; assert end-session was still called; assert `sessions` row deleted; assert cookies cleared; assert WARN log present (capture via `caplog`).
     - **Scenarios 3–4 (revocation ConnectError / ReadTimeout):** Use `respx_mock.post(DEFAULT_REVOCATION_URL).mock(side_effect=httpx.ConnectError("boom"))` and `httpx.ReadTimeout("slow")`. Same assertions as #2.
@@ -142,30 +142,30 @@ Coverage of `src/bff/api/auth.py` (with the new handler) AND the new functions i
     - **Scenarios 12 + 14 (cookie attributes + Basic auth):** Pull the raw Set-Cookie headers via `response.headers.get_list("set-cookie")` and parse with the `http.cookies` stdlib OR regex; assert each attribute. For Basic auth, intercept the `_revocation_handler` to capture the request and assert `request.headers.get("authorization", "").startswith("Basic ")` AND decode the base64 to assert `"<client_id>:<client_secret>"` is the decoded value.
     - **Scenario 13 (empty 204 body):** assert `response.content == b""` AND `response.headers.get("content-length") == "0"` (FastAPI emits 0 for 204).
     - **Scenarios 28-style cookie-secure test (variant from Story 1.5's harness):** Run scenarios 1 with `monkeypatch.setattr(settings, "bff_session_cookie_secure", True)` to assert the clear Set-Cookies carry `Secure`; rerun with `False` to assert absence.
-  - [ ] **Scenario 11 (refresh-replay rejection — AC7 integration test):** A dedicated test `test_logout_revokes_refresh_token_at_idp`:
+  - [x] **Scenario 11 (refresh-replay rejection — AC7 integration test):** A dedicated test `test_logout_revokes_refresh_token_at_idp`:
     - Seed a session via login. Assert `idp.revoked_refresh_tokens` is empty before logout.
     - Logout. Assert `"synthetic-refresh-token" in idp.revoked_refresh_tokens`.
     - Build a follow-up POST to `DEFAULT_TOKEN_URL` with `data={"grant_type": "refresh_token", "refresh_token": "synthetic-refresh-token", "client_id": ..., "client_secret": ...}` via a raw `httpx.AsyncClient` inside the respx scope.
     - Assert the response is 400 with body `{"error": "invalid_grant"}`.
-  - [ ] **Scenario 15 (missing CSRF — Story 1.6 dependency):** Add a marker `pytest.mark.skipif(not _csrf_middleware_installed(), reason="depends on Story 1.6 CSRF middleware")` where `_csrf_middleware_installed()` introspects `app.user_middleware` (or imports `bff.auth.csrf` and catches `ImportError`). When the test runs, omit the `X-CSRF-Token` header and assert 403 `csrf_invalid`. Once Story 1.6 lands, the marker auto-unskips.
-  - [ ] Run `uv run pytest tests/api/test_auth.py -v --cov=src/bff/api/auth` — all new + existing tests pass; coverage of `auth.py` ≥ 90%.
+  - [x] **Scenario 15 (missing CSRF — Story 1.6 dependency):** Story 1.6's CSRF middleware was already merged (in `review`) before this story started, so the marker is unnecessary. Implemented as two unskipped tests: `test_logout_missing_csrf_header_returns_403` (header omitted) AND `test_logout_mismatched_csrf_header_returns_403` (header value ≠ cookie). Both assert `403 csrf_invalid` AND that the handler was never reached (no IdP traffic, row intact).
+  - [x] Run `uv run pytest tests/api/test_auth.py -v --cov=src/bff/api/auth` — all new + existing tests pass; coverage of `auth.py` ≥ 90%. **Result:** `src/bff/api/auth.py` 95%; total project 97.51%; 289 passed (264 prior + 25 new).
 
-- [ ] **Task 6: Run the full BFF gate matrix** (AC: #9)
-  - [ ] From `services/bff/`:
+- [x] **Task 6: Run the full BFF gate matrix** (AC: #9)
+  - [x] From `services/bff/`:
     - `uv sync --frozen` → exit 0 (no dep changes).
-    - `uv run ruff check` → clean (if I001 import-order trips, `uv run ruff check --fix`).
-    - `uv run ruff format --check` → clean (if format trips, `uv run ruff format`).
-    - `uv run ty check` → clean. New helpers should not need `# ty: ignore`.
-    - `uv run pytest --cov` → all 223 prior tests + new logout tests pass; total coverage ≥ 90%.
-  - [ ] From repo root:
+    - `uv run ruff check` → clean (after fixing two unused imports + one SIM108 ternary + two E501 line-length nudges in `tests/api/test_auth.py`).
+    - `uv run ruff format --check` → clean (after one auto-format pass on `src/bff/api/auth.py` + `tests/api/test_auth.py`).
+    - `uv run ty check` → clean. New helpers do not need `# ty: ignore`.
+    - `uv run pytest --cov` → 289 passed; total coverage 97.51% (gate ≥ 90%).
+  - [x] From repo root:
     - `docker compose --profile default config` → valid.
-    - `docker compose build bff` → succeeds.
-  - [ ] Capture command output excerpts in **Debug Log References**.
+    - `docker compose build bff` → succeeds (image `bmad_books-bff:latest`).
+  - [x] Capture command output excerpts in **Debug Log References**.
 
-- [ ] **Task 7: Update sprint-status + deferred-work**
-  - [ ] On story start: flip `_bmad-output/implementation-artifacts/sprint-status.yaml` development_status `1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: ready-for-dev` → `in-progress`. Bump `last_updated`.
-  - [ ] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
-  - [ ] If any new defects surface during implementation, append them as D45+ in `deferred-work.md` with severity / owner-story / rationale.
+- [x] **Task 7: Update sprint-status + deferred-work**
+  - [x] On story start: flip `_bmad-output/implementation-artifacts/sprint-status.yaml` development_status `1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: ready-for-dev` → `in-progress`. Bump `last_updated`.
+  - [x] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
+  - [x] If any new defects surface during implementation, append them as D45+ in `deferred-work.md` with severity / owner-story / rationale. **Result:** no new defects surfaced; nothing appended.
 
 ## Dev Notes
 
@@ -430,10 +430,157 @@ ba784f8 Merge branch 'story-1-3'
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.7 (`claude-opus-4-7[1m]`)
 
 ### Debug Log References
 
+**Baseline (pre-change)** — `uv run pytest -x -q` from `services/bff/`:
+
+```
+264 passed, 40 warnings in 5.21s
+```
+
+**Task 1 (helpers + unit tests)** — `uv run pytest tests/auth/test_keycloak_cookie_session.py -v`:
+
+```
+25 passed in 3.15s  (19 prior + 6 new)
+- test_revoke_refresh_token_posts_form_body_and_basic_auth PASSED
+- test_revoke_refresh_token_raises_on_5xx PASSED
+- test_revoke_refresh_token_raises_on_connect_error PASSED
+- test_end_session_posts_form_body_with_id_token_hint PASSED
+- test_end_session_raises_on_5xx PASSED
+- test_end_session_raises_on_connect_error PASSED
+```
+
+**Task 2 (`SessionService.delete_session`)** — `uv run pytest tests/services/test_session_service.py -v`:
+
+```
+26 passed, 6 warnings in 0.10s  (24 prior + 2 new)
+- test_delete_session_removes_row PASSED
+- test_delete_session_is_idempotent_when_missing PASSED
+```
+
+**Task 5 (route tests for `/auth/logout`)** — `uv run pytest tests/api/test_auth.py -v -k logout`:
+
+```
+17 passed, 30 deselected, 31 warnings in 1.77s
+- test_logout_happy_path_returns_204_and_clears_session
+- test_logout_uses_http_basic_auth_on_revocation
+- test_logout_revocation_5xx_still_returns_204
+- test_logout_revocation_transport_failure_still_returns_204 [ConnectError | ReadTimeout | ConnectTimeout]
+- test_logout_end_session_failure_still_returns_204 [HTTPStatusError | ConnectError]
+- test_logout_both_upstream_failures_still_returns_204
+- test_logout_missing_session_cookie_returns_401
+- test_logout_unknown_session_cookie_returns_401
+- test_logout_expired_session_returns_401_and_deletes_row
+- test_logout_revokes_refresh_token_at_idp
+- test_logout_clear_cookies_have_correct_attributes
+- test_logout_clear_cookies_carry_secure_when_setting_enabled
+- test_logout_missing_csrf_header_returns_403
+- test_logout_mismatched_csrf_header_returns_403
+```
+
+**Patch notes during Task 5:**
+- Removed `assert response.headers["content-length"] == "0"` — RFC 7230 §3.3.2 forbids `content-length` on 204 responses, so FastAPI omits it. The story spec's expectation was incorrect on that minor point; the empty-body assertion (`response.content == b""`) is sufficient.
+- Ruff fixed two unused imports (`DEFAULT_END_SESSION_URL`, `DEFAULT_REVOCATION_URL` in test_auth.py), one SIM108 ternary, and two E501 line-length nudges. Ruff format reflowed `src/bff/api/auth.py` + `tests/api/test_auth.py`.
+
+**Task 6 (gate matrix)** — from `services/bff/`:
+
+```
+$ uv sync --frozen
+Checked 65 packages in 5ms
+
+$ uv run ruff check
+All checks passed!
+
+$ uv run ruff format --check
+63 files already formatted
+
+$ uv run ty check
+All checks passed!
+
+$ uv run pytest --cov
+... coverage ...
+src/bff/api/auth.py                         130      6    95%
+src/bff/auth/keycloak_cookie_session.py      71      2    97%
+src/bff/services/session_service.py          77      0   100%
+TOTAL                                       883     22    98%
+Required test coverage of 90.0% reached. Total coverage: 97.51%
+289 passed, 71 warnings in 7.25s
+```
+
+From repo root:
+
+```
+$ docker compose --profile default config
+... valid (yaml output) ...
+
+$ docker compose build bff
+... Image bmad_books-bff Built
+```
+
 ### Completion Notes List
 
+- **AC1 (Module surface):** Implemented as a pure extension to Story 1.5's surface. NO new top-level modules. `services/bff/src/bff/api/auth.py` gains `POST /auth/logout` plus two module-private helpers (`_clear_session_cookies`, `_session_expired_with_cookie_clear`). `services/bff/src/bff/auth/keycloak_cookie_session.py` gains `revoke_refresh_token` and `end_session`. `services/bff/src/bff/services/session_service.py` gains `delete_session`. `bff/main.py` is unchanged — the existing `app.include_router(auth_router)` at main.py:62 picks up the new route automatically (verified: `/auth/logout` is registered with `POST` method).
+- **AC2 (Happy path):** Validated by `test_logout_happy_path_returns_204_and_clears_session`. The handler reads `session_id` from `request.cookies`, fetches the row, calls revocation, calls end-session, deletes the row, clears both cookies, and returns 204 with empty body. Cookie clears use `response.set_cookie(value="", max_age=0, ...)` per Story 1.5 P3 — NOT `delete_cookie`.
+- **AC3 + AC4 (Honest degradation):** Validated by 6 parametrized failure tests (revocation 5xx / ConnectError / ReadTimeout / ConnectTimeout; end-session 5xx / ConnectError) plus `test_logout_both_upstream_failures_still_returns_204`. The handler wraps each upstream call in `try/except httpx.HTTPError` — `httpx.HTTPError` is the base for both `HTTPStatusError` (from `raise_for_status()`) and transport subclasses (ConnectError, ReadTimeout, ConnectTimeout, etc.), so a single except clause captures every failure mode listed in the AC. Each failure logs at WARN with `auth_logout_revocation_failed: <type-name>` / `auth_logout_end_session_failed: <type-name>` — `type(exc).__name__` only, never the exception message (which could carry URL fragments).
+- **AC5 (Missing session cookie → 401):** Validated by three tests (missing, unknown, expired). All three paths return the canonical `session_expired` envelope AND defensively clear both cookies. The expired path also runs `delete_expired_session` to clean up the stale row lazily (mirrors `/api/me`).
+- **AC6 (Missing/invalid CSRF → 403):** Story 1.6's CSRF middleware was already installed (status `review`) before this story started, so the AC6 contract is enforced uniformly via `app.add_middleware(CsrfMiddleware)` at main.py:56 — this story added NO CSRF-enforcement code. Validated by two tests (missing header, mismatched header) that both assert `403 csrf_invalid` AND that the handler was never reached.
+- **AC7 (Synthetic IdP revocation enforcement):** Validated by `test_logout_revokes_refresh_token_at_idp`. The synthetic IdP's `_token_handler` now has a `grant_type=refresh_token` branch that returns `400 invalid_grant` when the supplied refresh token is in `revoked_refresh_tokens`. The `_revocation_handler` populates that set with whatever `token` form field it sees. The test drives full login → logout → refresh-replay and asserts `400 invalid_grant`.
+- **AC8 (Test matrix):** All 14 unskipped scenarios + 2 mismatched-CSRF scenarios = 16 logout tests pass. Per-module coverage of `src/bff/api/auth.py` = 95% (gate ≥ 90%); the 6 missing lines are catch-all log lines on the already-tested failure paths (each `except` branch is exercised by at least one scenario).
+- **AC9 (Gates remain green):** All six checks (sync, ruff check, ruff format, ty, pytest --cov, docker compose config + build) pass. No new runtime or dev dependencies — `httpx` and `authlib` were already pinned by Story 1.5.
+- **Honest-degradation contract (Architecture A7):** The handler proves the "no half-logged-out states" rule mechanically — the `delete_session` + cookie-clear + 204 steps all run AFTER (and independently of) the two upstream-call try/except blocks. Tests verify the row deletion happens even when BOTH upstream calls fail.
+- **Synthetic IdP extension:** Added `revoked_refresh_tokens: set[str]` and two new override fields (`revocation_response_override`, `end_session_response_override`) to drive failure-mode tests without resorting to respx route override gymnastics. The handlers check the override first, before falling through to the default 200 path. The `_authorization` header is now captured into `captured_revocations[i]["_authorization"]` so the Basic-auth assertion (Scenario 14) has something to inspect.
+- **Story-spec deviation (1 minor):** AC8 Scenario 13 expected `response.headers["content-length"] == "0"`. RFC 7230 §3.3.2 explicitly forbids `Content-Length` on 204 responses; FastAPI omits it correctly. The test now asserts `"content-length" not in response.headers` instead. Documented in Debug Log References above.
+- **No new deferred items.** D43 + D44 remain orthogonal/deferred as documented in story's Previous Story Intelligence section.
+
 ### File List
+
+**Modified:**
+
+- `services/bff/src/bff/api/auth.py` — added `POST /auth/logout` handler + `_as_utc_aware`, `_clear_session_cookies`, `_session_expired_with_cookie_clear` helpers. Extended docstring + imports (`httpx`, `Response`, `revoke_refresh_token`, `end_session`).
+- `services/bff/src/bff/auth/keycloak_cookie_session.py` — added `revoke_refresh_token` and `end_session` async helpers.
+- `services/bff/src/bff/services/session_service.py` — added `delete_session` method on `SessionService`.
+- `services/bff/tests/auth/synthetic_idp.py` — added `revoked_refresh_tokens` field, `revocation_response_override` + `end_session_response_override` test-control fields; extended `_token_handler` for `grant_type=refresh_token` revocation-replay rejection; extended `_revocation_handler` + `_end_session_handler` to honor overrides and capture the Authorization header.
+- `services/bff/tests/auth/test_keycloak_cookie_session.py` — added 6 new tests under "Revocation + RP-Initiated Logout (Story 1.7)" section.
+- `services/bff/tests/services/test_session_service.py` — added `test_delete_session_removes_row` + `test_delete_session_is_idempotent_when_missing`.
+- `services/bff/tests/api/test_auth.py` — added the "`/auth/logout` (Story 1.7)" section with 16 new test functions (parametrized variants give 17 test cases total) + `logout_setup` fixture + `_seed_session` / `_logout` / `_parse_set_cookies` helpers.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — `1-7-...: ready-for-dev` → `in-progress` → `review`; bumped `last_updated`.
+- `_bmad-output/implementation-artifacts/1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly.md` — status flips; ticked tasks/subtasks; Dev Agent Record populated; Change Log entry added.
+
+**New:** None. This is a pure-extension story.
+
+### Review Findings
+
+_Code review run on 2026-05-15 (Opus 4.7). 3 reviewer layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). Acceptance Auditor reported 0 spec violations — implementation matches AC1–AC9 exactly. Findings below are correctness defects, hidden edge cases, and test-coverage gaps surfaced by the other two layers._
+
+**Decisions:**
+
+- [x] [Review][Defer] `end_session` does not pass `post_logout_redirect_uri` [`services/bff/src/bff/auth/keycloak_cookie_session.py:286-296`] — Keycloak deployments with a `Valid Post Logout Redirect URIs` allowlist will 400 `/openid-connect/logout`; the local session is still destroyed (degrade-honestly contract holds), but the KC SSO session survives so the next `/auth/login` re-authenticates silently (UX §J5 contradiction). **Deferred — spec design intent: no new settings or realm changes.**
+
+**Patches (all applied 2026-05-15):**
+
+- [x] [Review][Patch] `raise_for_status()` accepts 3xx — replaced with explicit `if not response.is_success` raising `httpx.HTTPStatusError`; covers redirects from misconfigured AS / path-rewriting proxies. New unit tests `test_revoke_refresh_token_raises_on_3xx` + `test_end_session_raises_on_3xx`. [`services/bff/src/bff/auth/keycloak_cookie_session.py:268-296`]
+- [x] [Review][Patch] `delete_session` commit failure no longer crashes the handler — DB error is caught, logged at ERROR with classifier `auth_logout_session_delete_failed`, and the 204 + cookie-clear path still runs. New test `test_logout_db_delete_failure_still_returns_204_and_clears_cookies`. [`services/bff/src/bff/api/auth.py:434-491`]
+- [x] [Review][Patch] Cancellation safety — upstream calls now wrapped in `try/finally` so the local-teardown invariant always runs; DB delete is wrapped in `asyncio.shield(...)` so a cancellation mid-commit cannot leave a half-logged-out state. [`services/bff/src/bff/api/auth.py:434-491`]
+- [x] [Review][Patch] Empty `refresh_token`/`id_token` guards added — the handler now branches on `row.refresh_token` / `row.id_token` and emits `auth_logout_no_refresh_token` / `auth_logout_no_id_token` INFO classifiers instead of POSTing empty tokens that would 400 at the AS. New tests `test_logout_empty_refresh_token_skips_revoke` + `test_logout_empty_id_token_skips_end_session`. [`services/bff/src/bff/api/auth.py:434-491`]
+- [x] [Review][Patch] `session_deleted` log fixed — only appends `...` when the id was actually truncated, and emits `id=(none)` for falsy ids instead of misleading prefixes. [`services/bff/src/bff/services/session_service.py:233-240`]
+- [x] [Review][Patch] HTTPStatusError WARN log carries status code — new `_http_error_classifier` helper formats `HTTPStatusError(401)` / `HTTPStatusError(500)` etc., so operators can distinguish cred-mismatch from rate-limit from server-down. New test `test_logout_revocation_4xx_classifier_includes_status_code`. [`services/bff/src/bff/api/auth.py:85-95`]
+- [x] [Review][Patch] Test scenarios 2–7 now assert `len(idp.captured_revocations) == 1` (and equivalent `captured_end_sessions` counts) so a regression that silently no-ops either upstream call is caught. [`services/bff/tests/api/test_auth.py:805-940`]
+- [x] [Review][Patch] Path attribute test tightened — new `_cookie_attr` helper parses Set-Cookie attributes by key and asserts `Path == "/"` exactly (was substring match, which would silently accept `Path=/api`). [`services/bff/tests/api/test_auth.py:701-714, 1099-1112`]
+- [x] [Review][Patch] Synthetic IdP `_revocation_handler` now records the token in `revoked_refresh_tokens` BEFORE consulting the response override, so a `Response(200)` override path no longer silently skips the bookkeeping. [`services/bff/tests/auth/synthetic_idp.py:252-272`]
+
+**Deferred:**
+
+- [x] [Review][Defer] RFC 6749 §2.3.1 — `client_id`/`client_secret` URL-encoding before Basic auth [`services/bff/src/bff/auth/keycloak_cookie_session.py:264-269`] — pre-existing pattern (Story 1.5 `exchange_code` uses the same `auth=(...)` tuple); deferred to a focused cross-cutting fix that covers all OIDC client-credential call sites.
+- [x] [Review][Defer] No DB-operation timeout on `delete_session` commit [`services/bff/src/bff/services/session_service.py:226-232`] — deferred; Postgres connection wedge would hang the handler indefinitely (UX §J5 contradiction). Not observable in dev with SQLite in-memory; surfaces only at prod cutover.
+- [x] [Review][Defer] Hardcoded Keycloak topology in revoke / end_session URL construction [`services/bff/src/bff/api/auth.py:415-417`] — deferred; OIDC has `.well-known/openid-configuration` advertising `revocation_endpoint` and `end_session_endpoint`. Refactor to discovery later (cross-story concern).
+- [x] [Review][Defer] Manual 401 envelope construction in `_session_expired_with_cookie_clear` duplicates shape from elsewhere [`services/bff/src/bff/api/auth.py:347-364`] — small refactor candidate; risks drift if `ErrorCode.SESSION_EXPIRED` shape changes.
+- [x] [Review][Defer] INFO logs at every logout carry `sub` first-8-chars — audit-log retention policy concern, not a code defect [`services/bff/src/bff/api/auth.py:409-413, 446-450`].
+
+## Change Log
+
+| Date | Change | Author |
+|---|---|---|
+| 2026-05-15 | Story 1.7 implemented end-to-end: `POST /auth/logout` handler in `bff/api/auth.py`; `revoke_refresh_token` + `end_session` helpers in `bff/auth/keycloak_cookie_session.py`; `SessionService.delete_session`; synthetic IdP extended for revocation enforcement + test-control overrides; 25 new tests; full gate matrix green (289 passed, 97.51% coverage). Sprint status: `1-7` → `review`. | Amelia (Dev Agent — Opus 4.7) |
+| 2026-05-15 | Code review (Opus 4.7, 3-layer adversarial). Acceptance Auditor: 0 spec violations. 9 patches applied (3xx defense; DB-failure guard + asyncio.shield cancellation safety; empty-token guards; `_http_error_classifier` with status code; `session_deleted` log fix; 6 new tests; tightened Path attribute test + revoke-call count assertions; synthetic IdP override-order fix). 1 decision deferred (post_logout_redirect_uri — spec design intent: no new settings/realm changes). 5 items added to deferred-work. Gate matrix green: 295 passed, total coverage 97.45%, auth.py 96%. Sprint status: `1-7` → `done`. | Code-review Agent (Opus 4.7) |
