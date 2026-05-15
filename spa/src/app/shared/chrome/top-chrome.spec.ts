@@ -1,4 +1,3 @@
-import { provideHttpClient, withFetch } from '@angular/common/http';
 import { provideHttpClientTesting, HttpTestingController } from '@angular/common/http/testing';
 import { provideZonelessChangeDetection, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -30,7 +29,6 @@ async function setupHarness(initialMe: Me | null) {
         { path: 'settings', children: [] },
         { path: 'login', children: [] },
       ]),
-      provideHttpClient(withFetch()),
       provideHttpClientTesting(),
       { provide: AuthService, useValue: authStub },
     ],
@@ -108,12 +106,16 @@ describe('TopChrome', () => {
     await fixture.whenStable();
 
     const navSpy = vi.spyOn(router, 'navigateByUrl');
+    const component = fixture.componentInstance as TopChrome;
+    const logoutSpy = vi.spyOn(component, 'logout');
 
     const logoutBtn = (fixture.nativeElement as HTMLElement).querySelector(
       '.top-chrome-logout',
     ) as HTMLButtonElement;
-    const clickPromise = (fixture.componentInstance as TopChrome).logout();
-    void logoutBtn; // button presence asserted earlier
+    logoutBtn.click();
+
+    expect(logoutSpy).toHaveBeenCalledTimes(1);
+    const clickPromise = logoutSpy.mock.results[0]!.value as Promise<void>;
 
     const req = http.expectOne('/auth/logout');
     expect(req.request.method).toBe('POST');
@@ -137,8 +139,16 @@ describe('TopChrome', () => {
     await fixture.whenStable();
 
     const navSpy = vi.spyOn(router, 'navigateByUrl');
+    const component = fixture.componentInstance as TopChrome;
+    const logoutSpy = vi.spyOn(component, 'logout');
 
-    const clickPromise = (fixture.componentInstance as TopChrome).logout();
+    const logoutBtn = (fixture.nativeElement as HTMLElement).querySelector(
+      '.top-chrome-logout',
+    ) as HTMLButtonElement;
+    logoutBtn.click();
+
+    expect(logoutSpy).toHaveBeenCalledTimes(1);
+    const clickPromise = logoutSpy.mock.results[0]!.value as Promise<void>;
 
     const req = http.expectOne('/auth/logout');
     req.flush({ errorCode: 'oops', message: 'no' }, { status: 500, statusText: 'ISE' });

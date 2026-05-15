@@ -68,6 +68,48 @@ describe('LoginView', () => {
     expect(LOGIN_AUTH_LOGIN_PATH).toBe('/auth/login');
   });
 
+  it('redirectToAuthLogin() assigns window.location.href to LOGIN_AUTH_LOGIN_PATH', async () => {
+    const { stub } = buildRouteStub({});
+    await TestBed.configureTestingModule({
+      imports: [LoginView],
+      providers: [
+        provideZonelessChangeDetection(),
+        { provide: ActivatedRoute, useValue: stub },
+      ],
+    }).compileComponents();
+
+    const fixture = TestBed.createComponent(LoginView);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    // Replace window.location with a stub that records href assignment,
+    // then restore the original descriptor afterwards.
+    const originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    let assignedHref: string | null = null;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: {
+        set href(value: string) {
+          assignedHref = value;
+        },
+        get href(): string {
+          return assignedHref ?? '';
+        },
+      },
+    });
+
+    try {
+      fixture.componentInstance.redirectToAuthLogin();
+      expect(assignedHref).toBe('/auth/login');
+      expect(assignedHref).toBe(LOGIN_AUTH_LOGIN_PATH);
+    } finally {
+      if (originalLocationDescriptor) {
+        Object.defineProperty(window, 'location', originalLocationDescriptor);
+      }
+    }
+  });
+
   it('renders the inline ErrorMessage with UX-DR12 copy when ?error=auth is present', async () => {
     const { stub } = buildRouteStub({ error: 'auth' });
     await TestBed.configureTestingModule({

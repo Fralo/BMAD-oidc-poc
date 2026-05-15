@@ -2,8 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
-import { filter, map, startWith } from 'rxjs';
-import { firstValueFrom } from 'rxjs';
+import { filter, firstValueFrom, map, startWith } from 'rxjs';
 
 import { AuthService } from '../../auth/auth-service';
 

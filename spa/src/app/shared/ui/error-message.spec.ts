@@ -19,14 +19,13 @@ describe('ErrorMessage', () => {
     expect(p?.textContent?.trim()).toBe('Something went wrong');
   });
 
-  it('uses the error token utility classes', async () => {
+  it('applies the .error-message class so the error-token CSS contract (small font + error color) is wired up', async () => {
     const fixture = TestBed.createComponent(ErrorMessage);
     fixture.componentRef.setInput('message', 'oops');
     fixture.detectChanges();
     await fixture.whenStable();
 
     const p = (fixture.nativeElement as HTMLElement).querySelector('p');
-    expect(p?.classList.contains('text-small')).toBe(true);
-    expect(p?.classList.contains('text-error')).toBe(true);
+    expect(p?.classList.contains('error-message')).toBe(true);
   });
 });
