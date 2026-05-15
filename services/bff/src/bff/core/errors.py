@@ -39,7 +39,7 @@ class AppException(Exception):  # noqa: N818
         super().__init__(error_code.message)
 
 
-def _build_error_body(
+def build_error_body(
     error_code: str, message: str, detail: Any = None
 ) -> dict[str, Any]:
     return {"errorCode": error_code, "message": message, "detail": detail}
@@ -49,7 +49,7 @@ async def app_exception_handler(_request: Request, exc: Exception) -> JSONRespon
     app_exc = cast(AppException, exc)
     return JSONResponse(
         status_code=app_exc.error_code.http_status,
-        content=_build_error_body(
+        content=build_error_body(
             app_exc.error_code.code, app_exc.error_code.message, app_exc.detail
         ),
     )
@@ -68,7 +68,7 @@ async def validation_exception_handler(
     ]
     return JSONResponse(
         status_code=ErrorCode.VALIDATION_ERROR.http_status,
-        content=_build_error_body(
+        content=build_error_body(
             ErrorCode.VALIDATION_ERROR.code,
             ErrorCode.VALIDATION_ERROR.message,
             sanitized,

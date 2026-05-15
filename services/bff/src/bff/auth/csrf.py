@@ -20,7 +20,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from bff.core.config import settings
-from bff.core.errors import ErrorCode
+from bff.core.errors import ErrorCode, build_error_body
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,17 @@ class CsrfMiddleware(BaseHTTPMiddleware):
             )
             return self._reject()
 
-        expected = self._parse_origin(settings.bff_base_url)
+        try:
+            expected = self._parse_origin(settings.bff_base_url)
+        except ValueError, TypeError:
+            # bff_base_url is operator-controlled; misconfiguration must
+            # fail-closed with the documented 403 rather than a 500.
+            logger.error(
+                "csrf_misconfig_bff_base_url path=%s method=%s",
+                request.url.path,
+                request.method,
+            )
+            return self._reject()
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
 
@@ -97,11 +107,10 @@ class CsrfMiddleware(BaseHTTPMiddleware):
     def _reject() -> JSONResponse:
         return JSONResponse(
             status_code=ErrorCode.CSRF_INVALID.http_status,
-            content={
-                "errorCode": ErrorCode.CSRF_INVALID.code,
-                "message": ErrorCode.CSRF_INVALID.message,
-                "detail": None,
-            },
+            content=build_error_body(
+                ErrorCode.CSRF_INVALID.code,
+                ErrorCode.CSRF_INVALID.message,
+            ),
         )
 
     @staticmethod
@@ -114,11 +123,18 @@ class CsrfMiddleware(BaseHTTPMiddleware):
             port = _DEFAULT_PORTS.get(scheme)
         return (scheme, hostname, port)
 
-    @classmethod
-    def _origin_matches(
-        cls, observed: str, expected: tuple[str, str, int | None]
-    ) -> bool:
+    @staticmethod
+    def _origin_matches(observed: str, expected: tuple[str, str, int | None]) -> bool:
         try:
-            return cls._parse_origin(observed) == expected
+            parts = urlsplit(observed)
+            # `urlsplit("http://attacker@host")` silently strips the userinfo
+            # and yields hostname="host" — without this guard the (scheme,
+            # host, port) tuple would compare equal to a legitimate
+            # same-origin expected value. Path/query/fragment are not
+            # security-relevant here because the tuple comparison already
+            # ignores them (Referer headers legitimately carry a path).
+            if parts.username or parts.password:
+                return False
+            return CsrfMiddleware._parse_origin(observed) == expected
         except ValueError:
             return False

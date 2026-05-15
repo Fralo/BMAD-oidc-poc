@@ -30,21 +30,19 @@ def _assert_reject_envelope(response_body: dict) -> None:
 # -- Safe methods (scenarios 1-3) ---------------------------------------------
 
 
-@pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
+@pytest.mark.parametrize(
+    "method,expected_status",
+    # GET hits the stub → 200. HEAD/OPTIONS aren't separately handled at
+    # /test/open, so Starlette's router returns 405 for each. The point of
+    # the test is that the CSRF middleware DOES NOT short-circuit — proven
+    # by reaching the exact downstream status the router would return.
+    [("GET", 200), ("HEAD", 405), ("OPTIONS", 405)],
+)
 async def test_safe_methods_passthrough_without_cookie_or_header(
-    client: AsyncClient, method: str
+    client: AsyncClient, method: str, expected_status: int
 ) -> None:
     response = await client.request(method, "/test/open")
-    # GET → 200 stub payload; HEAD → 200 (FastAPI auto-handles); OPTIONS → 405
-    # from Starlette's default method-not-allowed (no OPTIONS handler defined).
-    # Middleware MUST NOT short-circuit any of these regardless of status.
-    assert response.status_code in {200, 405}
-    assert (
-        response.headers.get("content-type", "").startswith(
-            ("application/json", "text/plain")
-        )
-        or response.status_code == 200
-    )
+    assert response.status_code == expected_status
 
 
 # -- Happy path state-changing (scenarios 4-7) -------------------------------
@@ -331,3 +329,39 @@ async def test_csrf_reject_carries_no_csp_header(client: AsyncClient) -> None:
     response = await client.post("/test/open", json={"value": "x"})
     assert response.status_code == 403
     assert "content-security-policy" not in response.headers
+
+
+# -- Hardening regressions (post-review patches) -----------------------------
+
+
+async def test_post_origin_with_userinfo_rejected(
+    client_with_csrf: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # `urlsplit("http://attacker@test")` strips userinfo and returns
+    # hostname="test", so a naive tuple comparison would accept it as
+    # same-origin. _origin_matches rejects non-canonical Origin headers.
+    caplog.set_level(logging.WARNING, logger="bff.auth.csrf")
+    response = await client_with_csrf.post(
+        "/test/open",
+        json={"value": "x"},
+        headers={"Origin": "http://attacker@test"},
+    )
+    assert response.status_code == 403
+    _assert_reject_envelope(response.json())
+    assert any("csrf_origin_mismatch" in r.message for r in caplog.records)
+
+
+async def test_post_with_malformed_bff_base_url_returns_403(
+    client_with_csrf: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Operator misconfig that makes urlsplit raise (IPv6 bracket malformed)
+    # must fail-closed via _reject(), not a 500.
+    caplog.set_level(logging.ERROR, logger="bff.auth.csrf")
+    monkeypatch.setattr(settings, "bff_base_url", "http://[::1")
+    response = await client_with_csrf.post("/test/open", json={"value": "x"})
+    assert response.status_code == 403
+    _assert_reject_envelope(response.json())
+    assert any("csrf_misconfig_bff_base_url" in r.message for r in caplog.records)

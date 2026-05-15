@@ -21,6 +21,10 @@ _CSP_VALUE: Final[str] = (
 )
 
 _API_PATH_PREFIXES: Final[tuple[str, ...]] = ("/auth/", "/api/", "/v1/")
+# Bare JSON-API namespace roots (no trailing slash). Without these, a request
+# to `/auth` with `Accept: text/html` slips past the prefix check above (which
+# only matches `/auth/`) and would receive CSP on a 404 JSON response.
+_API_PATHS_EXACT: Final[frozenset[str]] = frozenset({"/health", "/auth", "/api", "/v1"})
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -41,6 +45,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _is_api_path(path: str) -> bool:
-        if path == "/health":
+        if path in _API_PATHS_EXACT:
             return True
         return any(path.startswith(prefix) for prefix in _API_PATH_PREFIXES)

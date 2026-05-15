@@ -110,17 +110,19 @@ async def client_with_csrf_fixture(session, monkeypatch: pytest.MonkeyPatch):
         yield session
 
     app.dependency_overrides[get_session] = _override
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-        cookies={settings.bff_csrf_cookie_name: _CSRF_FIXTURE_VALUE},
-        headers={
-            "X-CSRF-Token": _CSRF_FIXTURE_VALUE,
-            "Origin": "http://test",
-        },
-    ) as c:
-        yield c
-    app.dependency_overrides.clear()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            cookies={settings.bff_csrf_cookie_name: _CSRF_FIXTURE_VALUE},
+            headers={
+                "X-CSRF-Token": _CSRF_FIXTURE_VALUE,
+                "Origin": "http://test",
+            },
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture(name="client_no_redirects")

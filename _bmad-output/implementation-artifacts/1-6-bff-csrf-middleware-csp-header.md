@@ -1,6 +1,6 @@
 # Story 1.6: BFF CSRF middleware + CSP header
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -298,6 +298,34 @@ Coverage of `src/bff/auth/csrf.py` AND `src/bff/middleware/security_headers.py` 
   - [x] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
   - [x] If any new defects surface during implementation, append them as D45+ in `deferred-work.md` with severity / owner-story / rationale.
   - [x] **D44** (module-level `_session_service` singleton) is explicitly deferred AGAIN — do NOT refactor in this story.
+
+### Review Findings
+
+Code review run on 2026-05-15 (commit `48f69b5`). Three review layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) returned 48 raw findings; after dedup and triage: 10 patches, 10 deferred, 28 dismissed (including the `Origin: null` decision — keeping spec behavior per AC6 scenario 17).
+
+During patch application, two findings were reclassified: P4 (CSP driven by response `Content-Type`) was moved to deferred because AC8 explicitly mandates the request-`Accept`-driven design and the existing scenario tests depend on it; the lone-surrogate sub-clause of P6 was dismissed because Starlette's latin-1 header decoding cannot produce lone surrogates, so the defensive try/except was dead code. The `bff_base_url` sub-clause of P6 (malformed-URL → 500) was kept and patched. P7 was scoped to userinfo rejection only — the path/query/fragment sub-clauses were dropped because the (scheme, host, port) tuple comparison already ignores them.
+
+- [x] [Review][Patch] `main.py` middleware-ordering comment uses contradictory wording (`innermost` vs `runs first on the way in`) [services/bff/src/bff/main.py:50-54] — rewritten to clarify "last-added = OUTERMOST, runs first on way in".
+- [x] [Review][Patch] `_origin_matches` declared `@classmethod` but spec Task 2 specifies `@staticmethod` [services/bff/src/bff/auth/csrf.py:117-124] — converted to `@staticmethod` calling `CsrfMiddleware._parse_origin`.
+- [x] [Review][Patch] `_reject` hand-builds error envelope instead of reusing `build_error_body` from `core/errors.py` — risks envelope drift [services/bff/src/bff/auth/csrf.py:97-105] — promoted `_build_error_body` → `build_error_body` (public), CSRF middleware now uses it.
+- [x] [Review][Patch (reclassified to defer)] CSP attachment driven by request `Accept` header instead of response `Content-Type` [services/bff/src/bff/middleware/security_headers.py:33-40] — AC8 explicitly mandates `Accept`-driven; moved to deferred-work.md for revisit when SPA SSR or richer content-negotiation lands.
+- [x] [Review][Patch] `_is_api_path` only matches API prefixes with trailing slash; bare paths `/auth`, `/api`, `/v1` slip through and receive CSP [services/bff/src/bff/middleware/security_headers.py:42-46] — added `_API_PATHS_EXACT` frozenset including `/auth`, `/api`, `/v1`, `/health`; parametrized regression test added.
+- [x] [Review][Patch] CSRF middleware can 500 on `urlsplit` failures for malformed `bff_base_url` (operator misconfig) [services/bff/src/bff/auth/csrf.py:79-89] — wrapped `_parse_origin(settings.bff_base_url)` in `try/except (ValueError, TypeError)`, fail-closed via `_reject` with `csrf_misconfig_bff_base_url` ERROR log; regression test forces malformed `http://[::1`.
+- [x] [Review][Patch] `_origin_matches` silently accepts Origin headers containing userinfo (`Origin: https://attacker@example.com`) — `urlsplit` strips userinfo and the (scheme, host, port) tuple still matches expected [services/bff/src/bff/auth/csrf.py:137-156] — `_origin_matches` now rejects any observed value with `parts.username` or `parts.password`; regression test forces `Origin: http://attacker@test`.
+- [x] [Review][Patch] `test_safe_methods_passthrough_without_cookie_or_header` asserts `status_code in {200, 405}` — too loose [services/bff/tests/auth/test_csrf.py:33-46] — parametrized to per-method exact status (GET→200, HEAD→405, OPTIONS→405); the loose assertion was masking that HEAD also returns 405 here.
+- [x] [Review][Patch] `test_csp_attached_on_catch_all_with_html_accept` does not pin `response.status_code == 404` [services/bff/tests/middleware/test_security_headers.py:21-30] — added explicit `assert response.status_code == 404`.
+- [x] [Review][Patch] `client_with_csrf` fixture clears `app.dependency_overrides` after `yield` but skips cleanup if AsyncClient init raises [services/bff/tests/conftest.py:97-125] — wrapped `async with AsyncClient(...)` in `try`/`finally`.
+
+- [x] [Review][Defer] `BaseHTTPMiddleware` buffers streams + drops BackgroundTasks — spec mandates base class [services/bff/src/bff/auth/csrf.py:31, services/bff/src/bff/middleware/security_headers.py:26] — deferred, architectural
+- [x] [Review][Defer] CSP lacks `object-src 'none'`, `upgrade-insecure-requests`, `report-uri`, nonce mechanism — spec mandates exact string [services/bff/src/bff/middleware/security_headers.py:17-21] — deferred, spec-driven (Story 5.2 review)
+- [x] [Review][Defer] No `X-Content-Type-Options`, `Referrer-Policy`, `HSTS`, `Permissions-Policy`, COOP/CORP/COEP headers — out of this story's scope [services/bff/src/bff/middleware/security_headers.py] — deferred, Story 5.2 scope
+- [x] [Review][Defer] Test log-message substring matching is fragile (no structured-logging contract) [services/bff/tests/auth/test_csrf.py multiple sites] — deferred, pre-existing pattern
+- [x] [Review][Defer] `monkeypatch.setattr(settings, ...)` mutates global Pydantic settings singleton — parallel-test isolation hazard [services/bff/tests/conftest.py:1843 and others] — deferred, pre-existing pattern
+- [x] [Review][Defer] `# ty: ignore[invalid-argument-type]` proliferation on `add_middleware` calls [services/bff/src/bff/main.py:42, 55, 56] — deferred, pre-existing CORS precedent
+- [x] [Review][Defer] No startup validation of `settings.bff_base_url` and `settings.bff_csrf_cookie_name` shape [services/bff/src/bff/core/config.py] — deferred, central config-validation pass
+- [x] [Review][Defer] Referer fallback lacks fail-closed mode — accepting Referer at all is policy choice [services/bff/src/bff/auth/csrf.py:74-75] — deferred, spec design intent
+- [x] [Review][Defer] No runtime length-assert on CSRF token before `hmac.compare_digest` [services/bff/src/bff/auth/csrf.py:58-60] — deferred, defense-in-depth not a bug
+- [x] [Review][Defer] No IDN/punycode normalization on Origin/Referer hostnames [services/bff/src/bff/auth/csrf.py:107-115] — deferred, non-applicable to current deployment
 
 ## Dev Notes
 
