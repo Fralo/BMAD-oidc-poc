@@ -53,6 +53,9 @@ async def test_health_returns_200_when_all_probes_ok(
 async def test_health_returns_503_envelope_when_db_fails(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Story 1.3 Review Findings P4: response detail is sanitized to status
+    # labels only ("down"/"ok"); the verbose probe-detail string is logged
+    # server-side, not echoed to the unauthenticated caller.
     _patch_all_probes(monkeypatch, db=(False, "database unreachable: boom"))
 
     response = await client.get("/health")
@@ -60,9 +63,11 @@ async def test_health_returns_503_envelope_when_db_fails(
     assert response.status_code == 503
     body = response.json()
     assert body["errorCode"] == "service_unavailable"
-    assert body["detail"]["database"] == "database unreachable: boom"
-    assert body["detail"]["alembic"] == "ok"
-    assert body["detail"]["oidc_discovery"] == "ok"
+    assert body["detail"] == {
+        "database": "down",
+        "alembic": "ok",
+        "oidc_discovery": "ok",
+    }
 
 
 async def test_health_returns_503_when_alembic_not_at_head(
@@ -76,7 +81,7 @@ async def test_health_returns_503_when_alembic_not_at_head(
     response = await client.get("/health")
 
     assert response.status_code == 503
-    assert response.json()["detail"]["alembic"].startswith("alembic not at head")
+    assert response.json()["detail"]["alembic"] == "down"
 
 
 async def test_health_returns_503_when_oidc_discovery_fails(
@@ -87,10 +92,23 @@ async def test_health_returns_503_when_oidc_discovery_fails(
     response = await client.get("/health")
 
     assert response.status_code == 503
-    assert (
-        response.json()["detail"]["oidc_discovery"]
-        == "oidc discovery returned HTTP 503"
-    )
+    assert response.json()["detail"]["oidc_discovery"] == "down"
+
+
+async def test_health_logs_verbose_detail_when_a_probe_fails(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The verbose detail is logged at WARNING level even though the response
+    # body only carries sanitized labels — verifies operators still see the
+    # real cause server-side.
+    import logging
+
+    _patch_all_probes(monkeypatch, db=(False, "database unreachable: boom"))
+    with caplog.at_level(logging.WARNING, logger="bff.api.health"):
+        await client.get("/health")
+    assert any("database unreachable: boom" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +221,37 @@ async def test_check_oidc_discovery_returns_ok_on_2xx_response() -> None:
     assert detail == ""
 
 
+async def test_check_oidc_discovery_rejects_non_json_body() -> None:
+    # Story 1.3 Review Findings P5: a 2xx with HTML or empty body must NOT
+    # pass the probe — a misconfigured ingress returning a generic 200 OK
+    # would otherwise satisfy it without OIDC actually being reachable.
+    cfg = _settings_with_issuer("http://kc/realms/x")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>generic landing page</html>")
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is False
+    assert "non-JSON" in detail
+
+
+async def test_check_oidc_discovery_rejects_issuer_mismatch() -> None:
+    cfg = _settings_with_issuer("http://kc/realms/x")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"issuer": "http://kc/realms/different"})
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is False
+    assert "issuer mismatch" in detail
+
+
 async def test_check_oidc_discovery_returns_failure_on_5xx() -> None:
     cfg = _settings_with_issuer("http://kc/realms/x")
 
@@ -242,7 +291,10 @@ async def test_check_oidc_discovery_strips_trailing_slash_on_issuer() -> None:
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen_urls.append(str(request.url))
-        return httpx.Response(200)
+        # After P5 the probe also validates that the body declares the
+        # canonical issuer (trailing slash stripped) — return a matching
+        # JSON document.
+        return httpx.Response(200, json={"issuer": "http://kc/realms/x"})
 
     transport = httpx.MockTransport(_handler)
 

@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates
 epic: 1
 prerequisites: 1-1 (done), 1-2 (done — Keycloak realm + compose service merged)
@@ -10,7 +10,7 @@ specLoopIteration: 1
 
 # Story 1.3: BFF scaffold from archetype + baseline health + lint/test gates
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -26,7 +26,7 @@ so that I have a clean foundation that already meets the archetype's >90% covera
 
 2. **The BFF is scaffolded via the archetype's `build_template.py`.** Running
    `python tools/fastapi-archetype/scripts/build_template.py -n bff -o services/bff --description "BMAD_books Backend-for-Frontend (OAuth client, books domain)"`
-   produces the archetype's standard layout under `services/bff/`: `pyproject.toml`, `uv.lock`, `alembic.ini`, `alembic/` (env.py, script.py.mako, versions/), `src/bff/` (with `app.py`, `__main__.py`, `api/`, `services/`, `auth/`, `core/`, `aop/`, `db/`), `tests/` mirroring `src/bff/`, `Dockerfile`, `.env.example`, the `ErrorCode` enum, and the `log_io` AOP decorator. The pre-existing `services/bff/.gitkeep` is removed.
+   produces the archetype's standard layout under `services/bff/`: `pyproject.toml`, `uv.lock`, `alembic.ini`, `alembic/` (env.py, script.py.mako, versions/), `src/bff/` (with `main.py` as the FastAPI factory + entrypoint, `api/`, `core/`, `aop/`, `observability/`, `models/`), `tests/` mirroring `src/bff/`, `Dockerfile`, `.env.example`, the `ErrorCode` enum, and the `log_io` AOP decorator. The pre-existing `services/bff/.gitkeep` is removed. *(Updated 2026-05-15 per Story 1.3 Review Findings D1: the archetype's `build_template.py` actually emits `main.py` only — not `app.py`/`__main__.py` — and the cleanup pass removed empty `auth/`/`db/`/`services/` subpackages that the archetype emits but no Story 1.3 code uses. Story 1.5 will recreate `auth/` when it lands the cookie-session OIDC plugin.)*
 
 3. **Dependency install, lint, type-check, and tests pass cleanly.** From `services/bff/`:
    - `uv sync --frozen` exits 0.
@@ -53,8 +53,8 @@ so that I have a clean foundation that already meets the archetype's >90% covera
 7. **`services/bff/Dockerfile` is multi-stage on `python:3.14-slim` with an Alembic-on-startup entrypoint.** The final stage:
    - bases on `python:3.14-slim`,
    - installs runtime deps via `uv sync --frozen --no-dev`,
-   - uses a small shell entrypoint that runs `uv run alembic upgrade head` and then `exec uv run uvicorn bff.app:app --host 0.0.0.0 --port 8000` (per architecture §"Operational Details / Migrations on startup"),
-   - declares a `HEALTHCHECK` that calls `GET /health` (any HTTP client available in the slim image is acceptable; if `curl` is not present, use `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"` or install `curl`).
+   - uses a small shell entrypoint that runs `alembic upgrade head` and then `exec uvicorn bff.main:app --host 0.0.0.0 --port 8000` (per architecture §"Operational Details / Migrations on startup"; the venv's `bin/` is on `PATH`, so the bare commands resolve into the project venv — `uv run` prefix is unnecessary at runtime),
+   - declares a `HEALTHCHECK` that calls `GET /health` (any HTTP client available in the slim image is acceptable; if `curl` is not present, use `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"` or install `curl`). *(Updated 2026-05-15 per Story 1.3 Review Findings D1: the entry module is `bff.main:app` — the archetype emits `main.py` only, never `app.py`.)*
 
 8. **The named volume `bff_data` mounts at `/data`.** Per AR6, the BFF's SQLite file lives in a Docker named volume; the BFF database URL in `services/bff/.env` resolves to a file under `/data` (e.g., `sqlite+aiosqlite:////data/bff.db` — matching the existing repo-root `.env.example`).
 
@@ -65,7 +65,7 @@ so that I have a clean foundation that already meets the archetype's >90% covera
    - mounts the `bff_data` named volume at `/data`,
    - declares `profiles: [default, dev, e2e]` so the BFF and Keycloak (Story 1.2) both carry real profile membership; the inert top-level `x-profiles:` documentation anchor in `docker-compose.yml` is removed in this story (Task 7) since it is now redundant.
 
-10. **`docker compose config` validates cleanly** from the repo root with the BFF service present, with **no** errors and **no** warnings beyond Compose's standard informational notes. The composed output includes the BFF service block and resolves the `keycloak` reference (Story 1.2 landed the service in `compose/infra.yml`).
+10. **`docker compose config` validates cleanly** from the repo root with the BFF service present, with **no** errors and **no** warnings beyond Compose's standard informational notes. The composed output includes the BFF service block and resolves the `keycloak` reference (Story 1.2 landed the service in `compose/infra.yml`). *(Updated 2026-05-15 per Story 1.3 Review Findings D2: AC10 requires a one-time bootstrap step before `docker compose config` will validate — `cp .env.example .env` at repo root and `cp services/bff/.env.example services/bff/.env`. Both target files are gitignored. The bootstrap is intentional: it forces operators to set real values for `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, and `TEST_RESET_TOKEN` rather than accidentally booting on `change-me` placeholders. README and the dev log carry this instruction.)*
 
 11. **Per-service `.env` strategy is documented and applied.** `services/bff/.env.example` (emitted by the archetype scaffold) is preserved as a per-service template, but the BFF service in compose reads from `services/bff/.env` (gitignored). The root-level `.env.example` (Story 1.1) remains the canonical AR29 enumeration; no env-var divergence between root `.env.example` and `services/bff/.env.example` for the variables the BFF consumes (`BFF_CLIENT_SECRET`, `BFF_DATABASE_URL`, `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`, `ENABLE_TEST_RESET`, `TEST_RESET_TOKEN`). Update `.gitignore` if needed so `services/bff/.env` is ignored but `services/bff/.env.example` is tracked.
 
@@ -605,3 +605,75 @@ ancillary docs excluded) and rebuilt cleanly.
 
 - `tools/fastapi-archetype/` — cloned at SHA `04db49c6999692cde1bfc7bfad27d1781daf0288`. Per `.gitignore`.
 - `.env` and `services/bff/.env` — materialized only transiently during `docker compose config` / `docker compose build` validation, then deleted. Per `.gitignore`.
+
+## Review Findings
+
+Code review run on 2026-05-15 against `baseline_commit: b8dab30` after the post-scaffold cleanup pass. Three review layers ran in parallel: Blind Hunter (diff-only), Edge Case Hunter (diff + project read), Acceptance Auditor (diff + spec + project read). Findings normalized, deduped, and triaged. **Summary: 3 decision-needed, 11 patch, 17 deferred, 6 dismissed as noise.**
+
+### Decision-needed — all resolved 2026-05-15
+
+- [x] [Review][Decision] **AC2 / AC7 entry-point naming** — **Resolved:** update spec text to match archetype reality. AC2 directory enumeration rewritten (`main.py` only; the archetype never emits `app.py`/`__main__.py`; `auth/`/`db/`/`services/` removed from the must-have list since cleanup proved they were unused). AC7 entrypoint changed to `bff.main:app` (and the `uv run` prefix dropped — the venv `bin/` is on `PATH`, so bare `uvicorn`/`alembic` resolve correctly). The archetype is the source of truth per AR1; alignment is via spec, not by renaming code. **APPLIED.**
+- [x] [Review][Decision] **AC10 `.env` bootstrap** — **Resolved:** AC10 amended to document `cp .env.example .env` at repo root and `cp services/bff/.env.example services/bff/.env` as an explicit one-time pre-step. Compose's `env_file` is intentionally left required so operators set real values for `KEYCLOAK_ADMIN_PASSWORD` / `BFF_CLIENT_SECRET` / `TEST_RESET_TOKEN` rather than silently booting on `change-me` placeholders. **APPLIED.**
+- [x] [Review][Decision] **`BFF_CLIENT_SECRET` fail-fast contract** — **Resolved:** added `_validate_bff_client_secret` model_validator in `services/bff/src/bff/core/config.py` that rejects empty or whitespace-only secrets at AppSettings construction. Two new tests (`test_bff_client_secret_required`, `test_bff_client_secret_blank_string_rejected`) pin both branches. The "required-fail-fast even in 1.3" promise in `.env.example` is now code-enforced. **APPLIED.**
+
+### Patch — all applied 2026-05-15
+
+- [x] [Review][Patch] **P1 — `bff.models` package restored** [`services/bff/src/bff/models/__init__.py`, `services/bff/src/bff/models/entities/__init__.py`] — Empty namespaces created; `alembic upgrade head` succeeds (verified locally). Story 1.4 will populate `entities/`. **APPLIED.**
+- [x] [Review][Patch] **P2 — `_BFF_ROOT` switched to env-var-driven path** [`services/bff/src/bff/api/health.py`] — `_ALEMBIC_INI = Path(os.environ.get("ALEMBIC_INI", "alembic.ini"))`. Works in container (`WORKDIR /app`), local dev / pytest (CWD is `services/bff/`), and is overridable. **APPLIED.**
+- [x] [Review][Patch] **P3 — 422 envelope strips `input` field** [`services/bff/src/bff/core/errors.py`] — `validation_exception_handler` serializes structured errors with the user-supplied `input` value dropped. No more raw password / token echo. **APPLIED.**
+- [x] [Review][Patch] **P4 — `/health` 503 envelope sanitized to `"down"`/`"ok"` labels** [`services/bff/src/bff/api/health.py`] — Verbose probe detail logged at WARNING server-side; response body carries no internal strings. Three endpoint tests updated; new `test_health_logs_verbose_detail_when_a_probe_fails` pins the server-side log. **APPLIED.**
+- [x] [Review][Patch] **P5 — OIDC probe validates JSON + issuer field** [`services/bff/src/bff/api/health.py`] — Parses response as JSON, asserts `payload["issuer"] == issuer.rstrip("/")`. Two new tests (`test_check_oidc_discovery_rejects_non_json_body`, `test_check_oidc_discovery_rejects_issuer_mismatch`). **APPLIED.**
+- [x] [Review][Patch] **P6 — OIDC probe follows redirects** [`services/bff/src/bff/api/health.py`] — `httpx.AsyncClient(..., follow_redirects=True)` (folded into the P5 patch). **APPLIED.**
+- [x] [Review][Patch] **P7 — `get_engine()` `settings` parameter dropped** [`services/bff/src/bff/core/database.py`] — Function reads from module-level `_default_settings`; callers that need to swap configuration monkeypatch `_default_settings` first. Caller in `health.py` updated; `test_invalid_database_url_raises_at_engine_creation` restructured to use the new contract. **APPLIED.**
+- [x] [Review][Patch] **P8 — Stale `!compose/.env` removed** [`services/bff/.gitignore`] — The un-ignore rule for a deleted directory is gone. **APPLIED.**
+- [x] [Review][Patch] **P9 — `AUTH_TYPE` removed from `.env.example`** [`services/bff/.env.example`] — No longer documents a non-existent settings field. **APPLIED.**
+- [x] [Review][Patch] **P10 — Stale `.dockerignore` entries removed** [`services/bff/.dockerignore`] — `AGENTS.md`, `CLAUDE.md`, `PROJECT_CONTEXT.md`, `NEW_REQUIREMENTS.md`, `REMOVE_RATE_LIMITING.md`, `RELEASE_NOTES.md`, `scripts/`, `node-autochglog.config.json` lines deleted. **APPLIED.**
+- [x] [Review][Patch] **P11 — Compose healthcheck single-line form** [`compose/app.yml`] — Folded scalar `>-` replaced with a single-line `["CMD", "python", "-c", ...]` list mirroring the Dockerfile `HEALTHCHECK`. **APPLIED.**
+
+### Deferred
+
+- [x] [Review][Defer] **Log redaction regex false-positives** [`services/bff/src/bff/observability/logging.py:18-26`] — Archetype-shipped regex; mangles prose containing "bearer"/"authorization"/"token"/"secret". Belongs upstream / observability pass.
+- [x] [Review][Defer] **CORS middleware install frozen at module import** [`services/bff/src/bff/main.py:37-45`] — Tests work around with `importlib.reload`. Move to lifespan-time install in a later pass.
+- [x] [Review][Defer] **`configure_logging` runs in lifespan, not at import** [`services/bff/src/bff/main.py:21-27`] — Pre-lifespan logs (uvicorn startup, instantiation errors) are unstructured. Move to module import time later.
+- [x] [Review][Defer] **404/405 responses don't follow the documented error envelope** [`services/bff/src/bff/main.py:47-51`] — Architecture §C5 envelope is `{errorCode, message, detail}`; Starlette defaults are `{detail}`. Punt to Story 1.10 (SPA error handling) or sooner.
+- [x] [Review][Defer] **Test stubs mounted on the live `bff.main:app` singleton at conftest import** [`services/bff/tests/conftest.py:25-37`] — Harmless in pytest-only flow; refactor to a separate test app later.
+- [x] [Review][Defer] **`.githooks/pre-commit` is dead weight** [`services/bff/.githooks/pre-commit`] — Not wired up (no `git config core.hooksPath`), runs network `npx --yes node-autochglog`, auto-stages a generated file. Delete or wire up in a tooling pass.
+- [x] [Review][Defer] **`alembic/env.py` imports private `_to_async_url`** [`services/bff/alembic/env.py:23`] — Reaches into a `_`-prefixed helper. Promote to public or duplicate logic.
+- [x] [Review][Defer] **`CORSMiddleware` typed with `# ty: ignore`** [`services/bff/src/bff/main.py:39`] — Inline ignore explains starlette's signature isn't typed per-middleware.
+- [x] [Review][Defer] **`AppSettings.profile` `Literal["default","mock"]` collides with compose `profiles: [default, dev, e2e]`** [`services/bff/src/bff/core/config.py:32`, `compose/app.yml:44`] — Two unrelated concepts share the name. Rename one when convenient.
+- [x] [Review][Defer] **`_format_arg` truncates any repr starting with `<`** [`services/bff/src/bff/aop/logging_decorator.py:74-76`] — Archetype regex; collapses XML/HTML payload args. Tighten upstream.
+- [x] [Review][Defer] **No `.gitattributes` enforcing LF for `*.sh`** — Windows hosts may produce CRLF entrypoint.sh that breaks the shebang. Add `.gitattributes` defensively later.
+- [x] [Review][Defer] **`tests/conftest.py` engine fixture drop_all/create_all between tests** [`services/bff/tests/conftest.py:63-86`] — No-op in Story 1.3 (zero entities); Story 1.4 will inherit the cost.
+- [x] [Review][Defer] **BFF `README.md` advertises capabilities removed during cleanup** [`services/bff/README.md`] — Still references `/metrics`, OTEL OTLP export, RBAC, `DB_DRIVER`. Archetype doc drift; Story 5.3 (README polish) is the right home.
+- [x] [Review][Defer] **`/health` is an unauthenticated DoS surface** [`services/bff/src/bff/api/health.py:116-135`] — Rate limiting out of scope; revisit in Story 5.2 (security review).
+- [x] [Review][Defer] **`alembic upgrade head` in `entrypoint.sh` is not SIGTERM-safe** [`services/bff/entrypoint.sh:15-19`] — Benign now (zero migrations); add `trap`/wait pattern when Story 1.4 lands.
+- [x] [Review][Defer] **`Justfile` in-tree but `.dockerignore` excludes it** [`services/bff/Justfile`, `services/bff/.dockerignore`] — Cleanup inconsistency; decide keep-and-unignore vs remove later.
+- [x] [Review][Defer] **`auth/`, `db/`, `services/` subpackages absent** [`services/bff/src/bff/`] — Removed in cleanup as empty; tied to the AC2 decision-needed above. Tracks the post-decision option of leaving them absent permanently.
+
+### Dismissed (not actioned)
+
+- `except ValueError, TypeError:` is **not** a SyntaxError in Python 3 — parses as `except (ValueError, TypeError):` (verified). Blind Hunter false alarm.
+- `_validate_cors_requirements` only blocks literal `*` — matches AC and middleware norms; wildcard-subdomain is out of scope.
+- `os.environ["ENV_FILE"] = ""` timing in conftest — set before `from bff.main import app`, so settings construct with empty env-file. 98.10% test pass demonstrates correctness.
+- `api/me.py` hardcoded 401 without TODO guard — AC5 explicitly defines this contract; module docstring documents the Story 1.5 transition.
+- `_check_database` catches `Exception` — `CancelledError` is `BaseException` in 3.8+, propagates correctly.
+- `api/me.py` doesn't read `BFF_SESSION_COOKIE_NAME` — AC5 contract is "always 401 regardless of cookie state"; reading the cookie name would be cosmetic.
+
+### Acceptance Auditor verdict table
+
+| AC | Status | Note |
+|----|--------|------|
+| 1  | MET | `tools/fastapi-archetype/` gitignored; no archetype files in `git status` |
+| 2  | PARTIALLY MET | Tree as expected EXCEPT entry-point is `main.py` not `app.py`/`__main__.py`, and `auth/`/`db/`/`services/` removed in cleanup → see decision-needed item #1 |
+| 3  | MET | `uv sync --frozen` exit 0; `ruff check` clean; `ty check` clean; `pytest --cov` 113 passed at **98.10%** (>90% required) |
+| 4  | MET | `/health` returns 200 `{"status":"ok"}` when all three probes pass; 503 + `SERVICE_UNAVAILABLE` envelope on failure; unauthenticated; no `/metrics`; no OTEL exporter wiring |
+| 5  | MET | `/api/me` returns 401 + `session_expired` envelope unconditionally |
+| 6  | MET | `SESSION_EXPIRED` present; no premature deferred enum members |
+| 7  | PARTIALLY MET | Multi-stage `python:3.14-slim` + Alembic-on-startup + `HEALTHCHECK` correct; entrypoint runs `uvicorn bff.main:app` (spec says `bff.app:app`) → see decision-needed item #1 |
+| 8  | MET | SQLite URL points at `/data/bff.db`; `bff_data:/data` volume mount |
+| 9  | MET | All compose attributes (depends_on, env_file, healthcheck, volume, profiles) correct |
+| 10 | NOT VERIFIABLE on clean clone | `.env` bootstrap required → see decision-needed item #2 |
+| 11 | MET | Per-service `.env.example` template; root `.env.example` unchanged |
+| 12 | MET | Per-service context + `services/bff/.dockerignore` chosen; dev log records the decision |
+| 13 | MET | Files outside the scope-list unchanged |
+

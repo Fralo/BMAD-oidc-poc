@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.pool import StaticPool
 
 from bff.core import database
-from bff.core.config import AppSettings, settings
+from bff.core.config import AppSettings
 
 
 async def test_get_engine_without_settings_builds_default_settings(
@@ -29,7 +29,7 @@ async def test_get_session_yields_async_session(
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "_session_factory", None)
     try:
-        database.get_engine(settings)
+        database.get_engine()
 
         generator = database.get_session()
         session = await generator.__anext__()
@@ -47,7 +47,7 @@ async def test_dispose_engine_resets_global_engine(
 ) -> None:
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "_session_factory", None)
-    database.get_engine(settings)
+    database.get_engine()
 
     await database.dispose_engine()
 
@@ -61,6 +61,9 @@ async def test_invalid_database_url_raises_at_engine_creation(
     await database.dispose_engine()
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "_session_factory", None)
-    invalid_settings = AppSettings(database_url="not-a-valid-url://")
+    invalid_settings = AppSettings(
+        bff_client_secret="test-secret", database_url="not-a-valid-url://"
+    )
+    monkeypatch.setattr(database, "_default_settings", invalid_settings)
     with pytest.raises(ValueError, match="Invalid DATABASE_URL"):
-        database.get_engine(invalid_settings)
+        database.get_engine()

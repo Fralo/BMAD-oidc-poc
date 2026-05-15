@@ -128,6 +128,22 @@ def test_cors_wildcard_forbidden_with_credentials() -> None:
         )
 
 
+def test_bff_client_secret_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Story 1.3 Review Findings D3: fail-fast at AppSettings construction
+    # when BFF_CLIENT_SECRET is unset / empty / whitespace-only.
+    monkeypatch.delenv("BFF_CLIENT_SECRET", raising=False)
+    with pytest.raises(ValidationError, match="BFF_CLIENT_SECRET is required"):
+        AppSettings()
+
+
+def test_bff_client_secret_blank_string_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BFF_CLIENT_SECRET", "   ")
+    with pytest.raises(ValidationError, match="BFF_CLIENT_SECRET is required"):
+        AppSettings()
+
+
 def test_profile_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PROFILE", raising=False)
     settings = AppSettings()

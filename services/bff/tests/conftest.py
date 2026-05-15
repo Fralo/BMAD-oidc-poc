@@ -10,6 +10,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
 os.environ["ENV_FILE"] = ""
+# BFF_CLIENT_SECRET is required-fail-fast at AppSettings construction (Story
+# 1.3 Review Findings D3). Provide a non-secret placeholder here so the test
+# settings instance — built when `bff.main` is imported below — validates
+# successfully without leaking a real secret into pytest output.
+os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
 
 from bff.core.database import get_session
 from bff.main import app

@@ -26,17 +26,9 @@ services:
     healthcheck:
       # Compose-level healthcheck overrides the image-level one. Uses the
       # stdlib (no curl/wget in python:3.14-slim) — same probe as the BFF's
-      # /health endpoint exposes.
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - >-
-          import urllib.request,sys;
-          sys.exit(
-              0 if urllib.request.urlopen('http://localhost:8000/health',
-                  timeout=3).status == 200 else 1
-          )
+      # /health endpoint exposes. Single-line form mirrors Dockerfile
+      # HEALTHCHECK to avoid YAML folded-scalar fragility on edits.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 30

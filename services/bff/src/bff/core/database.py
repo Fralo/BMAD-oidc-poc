@@ -55,19 +55,28 @@ def is_local_dev_mode(settings: AppSettings | None = None) -> bool:
     return backend == SQLITE_PREFIX
 
 
-def get_engine(settings: AppSettings | None = None) -> AsyncEngine:
+def get_engine() -> AsyncEngine:
+    """Return the process-global async engine, building it on first call.
+
+    Reads configuration from the module-level `_default_settings` (i.e. the
+    BFF's pydantic-settings instance). Story 1.3 Review Findings P7: the
+    previous signature accepted an `AppSettings | None` argument that was
+    silently honored only on first call — every subsequent call ignored
+    its `settings` parameter. Callers that need to swap configuration
+    (tests, hot-reload) must `dispose_engine()` first and then
+    monkeypatch `_default_settings`.
+    """
     global _engine  # noqa: PLW0603
     if _engine is None:
-        cfg = settings if settings is not None else _default_settings
-        effective = cfg.effective_database_url
+        effective = _default_settings.effective_database_url
         try:
             async_url = _to_async_url(effective)
         except Exception as e:
             raise ValueError(f"Invalid DATABASE_URL: {effective!r}. {e!s}") from e
         if make_url(async_url).get_backend_name() == SQLITE_PREFIX:
-            _engine = create_sqlite_engine(async_url, echo=cfg.debug)
+            _engine = create_sqlite_engine(async_url, echo=_default_settings.debug)
         else:
-            _engine = create_url_engine(async_url, echo=cfg.debug)
+            _engine = create_url_engine(async_url, echo=_default_settings.debug)
     return _engine
 
 

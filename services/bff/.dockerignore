@@ -18,16 +18,6 @@ build/
 compose
 .DS_Store
 
-# Archetype-emitted dev docs — kept in the source tree for reference but
-# excluded from the build context so they don't bloat the BFF image.
 # NOTE: README.md is intentionally NOT excluded because pyproject.toml
 # declares `readme = "README.md"`; uv_build reads it during `uv sync`.
-AGENTS.md
-CLAUDE.md
-PROJECT_CONTEXT.md
-NEW_REQUIREMENTS.md
-REMOVE_RATE_LIMITING.md
-RELEASE_NOTES.md
 Justfile
-node-autochglog.config.json
-scripts/

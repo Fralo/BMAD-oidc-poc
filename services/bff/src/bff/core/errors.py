@@ -57,11 +57,18 @@ async def validation_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
     val_exc = cast(RequestValidationError, exc)
+    # Drop the user-supplied `input` value from each error before serializing.
+    # Pydantic includes it verbatim; echoing it back to the client leaks raw
+    # request data (passwords, tokens, PII) into 422 responses — see Story 1.3
+    # Review Findings (Patch P3).
+    sanitized = [
+        {k: v for k, v in err.items() if k != "input"} for err in val_exc.errors()
+    ]
     return JSONResponse(
         status_code=ErrorCode.VALIDATION_ERROR.http_status,
         content=_build_error_body(
             ErrorCode.VALIDATION_ERROR.code,
             ErrorCode.VALIDATION_ERROR.message,
-            str(val_exc.errors()),
+            sanitized,
         ),
     )

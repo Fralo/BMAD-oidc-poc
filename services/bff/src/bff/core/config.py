@@ -102,6 +102,21 @@ class AppSettings(BaseSettings):
             raise ValueError(msg)
         return self
 
+    @model_validator(mode="after")
+    def _validate_bff_client_secret(self) -> AppSettings:
+        # Story 1.3 Review Findings D3: services/bff/.env.example declares
+        # BFF_CLIENT_SECRET as "required-fail-fast even in 1.3" but the field
+        # defaulted to "" with no enforcement. Story 1.5's OIDC plugin is the
+        # first consumer; failing at the BFF's startup catches misconfig at
+        # first deploy rather than at the first OIDC redirect.
+        if not self.bff_client_secret.strip():
+            msg = (
+                "BFF_CLIENT_SECRET is required and must be non-empty "
+                "(set it in services/bff/.env or the deployment env)"
+            )
+            raise ValueError(msg)
+        return self
+
     @staticmethod
     def _parse_csv(value: str) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
