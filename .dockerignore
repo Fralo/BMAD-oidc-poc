@@ -9,6 +9,9 @@ _bmad-output/
 # Local tooling (cloned archetype lives here)
 tools/
 
+# E2E test artefacts — never bake test output into images
+e2e/test-results/
+
 # Language artifacts
 **/node_modules
 **/__pycache__
@@ -17,6 +20,15 @@ tools/
 **/.pytest_cache
 **/.coverage
 **/.uv
+**/.venv
+
+# BFF-specific: tests, dev docs, build caches (mirrors services/bff/.dockerignore,
+# which only applies when the per-service context is used — see Story 1.3).
+# With the root build context (Story 1.14) only this file applies.
+services/bff/tests/
+services/bff/docs/
+services/bff/.ruff_cache/
+services/bff/.githooks/
 
 # Local environment files (never bake secrets into images)
 **/.env
