@@ -9,6 +9,7 @@ from bff.api.auth import router as auth_router
 from bff.api.health import router as health_router
 from bff.api.me import router as me_router
 from bff.api.v1 import router as v1_router
+from bff.auth.csrf import CsrfMiddleware
 from bff.core.config import settings
 from bff.core.database import dispose_engine
 from bff.core.errors import (
@@ -16,6 +17,7 @@ from bff.core.errors import (
     app_exception_handler,
     validation_exception_handler,
 )
+from bff.middleware.security_headers import SecurityHeadersMiddleware
 from bff.observability.logging import configure_logging
 
 
@@ -44,6 +46,14 @@ if settings.cors_enabled:
         allow_headers=settings.cors_allow_headers_list,
         expose_headers=settings.cors_expose_headers_list,
     )
+
+# Starlette middleware stack is LIFO: the last `add_middleware` is the
+# innermost (runs first on the way in). SecurityHeaders sits INSIDE Csrf so
+# that a CSRF-403 short-circuit bypasses CSP attachment (the 403 is JSON,
+# not HTML). See Story 1.6 Dev Notes "Middleware ordering" for the full
+# onion diagram.
+app.add_middleware(SecurityHeadersMiddleware)  # ty: ignore[invalid-argument-type] -- starlette's add_middleware signature uses *args/**kwargs, not typed per-middleware
+app.add_middleware(CsrfMiddleware)  # ty: ignore[invalid-argument-type] -- starlette's add_middleware signature uses *args/**kwargs, not typed per-middleware
 
 app.add_exception_handler(AppException, app_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)

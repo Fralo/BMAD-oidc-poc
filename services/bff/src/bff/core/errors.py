@@ -24,6 +24,7 @@ class ErrorCode(enum.Enum):
         503,
     )
     AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
+    CSRF_INVALID = ("csrf_invalid", "CSRF token missing or invalid", 403)
 
     def __init__(self, code: str, message: str, http_status: int) -> None:
         self.code = code

@@ -21,8 +21,15 @@ os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
 # is imported below — validates successfully.
 os.environ.setdefault("OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/test")
 
+from bff.core.config import settings
 from bff.core.database import get_session
 from bff.main import app
+
+# Shared CSRF secret for state-changing-request fixtures. 43 chars matches the
+# real `secrets.token_urlsafe(32)` output length minted by Story 1.5 at
+# /auth/callback — keeps the test surface honest against any future regression
+# that adds a length-based short-circuit ahead of `hmac.compare_digest`.
+_CSRF_FIXTURE_VALUE = "test-csrf-secret-43chars-xxxxxxxxxxxxxxxxxxx"
 
 _stub_logger = logging.getLogger("bff.test_stubs")
 
@@ -82,6 +89,35 @@ async def client_fixture(session):
     app.dependency_overrides[get_session] = _override
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="client_with_csrf")
+async def client_with_csrf_fixture(session, monkeypatch: pytest.MonkeyPatch):
+    """Like `client`, but pre-seeded with the `bff_csrf` cookie + `X-CSRF-Token`
+    header + same-origin `Origin` so state-changing requests pass the CSRF
+    middleware introduced in Story 1.6.
+
+    Also patches `settings.bff_base_url` to `http://test` so the middleware's
+    same-origin check accepts the AsyncClient's `base_url`. monkeypatch is
+    function-scoped; the patch unwinds between tests.
+    """
+    monkeypatch.setattr(settings, "bff_base_url", "http://test")
+
+    async def _override():
+        yield session
+
+    app.dependency_overrides[get_session] = _override
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        cookies={settings.bff_csrf_cookie_name: _CSRF_FIXTURE_VALUE},
+        headers={
+            "X-CSRF-Token": _CSRF_FIXTURE_VALUE,
+            "Origin": "http://test",
+        },
     ) as c:
         yield c
     app.dependency_overrides.clear()

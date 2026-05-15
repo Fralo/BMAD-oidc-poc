@@ -41,6 +41,14 @@ def test_error_code_auth_state_invalid() -> None:
     assert ErrorCode.AUTH_STATE_INVALID.http_status == 400
 
 
+def test_csrf_invalid_enum_shape() -> None:
+    # Story 1.6 — wire value is lower_snake_case per architecture §C5; 403 per
+    # architecture §Format Patterns line 684.
+    assert ErrorCode.CSRF_INVALID.code == "csrf_invalid"
+    assert ErrorCode.CSRF_INVALID.message == "CSRF token missing or invalid"
+    assert ErrorCode.CSRF_INVALID.http_status == 403
+
+
 def test_app_exception_carries_error_code() -> None:
     exc = AppException(ErrorCode.NOT_FOUND)
     assert exc.error_code is ErrorCode.NOT_FOUND
@@ -68,8 +76,11 @@ def test_build_error_body_null_detail() -> None:
     assert body["detail"] is None
 
 
-async def test_validation_error_via_http(client: AsyncClient) -> None:
-    response = await client.post("/test/open")
+async def test_validation_error_via_http(client_with_csrf: AsyncClient) -> None:
+    # Story 1.6: CSRF middleware now intercepts POST without the cookie/header
+    # before validation runs. Use the pre-seeded fixture so the request reaches
+    # the validator and surfaces the 422 envelope under test.
+    response = await client_with_csrf.post("/test/open")
     assert response.status_code == 422
     data = response.json()
     assert data["errorCode"] == "VALIDATION_ERROR"
