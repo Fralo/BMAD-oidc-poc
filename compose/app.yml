@@ -1,6 +1,42 @@
 # compose/app.yml
 # Included from the top-level docker-compose.yml via the `include:` directive.
-# This file owns application-tier services: BFF (Story 1.3), Resource Server
-# (Story 3.1), and the SPA build/serve container (Story 1.8). Empty for the
-# scaffold story so `docker compose config` validates cleanly.
-services: {}
+# This file owns application-tier services. Story 1.3 lands the BFF; the
+# Resource Server arrives in Story 3.1 and the SPA (prod build) in Story 1.8.
+services:
+  bff:
+    build:
+      # Per-service build context (Story 1.3 closes deferred D4): only the BFF
+      # service tree is sent to the daemon; services/bff/.dockerignore prunes
+      # tests/, dev-only docs, caches, and .env.* (except .env.example).
+      context: ../services/bff
+    container_name: bff
+    env_file:
+      - ../services/bff/.env
+    ports:
+      # Expose :8000 to the host. Required for the browser-side OIDC redirect
+      # (Story 1.5) to land on the BFF at http://localhost:8000/auth/callback
+      # and for `dev`-profile workflows where the SPA's ng-serve proxy
+      # forwards /auth, /api, /v1 to http://localhost:8000.
+      - "8000:8000"
+    volumes:
+      - bff_data:/data
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # Compose-level healthcheck overrides the image-level one. Uses the
+      # stdlib (no curl/wget in python:3.14-slim) — same probe as the BFF's
+      # /health endpoint exposes. Single-line form mirrors Dockerfile
+      # HEALTHCHECK to avoid YAML folded-scalar fragility on edits.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    profiles: [default, dev, e2e]
+    restart: unless-stopped
+
+volumes:
+  # Persists the BFF's SQLite file across container recreation; destroyed by
+  # `docker compose down -v`. Per AR6 (architecture §I5).
+  bff_data: {}

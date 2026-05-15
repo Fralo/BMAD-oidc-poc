@@ -127,3 +127,117 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 - **AC6 non-401 fallback to `parseUrl('/login')` (no `return_to`) not test-locked** — `auth-guard.spec.ts`. Implementation at `auth-guard.ts:22` is correct; AC9 enumeration only required 200 and 401 tests.
 - **`withCredentialsInterceptor` non-HttpErrorResponse branch not test-locked** — `with-credentials-interceptor.spec.ts`. The 5xx test covers `HttpErrorResponse with status !== 401`; a thrown non-HttpErrorResponse (e.g., a downstream interceptor `Error`) takes the same `throwError` path but is not asserted.
 - **Minor `csrfInterceptor` test gaps** — `csrf-interceptor.spec.ts`. Case-insensitive method matching (AC5 contract), `pathOf` with query-string `/api/me?ts=1`, multi-cookie ordering when `csrf_token` is not first, `=` in cookie value (base64 padding), and absent-vs-empty cookie distinction (the current "missing cookie" test sets `csrf_token=` empty rather than truly deleting). All hygiene; implementation is correct.
+
+## Deferred from: code review of 1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates (2026-05-15)
+
+> Note: items below were authored as D5–D21 on branch `story-1-3` before stories 1.2/1.8 added D5–D13. Renumbered to D14–D30 on merge to preserve unique identifiers across the file.
+
+### D14 — Log redaction regex false-positives mangle legitimate prose
+
+**Surfaced by:** Edge Case Hunter
+**Files:** `services/bff/src/bff/observability/logging.py:18-26`
+**Issue:** `_AUTH_HEADER_RE` and `_SECRET_KEY_RE` redact any non-whitespace token following the words "bearer", "authorization", "password", "token", "secret", "api_key", "credential" — including when those words appear in legitimate prose. Verified: `"reset token expired at 12:00"` becomes `"reset token *** at 12:00"`; `"user is bearer of message foo"` becomes `"user is bearer *** foo"`.
+**Belongs to:** Archetype upstream or a dedicated observability pass.
+
+### D15 — CORS middleware install and `configure_logging` are both frozen at module import / lifespan-start
+
+**Surfaced by:** Blind Hunter + Edge Case Hunter
+**Files:** `services/bff/src/bff/main.py:21-45`
+**Issue:** `if settings.cors_enabled: app.add_middleware(...)` runs once at module import; the existing `tests/api/test_cors.py` works around this with `importlib.reload`. Separately, `configure_logging(settings)` only runs after lifespan starts, so uvicorn startup logs and any exception during `FastAPI(...)` instantiation use unstructured stdout.
+**Belongs to:** Later observability/configuration refactor.
+
+### D16 — 404 / 405 responses don't follow the documented error envelope
+
+**Surfaced by:** Edge Case Hunter
+**Files:** `services/bff/src/bff/main.py:47-51`
+**Issue:** Architecture §C5 envelope is `{errorCode, message, detail}`. Starlette's default for unknown routes / wrong methods is `{"detail": "Not Found"}` / `{"detail": "Method Not Allowed"}`. No global Starlette HTTPException handler is registered.
+**Belongs to:** Story 1.10 (SPA AppError extensions) or sooner if the SPA's authGuard catch-all path needs the envelope earlier.
+
+### D17 — Test stubs are welded onto the live `bff.main:app` singleton at conftest import
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/tests/conftest.py:25-37`
+**Issue:** `tests/conftest.py` does `app.include_router(_test_router)` at module import. If anything imports `tests.conftest` outside pytest, these stub routes get welded onto the shared app. Pytest-only invariant today; refactor to a separate test app or per-test mount in a later pass.
+
+### D18 — `.githooks/pre-commit` is unwired dead weight
+
+**Surfaced by:** Blind Hunter + Edge Case Hunter
+**Files:** `services/bff/.githooks/pre-commit`
+**Issue:** Requires `git config core.hooksPath .githooks` to activate (not done anywhere in the diff). Runs `npx --yes node-autochglog` (network) and `git add RELEASE_NOTES.md`. Either delete the hook or wire it up explicitly in a tooling pass.
+
+### D19 — `alembic/env.py` imports private `_to_async_url`
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/alembic/env.py:23`
+**Issue:** `from bff.core.database import _to_async_url` reaches into a `_`-prefixed helper. Promote `_to_async_url` to public API or duplicate the URL-rewriting logic in `env.py`.
+
+### D20 — `AppSettings.profile` Literal collides with compose `profiles:` vocabulary
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/src/bff/core/config.py:32`, `compose/app.yml:44`
+**Issue:** BFF settings declare `profile: Literal["default", "mock"]` (archetype's backend-mock-vs-real concept); compose declares `profiles: [default, dev, e2e]` (service activation). Two unrelated concepts sharing the name will confuse future contributors. Rename one (e.g. `AppSettings.backend_mode`).
+
+### D21 — `_format_arg` AOP truncates any repr starting with `<`
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/src/bff/aop/logging_decorator.py:74-76`
+**Issue:** `if len(r) > 80 or r.startswith("<")` collapses any repr beginning with `<` to `<TypeName>`. That includes legitimate values like XML/HTML payloads. Tighten the heuristic in an archetype-upstream pass.
+
+### D22 — No `.gitattributes` enforcing LF for `*.sh`
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/` (entrypoint.sh)
+**Issue:** Windows hosts running buildkit can produce CRLF endpoints. `#!/bin/sh\r` is a classic broken-shebang failure. Add `.gitattributes` with `*.sh text eol=lf`.
+
+### D23 — Engine fixture drop_all / create_all between tests with session-scoped engine
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/tests/conftest.py:63-86`
+**Issue:** `session` fixture's teardown runs `drop_all` then `create_all` on every test. SQLModel.metadata is empty in Story 1.3, so no-op today; Story 1.4 lands the first tables and every test will pay full schema rebuild. Entangles fixture scope (session) with schema lifecycle (per-test).
+**Belongs to:** Story 1.4 (session table migration) or sooner.
+
+### D24 — BFF README documents capabilities the code does not have
+
+**Surfaced by:** Blind Hunter + Edge Case Hunter
+**Files:** `services/bff/README.md`
+**Issue:** Lists `/metrics`, OTEL OTLP export, bearer-token RBAC, `DB_DRIVER=mysql+pymysql` — all removed during cleanup or never wired. Archetype-shipped doc drift.
+**Belongs to:** Story 5.3 (README polish + AI integration log).
+
+### D25 — `/health` is an unauthenticated DoS surface
+
+**Surfaced by:** Edge Case Hunter
+**Files:** `services/bff/src/bff/api/health.py:116-135`
+**Issue:** Per-request engine setup + alembic config parse + outbound httpx to OIDC + no rate limit. Compose's 30s × 5s × 30 retries window allows ~5 outbound discovery requests / sec from a single source.
+**Belongs to:** Story 5.2 (security review).
+
+### D26 — `alembic upgrade head` in `entrypoint.sh` is not SIGTERM-safe
+
+**Surfaced by:** Edge Case Hunter
+**Files:** `services/bff/entrypoint.sh:15-19`
+**Issue:** `set -e; alembic upgrade head; exec uvicorn ...`. No `trap` forwarding SIGTERM to the alembic child. Benign in Story 1.3 (zero migrations); multi-step migrations in 1.4+ could land partial schema if `docker stop` arrives mid-upgrade.
+**Belongs to:** Story 1.4 (first migration).
+
+### D27 — `Justfile` in-tree but `.dockerignore` excludes it
+
+**Surfaced by:** Acceptance Auditor (out-of-AC observation)
+**Files:** `services/bff/Justfile`, `services/bff/.dockerignore`
+**Issue:** Cleanup left Justfile present but the .dockerignore excludes it from build context. Either decide it's a dev-host helper (current state: explicit) or remove it.
+
+### D28 — `auth/`, `db/`, `services/` subpackages absent
+
+**Surfaced by:** Acceptance Auditor
+**Files:** `services/bff/src/bff/`
+**Issue:** Cleanup removed these as empty placeholders. AC2 enumerates them as part of the archetype layout. Tracks the post-decision option of leaving them absent permanently.
+**Belongs to:** Tied to AC2 decision-needed (whether to update the spec or restore the directories).
+
+### D29 — `CORSMiddleware` typed with `# ty: ignore`
+
+**Surfaced by:** Blind Hunter
+**Files:** `services/bff/src/bff/main.py:39`
+**Issue:** Inline ignore explains starlette's `add_middleware` signature isn't typed per-middleware. Refactor when a typed wrapper exists upstream.
+
+### D30 — Test stubs / stale `.dockerignore` entries / vestigial `.gitignore` rule
+
+**Surfaced by:** Acceptance Auditor (out-of-AC observations)
+**Files:** `services/bff/.dockerignore`, `services/bff/.gitignore`
+**Issue:** Cleanup left stale archetype references that are tracked separately as Patch items P8–P10 in the story file. Listed here for cross-reference.
