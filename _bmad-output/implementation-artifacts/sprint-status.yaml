@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (epic-1 reopened — Story 1.14 added to admit AR24 SPA-serving fix that closes D46 and unblocks Story 5.4 final smoke)
+last_updated: 2026-05-15 (story 1.14 created — BFF multi-stage build serves SPA bundle; status → ready-for-dev; closes D46)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -57,7 +57,7 @@ development_status:
   1-11-playwright-project-setup-fixtures-helpers: done
   1-12-bff-post-v1-test-reset-endpoint: done
   1-13-e2e-spec-j1-first-time-login-j5-logout: done
-  1-14-bff-multi-stage-build-serves-spa-bundle: backlog
+  1-14-bff-multi-stage-build-serves-spa-bundle: ready-for-dev
   epic-1-retrospective: optional
 
   # Epic 2: Personal Book List (J2)
