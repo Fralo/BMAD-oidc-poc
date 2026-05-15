@@ -237,3 +237,75 @@ def verify_id_token(
         raise OidcVerificationError("id_token_nonce_mismatch")
 
     return decoded
+
+
+# ---------------------------------------------------------------------------
+# Revocation + RP-Initiated Logout (Story 1.7)
+# ---------------------------------------------------------------------------
+
+
+async def revoke_refresh_token(
+    *,
+    refresh_token: str,
+    revocation_url: str,
+    client_id: str,
+    client_secret: str,
+) -> None:
+    """POST `refresh_token` to the OIDC revocation endpoint (RFC 7009 §2.1).
+
+    Uses HTTP Basic auth for confidential clients (httpx auto-base64s the
+    `client_id:client_secret` pair). Honors architecture §C6 (5s connect /
+    10s read; zero retries). Raises `httpx.HTTPStatusError` on any non-2xx
+    response (including 3xx — a redirect from a misconfigured AS or a
+    path-rewriting proxy would otherwise be silently treated as success
+    while NOT revoking the token, bypassing AC7). Transport failures
+    surface as the matching `httpx.HTTPError` subclass. The caller
+    (`/auth/logout`) wraps this in try/except so an unreachable AS does
+    NOT block local session teardown (architecture §A7 — degrade honestly).
+    """
+    async with httpx.AsyncClient(timeout=_TOKEN_EXCHANGE_TIMEOUT) as client:
+        response = await client.post(
+            revocation_url,
+            data={"token": refresh_token, "token_type_hint": "refresh_token"},
+            auth=(client_id, client_secret),
+        )
+        if not response.is_success:
+            raise httpx.HTTPStatusError(
+                f"revocation endpoint returned {response.status_code}",
+                request=response.request,
+                response=response,
+            )
+
+
+async def end_session(
+    *,
+    id_token: str,
+    end_session_url: str,
+    client_id: str,
+    client_secret: str,
+) -> None:
+    """POST to the OIDC RP-Initiated Logout endpoint with `id_token_hint`.
+
+    Keycloak's confidential-client POST variant takes `client_id` and
+    `client_secret` as form fields (NOT Basic auth — RP-Initiated Logout
+    spec leaves auth to the OP). Honors §C6 timeouts; zero retries.
+    Raises `httpx.HTTPStatusError` on any non-2xx response (including 3xx
+    — `follow_redirects=False` is the httpx default for POST, so a
+    redirect from a misconfigured AS would otherwise be silently
+    swallowed). Caller wraps in try/except per §A7.
+    """
+    async with httpx.AsyncClient(timeout=_TOKEN_EXCHANGE_TIMEOUT) as client:
+        response = await client.post(
+            end_session_url,
+            data={
+                "id_token_hint": id_token,
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+        if not response.is_success:
+            raise httpx.HTTPStatusError(
+                f"end_session endpoint returned {response.status_code}",
+                request=response.request,
+                response=response,
+            )

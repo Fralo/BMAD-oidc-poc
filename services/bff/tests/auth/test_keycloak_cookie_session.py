@@ -9,8 +9,10 @@ Covers:
   mismatch, JWKS unreachable).
 """
 
+import base64
 import time
 
+import httpx
 import jwt
 import pytest
 import respx
@@ -19,7 +21,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from bff.auth.keycloak_cookie_session import (
     OidcVerificationError,
     build_authorize_url,
+    end_session,
     exchange_code,
+    revoke_refresh_token,
     sign_state_id,
     state_id_serializer,
     verify_id_token,
@@ -27,8 +31,10 @@ from bff.auth.keycloak_cookie_session import (
 )
 from tests.auth.synthetic_idp import (
     DEFAULT_AUDIENCE,
+    DEFAULT_END_SESSION_URL,
     DEFAULT_ISSUER,
     DEFAULT_JWKS_URL,
+    DEFAULT_REVOCATION_URL,
     DEFAULT_TOKEN_URL,
     build_synthetic_idp,
     stash_authorization_code,
@@ -313,3 +319,147 @@ async def test_verify_id_token_jwks_unreachable_raises(
             expected_audience=DEFAULT_AUDIENCE,
             expected_nonce="abc",
         )
+
+
+# ---------------------------------------------------------------------------
+# revoke_refresh_token (Story 1.7)
+# ---------------------------------------------------------------------------
+
+
+async def test_revoke_refresh_token_posts_form_body_and_basic_auth() -> None:
+    """RFC 7009 §2.1: form-encoded `token` + `token_type_hint=refresh_token`,
+    HTTP Basic auth carrying `client_id:client_secret`.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+        idp = build_synthetic_idp(mock)
+        await revoke_refresh_token(
+            refresh_token="my-refresh-token",
+            revocation_url=DEFAULT_REVOCATION_URL,
+            client_id="test-client",
+            client_secret="test-secret",
+        )
+
+    assert len(idp.captured_revocations) == 1
+    captured = idp.captured_revocations[0]
+    assert captured["token"] == "my-refresh-token"
+    assert captured["token_type_hint"] == "refresh_token"
+
+    # Basic auth: header captured by the synthetic IdP under "_authorization".
+    auth_header = captured["_authorization"]
+    assert auth_header.startswith("Basic ")
+    decoded = base64.b64decode(auth_header[len("Basic ") :]).decode("ascii")
+    assert decoded == "test-client:test-secret"
+
+
+async def test_revoke_refresh_token_raises_on_5xx() -> None:
+    """`raise_for_status()` propagates `httpx.HTTPStatusError` on non-2xx."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_REVOCATION_URL).mock(return_value=httpx.Response(500))
+        with pytest.raises(httpx.HTTPStatusError):
+            await revoke_refresh_token(
+                refresh_token="x",
+                revocation_url=DEFAULT_REVOCATION_URL,
+                client_id="c",
+                client_secret="s",
+            )
+
+
+async def test_revoke_refresh_token_raises_on_connect_error() -> None:
+    """Transport failure (`httpx.ConnectError`) propagates to the caller."""
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_REVOCATION_URL).mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+        with pytest.raises(httpx.ConnectError):
+            await revoke_refresh_token(
+                refresh_token="x",
+                revocation_url=DEFAULT_REVOCATION_URL,
+                client_id="c",
+                client_secret="s",
+            )
+
+
+async def test_revoke_refresh_token_raises_on_3xx() -> None:
+    """A 302 from a misconfigured AS / path-rewriting proxy must NOT be
+    treated as success — the refresh token would NOT actually be revoked
+    while the BFF tears down the local session, silently bypassing AC7.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_REVOCATION_URL).mock(
+            return_value=httpx.Response(302, headers={"location": "/login"})
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await revoke_refresh_token(
+                refresh_token="x",
+                revocation_url=DEFAULT_REVOCATION_URL,
+                client_id="c",
+                client_secret="s",
+            )
+
+
+# ---------------------------------------------------------------------------
+# end_session (Story 1.7)
+# ---------------------------------------------------------------------------
+
+
+async def test_end_session_posts_form_body_with_id_token_hint() -> None:
+    """OIDC RP-Initiated Logout: form fields id_token_hint + client_id/secret."""
+    with respx.mock(assert_all_called=False) as mock:
+        idp = build_synthetic_idp(mock)
+        await end_session(
+            id_token="my-id-token",
+            end_session_url=DEFAULT_END_SESSION_URL,
+            client_id="test-client",
+            client_secret="test-secret",
+        )
+
+    assert len(idp.captured_end_sessions) == 1
+    captured = idp.captured_end_sessions[0]
+    assert captured["id_token_hint"] == "my-id-token"
+    assert captured["client_id"] == "test-client"
+    assert captured["client_secret"] == "test-secret"
+
+
+async def test_end_session_raises_on_5xx() -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_END_SESSION_URL).mock(return_value=httpx.Response(500))
+        with pytest.raises(httpx.HTTPStatusError):
+            await end_session(
+                id_token="x",
+                end_session_url=DEFAULT_END_SESSION_URL,
+                client_id="c",
+                client_secret="s",
+            )
+
+
+async def test_end_session_raises_on_connect_error() -> None:
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_END_SESSION_URL).mock(
+            side_effect=httpx.ConnectError("connection refused")
+        )
+        with pytest.raises(httpx.ConnectError):
+            await end_session(
+                id_token="x",
+                end_session_url=DEFAULT_END_SESSION_URL,
+                client_id="c",
+                client_secret="s",
+            )
+
+
+async def test_end_session_raises_on_3xx() -> None:
+    """`follow_redirects=False` (httpx default for POST) means a 302 from
+    the AS is returned as-is. A bare `raise_for_status()` would NOT raise
+    on it, silently treating "not actually logged out at the AS" as
+    success.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(DEFAULT_END_SESSION_URL).mock(
+            return_value=httpx.Response(303, headers={"location": "/logged-out"})
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            await end_session(
+                id_token="x",
+                end_session_url=DEFAULT_END_SESSION_URL,
+                client_id="c",
+                client_secret="s",
+            )

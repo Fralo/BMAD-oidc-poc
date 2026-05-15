@@ -1,10 +1,9 @@
-# noinspection PyProtectedMember
 from httpx import AsyncClient
 
 from bff.core.errors import (
     AppException,
     ErrorCode,
-    _build_error_body,
+    build_error_body,
 )
 
 
@@ -62,8 +61,8 @@ def test_app_exception_with_detail() -> None:
     assert exc.error_code is ErrorCode.NOT_FOUND
 
 
-def test_build_error_body_structure() -> None:
-    body = _build_error_body("TEST_CODE", "Test message", "extra detail")
+def testbuild_error_body_structure() -> None:
+    body = build_error_body("TEST_CODE", "Test message", "extra detail")
     assert body == {
         "errorCode": "TEST_CODE",
         "message": "Test message",
@@ -71,8 +70,8 @@ def test_build_error_body_structure() -> None:
     }
 
 
-def test_build_error_body_null_detail() -> None:
-    body = _build_error_body("CODE", "msg")
+def testbuild_error_body_null_detail() -> None:
+    body = build_error_body("CODE", "msg")
     assert body["detail"] is None
 
 

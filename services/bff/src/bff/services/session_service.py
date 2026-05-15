@@ -208,3 +208,32 @@ class SessionService:
             execution_options={"synchronize_session": False},
         )
         await db.commit()
+
+    async def delete_session(
+        self,
+        db: AsyncSession,
+        *,
+        session_id: str,
+    ) -> None:
+        """Single indexed DELETE WHERE id=:id — the explicit logout case.
+
+        Idempotent: a missing row is a no-op (0 rows affected). Mirrors
+        `delete_expired_session` but without the `expires_at < now` predicate
+        — Story 1.7's `/auth/logout` calls this AFTER attempting revocation
+        and end-session, so the row should always exist; the idempotence
+        is defensive against concurrent-logout races.
+        """
+        await db.execute(
+            _delete(entities.Session).where(
+                entities.Session.id == session_id  # type: ignore[arg-type]
+            ),
+            execution_options={"synchronize_session": False},
+        )
+        await db.commit()
+        # The literal "..." in the format string would lie for short ids
+        # — only add it when the id was actually truncated.
+        if session_id:
+            suffix = "..." if len(session_id) > 8 else ""
+            logger.info("session_deleted id=%s%s", session_id[:8], suffix)
+        else:
+            logger.info("session_deleted id=(none)")

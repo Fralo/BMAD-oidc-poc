@@ -4,6 +4,7 @@ Byte-for-byte assertion on the CSP header value catches whitespace / quoting
 drift; path-prefix tests cover the JSON-API exclusion list.
 """
 
+import pytest
 from httpx import AsyncClient
 
 _EXPECTED_CSP = (
@@ -25,6 +26,7 @@ async def test_csp_attached_on_catch_all_with_html_accept(
     # the path is NOT in the API exclusion list (/auth/, /api/, /v1/, /health),
     # so the middleware attaches CSP because Accept includes text/html.
     response = await client.get("/some-unknown-path", headers={"Accept": "text/html"})
+    assert response.status_code == 404
     assert "content-security-policy" in response.headers
     assert response.headers["content-security-policy"] == _EXPECTED_CSP
 
@@ -86,4 +88,15 @@ async def test_csp_not_attached_on_auth_login_redirect(
     response = await client_no_redirects.get(
         "/auth/login", headers={"Accept": _HTML_ACCEPT}
     )
+    assert "content-security-policy" not in response.headers
+
+
+@pytest.mark.parametrize("bare_path", ["/auth", "/api", "/v1"])
+async def test_csp_not_attached_on_bare_api_namespace_roots(
+    client: AsyncClient, bare_path: str
+) -> None:
+    # Post-review patch — bare namespace roots without trailing slash slipped
+    # through the prefix check and would have received CSP on the 404 JSON
+    # response. Now they are exact-matched against _API_PATHS_EXACT.
+    response = await client.get(bare_path, headers={"Accept": _HTML_ACCEPT})
     assert "content-security-policy" not in response.headers

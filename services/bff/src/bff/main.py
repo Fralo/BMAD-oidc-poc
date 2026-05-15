@@ -48,10 +48,12 @@ if settings.cors_enabled:
     )
 
 # Starlette middleware stack is LIFO: the last `add_middleware` is the
-# innermost (runs first on the way in). SecurityHeaders sits INSIDE Csrf so
-# that a CSRF-403 short-circuit bypasses CSP attachment (the 403 is JSON,
-# not HTML). See Story 1.6 Dev Notes "Middleware ordering" for the full
-# onion diagram.
+# OUTERMOST in the onion (it wraps the inner ones) and runs first on the
+# way in. CsrfMiddleware is added last so it sits outside SecurityHeaders,
+# meaning a CSRF-403 short-circuit returns before SecurityHeaders is
+# entered and never receives the rejection response (the 403 is JSON, not
+# HTML, so no CSP needed). See Story 1.6 Dev Notes "Middleware ordering"
+# for the full onion diagram.
 app.add_middleware(SecurityHeadersMiddleware)  # ty: ignore[invalid-argument-type] -- starlette's add_middleware signature uses *args/**kwargs, not typed per-middleware
 app.add_middleware(CsrfMiddleware)  # ty: ignore[invalid-argument-type] -- starlette's add_middleware signature uses *args/**kwargs, not typed per-middleware
 

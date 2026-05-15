@@ -86,6 +86,17 @@ class SyntheticIdp:
     pending_codes: dict[str, str] = field(default_factory=dict)
     # Per-code stash of the nonce + sub the token handler will mint into id_tokens.
     pending_claims: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Refresh tokens captured at `/revocation`; populated by `_revocation_handler`
+    # and consulted by `_token_handler` to reject refresh-grant replay (Story 1.7).
+    revoked_refresh_tokens: set[str] = field(default_factory=set)
+    # Per-handler response overrides used by Story 1.7's logout tests to simulate
+    # AS failure modes. Set to an `httpx.Response` to return that response on the
+    # next call (and 200 thereafter only if `..._response_override` is reset to
+    # None — i.e., the override is persistent until cleared). Set to an exception
+    # instance to RAISE that exception (mimicking a transport-layer failure like
+    # `httpx.ConnectError` or `httpx.ReadTimeout`).
+    revocation_response_override: httpx.Response | BaseException | None = None
+    end_session_response_override: httpx.Response | BaseException | None = None
 
     def make_id_token(
         self,
@@ -193,9 +204,19 @@ def build_synthetic_idp(
     )
 
     # Token exchange — validates PKCE verifier vs stash, returns id+access+refresh.
+    # Story 1.7 adds the `refresh_token` grant branch (used by /auth/logout's
+    # refresh-replay-rejection integration test) — revoked tokens get 400
+    # `invalid_grant`, unknown ones get 400 `invalid_request`.
     def _token_handler(request: httpx.Request) -> httpx.Response:
         body = dict(_parse_form(request.content))
         idp.captured_token_exchanges.append(body)
+
+        if body.get("grant_type") == "refresh_token":
+            refresh_token = body.get("refresh_token")
+            if refresh_token and refresh_token in idp.revoked_refresh_tokens:
+                return httpx.Response(400, json={"error": "invalid_grant"})
+            return httpx.Response(400, json={"error": "invalid_request"})
+
         code = body.get("code")
         verifier = body.get("code_verifier")
         if not code or not verifier:
@@ -224,14 +245,42 @@ def build_synthetic_idp(
 
     mock.post(DEFAULT_TOKEN_URL).mock(side_effect=_token_handler)
 
+    # Story 1.7: capture the Authorization header (Basic auth assertion in
+    # test_auth.py scenario 14) AND populate `revoked_refresh_tokens` so the
+    # refresh-grant rejection branch above can see them. Failure-mode tests
+    # set `idp.revocation_response_override` to control the response.
     def _revocation_handler(request: httpx.Request) -> httpx.Response:
-        idp.captured_revocations.append(dict(_parse_form(request.content)))
+        captured = dict(_parse_form(request.content))
+        captured["_authorization"] = request.headers.get("authorization", "")
+        idp.captured_revocations.append(captured)
+
+        # Record the revocation BEFORE consulting the response override.
+        # Otherwise a test using `revocation_response_override = Response(200)`
+        # would silently skip the bookkeeping, and a follow-up refresh-grant
+        # replay against the same token would NOT be rejected.
+        token = captured.get("token")
+        if token:
+            idp.revoked_refresh_tokens.add(token)
+
+        override = idp.revocation_response_override
+        if isinstance(override, BaseException):
+            raise override
+        if isinstance(override, httpx.Response):
+            return override
+
         return httpx.Response(200)
 
     mock.post(DEFAULT_REVOCATION_URL).mock(side_effect=_revocation_handler)
 
     def _end_session_handler(request: httpx.Request) -> httpx.Response:
         idp.captured_end_sessions.append(dict(_parse_form(request.content)))
+
+        override = idp.end_session_response_override
+        if isinstance(override, BaseException):
+            raise override
+        if isinstance(override, httpx.Response):
+            return override
+
         return httpx.Response(200)
 
     mock.post(DEFAULT_END_SESSION_URL).mock(side_effect=_end_session_handler)
