@@ -1,12 +1,12 @@
 ---
-status: review
+status: done
 story_key: 1-11-playwright-project-setup-fixtures-helpers
 created: 2026-05-15
 ---
 
 # Story 1.11: Playwright project setup + fixtures + helpers
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -754,8 +754,16 @@ a separate follow-up). What this story does verify for AC8:
 **Deleted:**
 - `e2e/.gitkeep` — replaced by `e2e/tests/.gitkeep` and the real e2e project files.
 
+### Review Findings
+
+- [x] [Review][Patch] Stale forward-pointer comment on bff service in compose/app.yml — "Story 1.12 will add..." was written before Story 1.12 landed; updated to describe actual overlay mechanism. [compose/app.yml:23-25] — **FIXED**
+- [x] [Review][Patch] Dockerfile dangling `AS playwright` stage alias — single-stage build; alias implies multi-stage intent that doesn't exist; removed. [e2e/Dockerfile:5] — **FIXED**
+- [x] [Review][Defer] `package.json` `test` script `--pass-with-no-tests` deviates from AC1 literal "no extra flags" — deferred, intentional deviation with documented rationale (Playwright >=1.49 exits 1 on empty tests/ without flag; flag is no-op once real specs land)
+- [x] [Review][Defer] `logInAs` `waitForURL(/\/books$/)` regex not anchored at path root — deferred, pre-existing; only bites if deeply nested `/books` route is added
+
 ## Change Log
 
 | Date       | Version | Description                                                                 | Author |
 |------------|---------|-----------------------------------------------------------------------------|--------|
 | 2026-05-15 | 0.1     | Initial implementation: Playwright harness scaffold under `e2e/`, fixtures, helpers, Dockerfile, compose `e2e` profile, README. AC7/AC8 require `--pass-with-no-tests` for Playwright >=1.49; AC8 end-to-end blocked by pre-existing BFF health-probe bug (out of scope). | claude-opus-4-7 |
+| 2026-05-15 | 0.2     | Code review patches: fix stale bff-service comment in compose/app.yml; remove dangling `AS playwright` alias from single-stage Dockerfile. Two items deferred (--pass-with-no-tests AC1 deviation; waitForURL regex scope). Status → done. | claude-sonnet-4-6 |

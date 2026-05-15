@@ -20,9 +20,12 @@ services:
       # tests/, dev-only docs, caches, and .env.* (except .env.example).
       context: ../services/bff
     container_name: bff
-    # Story 1.12 will add ENABLE_TEST_RESET=true and TEST_RESET_TOKEN
-    # to this service's `environment:` for the e2e profile only. Until
-    # then, `resetState` calls return 404 (route not registered).
+    # Story 1.12 wired ENABLE_TEST_RESET=true and TEST_RESET_TOKEN via
+    # the `compose/app.e2e.yml` overlay (applied with `-f` flag, NOT via
+    # `include:` — see file header for rationale). The `resetState` helper
+    # from Story 1.11 authenticates against POST /v1/test/reset using that
+    # token; calls to the endpoint on the default/dev profiles return 404
+    # (route not mounted when ENABLE_TEST_RESET is absent/false).
     env_file:
       - ../services/bff/.env
     ports:
