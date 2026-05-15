@@ -262,18 +262,88 @@ async def test_check_oidc_discovery_rejects_non_json_body() -> None:
     assert "non-JSON" in detail
 
 
-async def test_check_oidc_discovery_rejects_issuer_mismatch() -> None:
+async def test_check_oidc_discovery_accepts_issuer_differing_from_backchannel() -> None:
+    # D45 fix: the probe MUST NOT enforce a strict byte-equality between the
+    # discovery doc's `issuer` field and OIDC_ISSUER_URL. Under
+    # KC_HOSTNAME=localhost (the browser-correct setting reconciled in
+    # Story 1.5's D2/D8 resolution), Keycloak emits
+    # iss=http://localhost:8080/... even when the BFF's back-channel URL is
+    # http://keycloak:8080/.... The probe is liveness-only; configuration
+    # correctness is verified at boot, not on every health poll.
+    cfg = _settings_with_issuer("http://keycloak:8080/realms/bmad-books")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"issuer": "http://localhost:8080/realms/bmad-books"}
+        )
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is True, detail
+    assert detail == ""
+
+
+async def test_check_oidc_discovery_rejects_missing_issuer_field() -> None:
+    # A generic reverse-proxy 200 with JSON body that lacks `issuer` is NOT
+    # Keycloak serving a discovery doc — must fail the probe.
     cfg = _settings_with_issuer("http://kc/realms/x")
 
     def _handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"issuer": "http://kc/realms/different"})
+        return httpx.Response(200, json={"unrelated": "payload"})
 
     transport = httpx.MockTransport(_handler)
     ok, detail = await health_module._check_oidc_discovery(
         cfg, client_factory=_factory_for(transport)
     )
     assert ok is False
-    assert "issuer mismatch" in detail
+    assert "issuer" in detail
+
+
+async def test_check_oidc_discovery_rejects_empty_issuer_string() -> None:
+    cfg = _settings_with_issuer("http://kc/realms/x")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"issuer": ""})
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is False
+    assert "issuer" in detail
+
+
+async def test_check_oidc_discovery_rejects_null_issuer() -> None:
+    cfg = _settings_with_issuer("http://kc/realms/x")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"issuer": None})
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is False
+    assert "issuer" in detail
+
+
+async def test_check_oidc_discovery_rejects_json_array_body() -> None:
+    # A JSON array is technically valid JSON but is not an OIDC discovery
+    # document — must fail the probe (defends against misconfigured upstreams
+    # that return arbitrary JSON).
+    cfg = _settings_with_issuer("http://kc/realms/x")
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    transport = httpx.MockTransport(_handler)
+    ok, detail = await health_module._check_oidc_discovery(
+        cfg, client_factory=_factory_for(transport)
+    )
+    assert ok is False
+    assert "not a JSON object" in detail
 
 
 async def test_check_oidc_discovery_returns_failure_on_5xx() -> None:
@@ -315,9 +385,8 @@ async def test_check_oidc_discovery_strips_trailing_slash_on_issuer() -> None:
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen_urls.append(str(request.url))
-        # After P5 the probe also validates that the body declares the
-        # canonical issuer (trailing slash stripped) — return a matching
-        # JSON document.
+        # Body must still be a JSON object with a non-empty `issuer` string
+        # (D45 contract — value need not match the back-channel URL).
         return httpx.Response(200, json={"issuer": "http://kc/realms/x"})
 
     transport = httpx.MockTransport(_handler)

@@ -385,3 +385,19 @@ Findings surfaced during step-04 review that are not in scope for the originatin
 - **Manual 401 envelope duplication** — `services/bff/src/bff/api/auth.py:347-364` (`_session_expired_with_cookie_clear`) duplicates the envelope shape from `/api/me`. Risks drift if `ErrorCode.SESSION_EXPIRED` shape changes. Small refactor candidate.
 - **INFO log retention policy for `auth_logout_start` / `auth_logout_complete`** — every logout emits an INFO line carrying `sub` first-8-chars + `session_id` first-8-chars. Per-user audit trail by design, but operational retention policy decision deferred to the security review (Story 5.2).
 - **`end_session` does not pass `post_logout_redirect_uri`** — `services/bff/src/bff/auth/keycloak_cookie_session.py:286-296`. KC deployments with a `Valid Post Logout Redirect URIs` allowlist will return 400; the local session is still destroyed (degrade-honestly contract holds at the BFF), but the KC SSO session survives so the next `/auth/login` re-authenticates silently — UX §J5 contradiction. **Deferred — spec design intent: no new settings or realm changes.** Re-evaluate when the demo is pointed at a hardened KC.
+
+## Surfaced during Story 1.11 implementation (2026-05-15)
+
+### D45 — `/health` OIDC discovery probe rejects valid Keycloak discovery doc on issuer-string mismatch
+
+**Surfaced by:** Story 1.11 AC8 (compose `--profile e2e up` end-to-end orchestration). Blocks Story 1.11 AC8, Story 1.13 (E2E specs), and Story 5.4 (final smoke).
+**Files:** `services/bff/src/bff/api/health.py:99-138` — `_check_oidc_discovery`.
+**Issue:** The probe requires the discovery document's `issuer` field to byte-equal `OIDC_ISSUER_URL` (the back-channel URL `http://keycloak:8080/realms/bmad-books`). But under `KC_HOSTNAME=localhost` (the browser-correct setting reconciled in Story 1.5's D2/D8 resolution), Keycloak emits `iss=http://localhost:8080/realms/bmad-books`. The probe rejects this as a mismatch and `/health` returns 503, blocking compose orchestration.
+**Three options considered:**
+1. Make the probe issuer-aware: accept both `OIDC_ISSUER_URL` and `OIDC_AUTHORIZE_URL_BROWSER` as valid issuers (the same two-URL split that `verify_id_token` already uses). Tightest, but couples /health to auth-router config.
+2. Drop the strict issuer-string check entirely from the health probe; keep only "discovery doc is a JSON object with a non-empty `issuer` field". Liveness, not configuration-correctness — the latter is a boot-time concern. **Recommended.**
+3. Make the check configurable / skippable via env var. Adds a knob nobody wants to tune.
+**Belongs to:** This story (D45 fix) — unblocks AC8 immediately. Option 2 chosen.
+**Severity:** high (blocks E2E orchestration; without it Stories 1.11 AC8 / 1.13 / 5.4 cannot pass).
+
+**Resolution (2026-05-15, D45 fix):** Option 2 implemented. `services/bff/src/bff/api/health.py:_check_oidc_discovery` no longer compares the discovery doc's `issuer` field byte-for-byte against `OIDC_ISSUER_URL`. New contract: 2xx response, JSON-parseable, body is a JSON object, body has an `issuer` field that is a non-empty string. This still rejects a generic reverse-proxy 200 (no `issuer` key) without coupling /health to Keycloak's `KC_HOSTNAME` setting. Tests updated in `services/bff/tests/api/test_health.py` — the old "issuer mismatch returns False" test was repurposed to assert the mismatch case now returns `True` (the bug fix), plus four new edge-case tests (missing `issuer`, empty string, null, JSON array body). End-to-end smoke verified: `docker compose --profile dev up -d keycloak bff` + `curl http://localhost:8000/health` returns `200 {"status":"ok"}` under `KC_HOSTNAME=localhost` (Keycloak emitted `iss=http://localhost:8080/realms/bmad-books` while BFF had `OIDC_ISSUER_URL=http://keycloak:8080/realms/bmad-books`). Commit on branch `fix/d45-health-oidc-issuer-probe`. Closes D45.
