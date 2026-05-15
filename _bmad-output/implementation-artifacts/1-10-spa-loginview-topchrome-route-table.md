@@ -1,12 +1,12 @@
 ---
-status: review
+status: done
 story_key: 1-10-spa-loginview-topchrome-route-table
 created: 2026-05-15
 ---
 
 # Story 1.10: SPA LoginView + TopChrome + route table
 
-Status: review
+Status: done
 
 ## Story
 
@@ -132,6 +132,14 @@ So that J1 and J5 work end-to-end in the running SPA.
   - [x] `cd spa && npm run lint` — exits 0.
   - [x] `npm test -- --no-watch` — exits 0 (Story 1.8's 2 specs replaced; Story 1.9's 5 specs intact; new specs for login-view, top-chrome, error-message all pass).
   - [x] `npm run build` — exits 0; `dist/spa/browser/index.html` produced.
+
+### Review Findings
+
+- [x] [Review][Patch] P1 — Remove unused `title` signal and `signal` import from `app.ts` [spa/src/app/app.ts] — applied.
+- [x] [Review][Patch] P2 — Format overlong identity block line in `top-chrome.html` [spa/src/app/shared/chrome/top-chrome.html:9] — applied.
+- [x] [Review][Patch] P3 — Remove unused `setParams` from `buildRouteStub` in `login-view.spec.ts` [spa/src/app/login/login-view.spec.ts:15-17] — applied.
+- [x] [Review][Defer] D47 — Logout button has no double-click guard [top-chrome.ts:logout()] — deferred, pre-existing pattern, nit-level risk.
+- [x] [Review][Defer] D48 — `provideAppInitializer` re-throws on non-401 `/api/me` errors [app.config.ts] — deferred, pre-existing Story 1.9 behavior.
 
 ## Dev Notes
 

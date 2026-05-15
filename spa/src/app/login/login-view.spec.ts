@@ -12,9 +12,6 @@ function buildRouteStub(queryParams: Record<string, string>) {
       queryParamMap: subject.asObservable(),
       snapshot: { queryParamMap: convertToParamMap(queryParams) },
     },
-    setParams(next: Record<string, string>) {
-      subject.next(convertToParamMap(next));
-    },
   };
 }
 
