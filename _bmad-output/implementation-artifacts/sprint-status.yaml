@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (stories 1.10/1.11/1.12 implemented and merged; D45 fix landed; all three status → review)
+last_updated: 2026-05-15 (story 1.13 code-reviewed and patched; 3 patches applied (Playwright cookie-jar, empty refresh_token, env-var fail-fast); 6 defers added to deferred-work.md; status → done)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -56,7 +56,7 @@ development_status:
   1-10-spa-loginview-topchrome-route-table: review
   1-11-playwright-project-setup-fixtures-helpers: review
   1-12-bff-post-v1-test-reset-endpoint: review
-  1-13-e2e-spec-j1-first-time-login-j5-logout: backlog
+  1-13-e2e-spec-j1-first-time-login-j5-logout: done
   epic-1-retrospective: optional
 
   # Epic 2: Personal Book List (J2)

@@ -7,12 +7,16 @@ is mocked. Specs land alongside the features they verify (Stories 1.13, 2.7,
 
 ## Running locally
 
-Prerequisites: the backend + Keycloak must already be running on the host. From
-the repo root:
+Prerequisites: Keycloak + the BFF must already be running on the host with
+the test-reset gate enabled. From the repo root, use the same overlay file
+the `e2e` profile uses (so `ENABLE_TEST_RESET=true` lands on the BFF):
 
 ```sh
-docker compose --profile dev up -d
+docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up -d keycloak bff
 ```
+
+Bringing up only `keycloak` and `bff` (not `playwright`) leaves the runner
+inactive — you'll drive the specs from the host instead.
 
 Then, from this directory:
 
@@ -20,8 +24,17 @@ Then, from this directory:
 cd e2e
 npm ci
 npx playwright install --with-deps chromium
-npm test
+TEST_RESET_TOKEN=$TEST_RESET_TOKEN \
+BFF_CLIENT_SECRET=$BFF_CLIENT_SECRET \
+OIDC_CLIENT_ID=bmad-books-bff \
+KEYCLOAK_INTERNAL_URL=http://localhost:8080 \
+  npm test
 ```
+
+`KEYCLOAK_INTERNAL_URL=http://localhost:8080` is the host-side value
+(Keycloak's `:8080` is published per `compose/infra.yml`); the compose
+runner uses `http://keycloak:8080` instead and the playwright service in
+`compose/app.yml` sets it automatically.
 
 `npm test` invokes `playwright test` with the configuration in
 `playwright.config.ts`. The `dev` profile excludes the SPA — `ng serve` is
@@ -41,10 +54,17 @@ Pick the `baseURL` based on which stack you're targeting:
 
 ## Running via compose
 
-From the repo root:
+From the repo root, use the `just` recipe (which wraps the canonical
+multi-file compose invocation):
 
 ```sh
-docker compose --profile e2e up --abort-on-container-exit
+just e2e-up
+```
+
+Equivalent to:
+
+```sh
+docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up --abort-on-container-exit
 ```
 
 This builds the `playwright` runner image, starts Keycloak + BFF, waits for both
@@ -62,11 +82,40 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
   since the SPA's `/login` route lives on the dev server (not the BFF). The
   `e2e` compose profile sets it to `http://bff:8000` automatically so the
   runner reaches the BFF via the compose network.
-- `TEST_RESET_TOKEN` — bearer token required by `resetState`. Must be set in
-  the repo-root `.env` for either workflow; the `e2e` profile forwards it to
-  the runner container. Story 1.12 lands the actual BFF endpoint that validates
-  this token; until then, `resetState` calls will return 404 (route not
-  registered, by design).
+- `TEST_RESET_TOKEN` — bearer token required by `resetState` and by the J5
+  spec's `GET /v1/test/session-debug` capture. Must be set in the repo-root
+  `.env` for either workflow; the `e2e` profile forwards it to the runner
+  container. The `BFF` side is validated by Story 1.12; the `session-debug`
+  variant is added in Story 1.13. The `:?` fail-fast on `compose/app.e2e.yml`
+  refuses to start the e2e profile when this var is unset.
+- `BFF_CLIENT_SECRET` — confidential client secret shared with the
+  `bmad-books-bff` Keycloak client. Required by the J5 spec's refresh-token
+  revocation assertion: it POSTs `grant_type=refresh_token` directly to
+  Keycloak's `/token` endpoint, which 400s with `invalid_client` instead of
+  the expected `invalid_grant` if the secret is missing. The `e2e` compose
+  profile sets it on the runner via `${BFF_CLIENT_SECRET:?...}` — fail-fast
+  when unset.
+- `OIDC_CLIENT_ID` — Keycloak client id the BFF authenticates as. Defaults
+  to `bmad-books-bff` (the value seeded in `keycloak/realm-bmad-books.json`).
+  Used alongside `BFF_CLIENT_SECRET` in the J5 refresh-grant assertion.
+- `KEYCLOAK_INTERNAL_URL` — base URL of Keycloak from the perspective of the
+  Playwright runner. Set to `http://localhost:8080` for the local-dev
+  workflow and `http://keycloak:8080` for the compose-network workflow; the
+  `e2e` compose profile sets it automatically. Required for the J5
+  refresh-token revocation POST (the runner cannot resolve
+  `localhost:8080` to Keycloak from inside a container).
+
+## Specs in this directory
+
+- `tests/j1-first-login.spec.ts` (Story 1.13) — J1: drives an unauthenticated
+  visitor through `/login`, the OAuth round-trip against the real Keycloak,
+  and back to the `/books` placeholder; also asserts the `authGuard`
+  redirect-with-`return_to` flow.
+- `tests/j5-logout.spec.ts` (Story 1.13) — J5: clicks `Log out` from the
+  authenticated `TopChrome`, asserts the session cookie is cleared and the
+  protected route bounces back to `/login`; then captures the stored
+  refresh_token via the test-only `GET /v1/test/session-debug` and asserts
+  Keycloak rejects a refresh-grant attempt with `error=invalid_grant`.
 
 ## Adding a new spec
 

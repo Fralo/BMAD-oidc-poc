@@ -54,6 +54,13 @@ services:
     # One-shot container that executes the E2E specs against the live stack
     # and exits. Depends on BFF + Keycloak healthchecks so tests only start
     # after the OIDC + session machinery is reachable.
+    #
+    # Story 1.13 adds three env vars used exclusively by the J5 spec's
+    # refresh-token revocation assertion: it captures the refresh_token via
+    # `GET /v1/test/session-debug` (BFF, gated by ENABLE_TEST_RESET), then
+    # POSTs it back to Keycloak's /token endpoint with grant_type=refresh_token
+    # and asserts `error=invalid_grant` — wire-level proof that BFF
+    # /auth/logout revoked at the AS (Story 1.7).
     build:
       context: ../e2e
     container_name: playwright
@@ -71,6 +78,16 @@ services:
       # 1.12 will register the BFF-side /v1/test/reset endpoint that this
       # token authenticates against.
       TEST_RESET_TOKEN: ${TEST_RESET_TOKEN}
+      # Story 1.13: J5 refresh-token revocation assertion. OIDC_CLIENT_ID is
+      # the Keycloak client the BFF authenticates as; BFF_CLIENT_SECRET is
+      # required because the `bmad-books-bff` client is confidential (a
+      # refresh request without the secret returns 400 invalid_client instead
+      # of invalid_grant); KEYCLOAK_INTERNAL_URL is the compose-network URL
+      # of Keycloak (browser-facing http://localhost:8080 is unreachable from
+      # inside the runner container).
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-bmad-books-bff}
+      BFF_CLIENT_SECRET: ${BFF_CLIENT_SECRET:?BFF_CLIENT_SECRET is required when the e2e profile is up}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
     volumes:
       # Persist trace/screenshot/video artifacts to the host after a run.
       - ../e2e/test-results:/e2e/test-results

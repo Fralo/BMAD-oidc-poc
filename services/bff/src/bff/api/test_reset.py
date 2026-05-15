@@ -1,11 +1,26 @@
-"""E2E-profile-only `POST /v1/test/reset` endpoint (Story 1.12).
+"""E2E-profile-only test endpoints (Story 1.12, Story 1.13).
 
 Purpose
 -------
-Provides a guarded test-reset surface for Playwright E2E specs (Story 1.11
-and beyond): a single POST that truncates the BFF's auth-related tables
-(`sessions`, `auth_states`) and returns 204. Each E2E test starts from a
-known clean state without per-test ordering hacks.
+Provides guarded test surfaces for Playwright E2E specs.
+
+Endpoints provided when the gate is ON:
+  - `POST /v1/test/reset` (Story 1.12) — truncates `sessions` and
+    `auth_states`; returns 204. Each E2E test starts from a known clean
+    state without per-test ordering hacks.
+  - `GET /v1/test/session-debug` (Story 1.13) — reads the `bff_session`
+    cookie, looks up the row, returns the stored `refresh_token` (plus
+    `sub` and a truncated `session_id_safe`). Consumed by the J5 spec
+    so it can attempt a Keycloak refresh-grant after logout and assert
+    `error=invalid_grant`.
+
+SECURITY (Story 1.13)
+---------------------
+The `GET /v1/test/session-debug` endpoint exposes the refresh_token for
+the cookie-bound session. The same `ENABLE_TEST_RESET` + `TEST_RESET_TOKEN`
+gate that protects POST `/v1/test/reset` protects this one too. NEVER
+enable this profile in production — refresh_token exposure equals full
+session takeover via Keycloak's standard refresh-grant flow.
 
 Gating (defense-in-depth)
 -------------------------
@@ -70,12 +85,46 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Test Reset"])
 
-# The full path the route is mounted at. Kept as a module-level constant
-# so tests and the CSRF exemption can reference the exact same string.
+# The full paths the routes are mounted at. Kept as module-level constants
+# so tests and the CSRF exemption can reference the exact same strings.
 _TEST_RESET_PATH: Final[str] = "/v1/test/reset"
+_TEST_SESSION_DEBUG_PATH: Final[str] = "/v1/test/session-debug"
 _BEARER_PREFIX: Final[str] = "Bearer "
 
 __all__ = ["register_test_reset_router", "router"]
+
+
+def _safe_session_id_log(value: str | None) -> str:
+    """Truncate a session/cookie id for logging — never the full value.
+
+    Mirrors `bff.api.auth._safe_session_id_log` (auth.py:78). Inlined here
+    to keep the dependency direction one-way: `api/test_reset.py` does
+    not import from `api/auth.py`. The two implementations are
+    intentionally identical — keep them in sync if the truncation policy
+    changes.
+    """
+    if not value:
+        return "(none)"
+    return f"{value[:8]}..."
+
+
+def _session_not_found_response() -> JSONResponse:
+    """404 envelope for the session-debug endpoint when the cookie does
+    not resolve to a row.
+
+    The literal `"session_not_found"` is NOT in `ErrorCode` (deliberate —
+    test-only endpoints do not produce user-facing error codes). The
+    envelope shape matches the project's standard `{errorCode, message,
+    detail}` so test code can deserialize uniformly.
+    """
+    return JSONResponse(
+        status_code=404,
+        content={
+            "errorCode": "session_not_found",
+            "message": "No session for the provided bff_session cookie",
+            "detail": None,
+        },
+    )
 
 
 def _settings_dep() -> AppSettings:
@@ -239,6 +288,82 @@ async def test_reset(
     return Response(status_code=204)
 
 
+@router.get("/test/session-debug", status_code=200)
+async def test_session_debug(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_session)],
+    cfg: Annotated[AppSettings, Depends(_settings_dep)],
+) -> JSONResponse:
+    """Return the stored refresh_token for the cookie-bound session (Story 1.13).
+
+    Bearer-token guarded (same `TEST_RESET_TOKEN` as `/v1/test/reset`).
+    Reads the `bff_session` cookie; looks up the row; returns 200 with
+    `{refresh_token, sub, session_id_safe}` or 404 `session_not_found` if
+    the cookie is absent / the row does not exist.
+
+    GET is in `_SAFE_METHODS` so the CSRF middleware short-circuits — no
+    path-exempt entry needed (`/v1/test/reset` needed one because it's
+    POST). Auth failures emit the same `session_expired` 401 envelope
+    `/v1/test/reset` does to keep the existence-leak side-channel small.
+
+    The refresh_token IS in plain text in the response body — that is the
+    entire point. The `session_id` is truncated via `_safe_session_id_log`
+    in the response and in logs. The refresh_token MUST NOT appear in any
+    log line.
+    """
+    auth_header = request.headers.get("authorization")
+    classification = _classify_auth_failure(auth_header)
+    if classification is not None:
+        logger.warning("test_session_debug_unauthorized: %s", classification)
+        return _unauthorized_response()
+
+    assert auth_header is not None
+    provided = auth_header[len(_BEARER_PREFIX) :]
+    if not hmac.compare_digest(
+        provided.encode("utf-8"), cfg.test_reset_token.encode("utf-8")
+    ):
+        logger.warning("test_session_debug_unauthorized: token_mismatch")
+        return _unauthorized_response()
+
+    session_id = request.cookies.get(cfg.bff_session_cookie_name)
+    if not session_id:
+        logger.info("test_session_debug_no_cookie")
+        return _session_not_found_response()
+    row = await db.get(entities.Session, session_id)
+    if row is None:
+        logger.info(
+            "test_session_debug_unknown_session session_id=%s",
+            _safe_session_id_log(session_id),
+        )
+        return _session_not_found_response()
+    if not row.refresh_token:
+        # Defense-in-depth: `bff.api.auth` stores `str(token.get("refresh_token", ""))`
+        # at callback time (auth.py:276), so a Keycloak response without a
+        # refresh_token persists "" here. The J5 spec asserts toBeTruthy() on
+        # this value, so a 200 with empty string would either fail noisily OR
+        # accidentally pass downstream (Keycloak returns invalid_grant for the
+        # empty token too). Treat empty refresh_token as session_not_found so
+        # the failure surfaces here with a clear shape.
+        logger.info(
+            "test_session_debug_empty_refresh_token session_id=%s",
+            _safe_session_id_log(session_id),
+        )
+        return _session_not_found_response()
+
+    logger.info(
+        "test_session_debug_served sub=%s session_id=%s",
+        _safe_session_id_log(row.sub),
+        _safe_session_id_log(session_id),
+    )
+    return JSONResponse(
+        content={
+            "refresh_token": row.refresh_token,
+            "sub": row.sub,
+            "session_id_safe": _safe_session_id_log(session_id),
+        },
+    )
+
+
 def register_test_reset_router(app: FastAPI, cfg: AppSettings) -> None:
     """Conditionally mount the test-reset route.
 
@@ -265,4 +390,8 @@ def register_test_reset_router(app: FastAPI, cfg: AppSettings) -> None:
         logger.warning("test_reset_route_skipped reason=test_reset_token_empty")
         return
     app.include_router(router)
-    logger.info("test_reset_route_registered path=%s", _TEST_RESET_PATH)
+    logger.info(
+        "test_reset_route_registered paths=%s,%s",
+        _TEST_RESET_PATH,
+        _TEST_SESSION_DEBUG_PATH,
+    )

@@ -404,3 +404,38 @@ Option (b) is the most defensible: the health probe's job is liveness, not confi
 **Blocks:** Story 1.11 AC8 (compose `--profile e2e up --abort-on-container-exit` exits 0), Story 1.13 (E2E J1+J5 require a healthy BFF), Story 5.4 final smoke.
 
 **Resolution (2026-05-15, D45 fix):** Option (b) implemented. `services/bff/src/bff/api/health.py:_check_oidc_discovery` no longer compares the discovery doc's `issuer` field byte-for-byte against `OIDC_ISSUER_URL`. New contract: 2xx response, JSON-parseable, body is a JSON object, body has an `issuer` field that is a non-empty string. This still rejects a generic reverse-proxy 200 (no `issuer` key) without coupling /health to Keycloak's `KC_HOSTNAME` setting. Tests updated in `services/bff/tests/api/test_health.py` — the old "issuer mismatch returns False" test was repurposed to assert the mismatch case now returns `True` (the bug fix), plus four new edge-case tests (missing `issuer`, empty string, null, JSON array body). End-to-end smoke verified: `docker compose --profile dev up -d keycloak bff` + `curl http://localhost:8000/health` returns `200 {"status":"ok"}` under `KC_HOSTNAME=localhost` (Keycloak emitted `iss=http://localhost:8080/realms/bmad-books` while BFF had `OIDC_ISSUER_URL=http://keycloak:8080/realms/bmad-books`). Commit on branch `fix/d45-health-oidc-issuer-probe`. Closes D45.
+
+## Surfaced during Story 1.13 implementation (2026-05-15)
+
+### D46 — SPA is not served by any compose service — blocks live J1/J5 E2E run
+
+**Surfaced by:** Story 1.13 dev agent (`docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up --abort-on-container-exit` produced 5 spec failures, all at `getByRole('button', { name: 'Log in' })` because `http://bff:8000/login` is not a route the BFF serves)
+**Files:** `services/bff/Dockerfile` (no node-build stage, no SPA bundle copied), `services/bff/src/bff/main.py` (no `StaticFiles` mount, no HTML5 history-fallback catch-all), `compose/app.yml` (no `spa` static-server service)
+**Issue:** Architecture **AR24 (`_bmad-output/planning-artifacts/architecture.md:84`)** mandates the SPA serving model:
+> Same-origin via BFF. In prod, BFF's multi-stage Dockerfile compiles SPA in a Node stage and copies `dist/spa/browser` into the BFF image; BFF mounts it at `/` with HTML5 history fallback (catch-all serves `index.html` only for `Accept: text/html`).
+
+The `compose/app.yml` file header (line 4) says "Story 1.3 lands the BFF; the Resource Server arrives in Story 3.1 and the SPA (prod build) in Story 1.8." But Story 1.8 was scoped to scaffold-only (`spa scaffold tailwind v4 design tokens`) and did NOT integrate the SPA into the BFF Dockerfile or add an SPA service to compose. Stories 1.9 and 1.10 added SPA code (`AuthService`, `LoginView`, `TopChrome`, route table) but the prod-serving path remained un-implemented. The dev workflow has always relied on `ng serve` at `:4200` with a proxy to the BFF at `:8000`; the compose `default` / `e2e` profiles assumed an SPA service that doesn't exist.
+
+**Story 1.13's specs are correct and complete** (`e2e/tests/j1-first-login.spec.ts`, `e2e/tests/j5-logout.spec.ts`); they fail end-to-end ONLY because Playwright navigates to `http://bff:8000/login` and the BFF returns 404 (no SPA bundle mounted).
+
+**Concrete fix options:**
+  (a) **AR24 canonical path:** Add a multi-stage section to `services/bff/Dockerfile` that builds the SPA in a Node stage and copies `spa/dist/spa/browser` into the BFF image; extend `bff.main` with a `StaticFiles` mount at `/` plus an HTML5 history-fallback handler. This is the architectural intent and the same-origin design that AR24 specifies.
+  (b) **Sibling service:** Add an `spa` service to `compose/app.yml` that runs nginx (or another static server) serving the SPA bundle at `:8000` (or another port) with `/auth`, `/api`, `/v1` proxied to the BFF. Requires routing logic in nginx and either renames the BFF port or fronts both services behind a third hostname.
+  (c) **e2e-only stub:** Inject the SPA bundle into the existing BFF image as part of the e2e compose overlay only. Pragmatic but contradicts AR24's same-origin "in prod" stance.
+
+Option (a) is the architecturally clean answer and is the smallest deviation from AR24.
+
+**Belongs to:** A new story in the current sprint, likely scoped between Story 1.10 (SPA chrome) and Story 1.13 (E2E specs). Suggested key: `1-14-bff-multi-stage-build-serves-spa-bundle`. Without this, Story 1.13's live AC6 (`just e2e-up` exits 0 with both specs passing) cannot be verified; Story 5.4 (final smoke) is also blocked.
+
+**Severity:** important (deferred — blocks E2E orchestration in 1.13 and any compose-driven smoke; blocks Story 5.4). The static / unit gates (BFF pytest, ruff, ty, e2e tsc, playwright --list, compose config) all pass cleanly; only the dynamic compose-up run is affected.
+
+**Blocks:** Story 1.13 AC6 (live e2e run via `just e2e-up` — both specs pass), Story 5.4 final smoke.
+
+## Deferred from: code review of 1-13-e2e-spec-j1-first-time-login-j5-logout (2026-05-15)
+
+- **`BFF_CLIENT_SECRET` shared between production confidential client and Playwright runner** — `compose/app.yml:87` plumbs the real `bmad-books-bff` client secret into the e2e runner container. Test artifacts (traces, screenshots, videos under `e2e/test-results/`) could capture the credential. PRD §4 out-of-scopes operator-self-harm. Clean fix: add a separate `bmad-books-bff-test` confidential client to the realm, used only under the `e2e` profile. **Belongs to:** Story 5.2 (security review).
+- **`_safe_session_id_log` duplicated between `bff.api.auth` and `bff.api.test_reset`** — `services/bff/src/bff/api/test_reset.py:97-108` re-implements the helper inline rather than importing from `bff.api.auth`. Documented as intentional in the diff (keeps the dependency direction one-way: `api/test_reset.py` must not depend on `api/auth.py`). Cleaner: extract to a shared `bff.core.logging` helper module. **Belongs to:** future refactor pass.
+- **`assert auth_header is not None` for type-narrowing — stripped under `python -O`** — `services/bff/src/bff/api/test_reset.py:325` (also Story 1.12's POST handler). Promote `_classify_auth_failure` to a discriminated return signature so the type-narrowing is statically provable. **Belongs to:** code-quality cleanup pass.
+- **`_safe_session_id_log` does not sanitize newlines/control chars in `sub`** — `services/bff/src/bff/api/test_reset.py:106` mirrors `bff.api.auth._safe_session_id_log:78` limitation. A maliciously-shaped `sub` claim (RFC 7519 forbids; BFF doesn't validate) could log-split. **Belongs to:** Story 5.2 (security review log-sanitization audit).
+- **`_session_not_found_response` envelope is shape-distinct from gate-off 404 — minor probe side-channel** — `services/bff/src/bff/api/test_reset.py:115-127`. The auth-failure 401 reuses `/api/me`'s envelope verbatim to minimize the existence-leak; the new `session_not_found` 404 emits a custom envelope. A probe must already pass bearer auth to distinguish, so the side-channel assumes deeper compromise. **Belongs to:** Story 5.2 (security review).
+- **caplog substring assertions are brittle to log-format refactors** — `services/bff/tests/api/test_test_reset.py` multiple sites (e.g., `"test_session_debug_unauthorized: missing_header" in r.message`). Pre-existing project-wide pattern across the BFF test suite. **Belongs to:** future structured-logging adoption pass.

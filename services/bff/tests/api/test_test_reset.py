@@ -1,11 +1,18 @@
-"""Route-level tests for POST /v1/test/reset (Story 1.12).
+"""Route-level tests for `/v1/test/reset` and `/v1/test/session-debug`.
 
-Covers gating, bearer auth, truncation, CSRF exemption, OpenAPI exposure,
-and startup-log signaling for the 22 scenarios enumerated in AC10.
+POST `/v1/test/reset` (Story 1.12): gating, bearer auth, truncation,
+CSRF exemption, OpenAPI exposure, startup-log signaling. Post-review
+hardening regressions for the trailing-slash CSRF exemption (Patch P2)
+and DB-failure honest-degradation envelope (Patch P6) are also covered.
+
+GET `/v1/test/session-debug` (Story 1.13): gating, bearer auth, cookie
+lookup (200 happy path / 404 missing-cookie / 404 unknown-session-id),
+no-leak log assertions (refresh_token and full session_id never appear
+in any log line), OpenAPI exposure.
 
 The production module under test is `bff.api.test_reset`; this file is
-named `test_test_reset.py` (doubled `test_` prefix) so pytest discovers it
-without colliding with the module name.
+named `test_test_reset.py` (doubled `test_` prefix) so pytest discovers
+it without colliding with the module name.
 """
 
 import logging
@@ -804,6 +811,267 @@ async def test_scenario_23_trailing_slash_path_is_csrf_exempt_and_succeeds(
             "csrf_exempt_path" in r.message and "path=/v1/test/reset/" in r.message
             for r in caplog.records
         )
+    finally:
+        await ctx.engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Story 1.13: GET /v1/test/session-debug
+# ---------------------------------------------------------------------------
+
+
+async def test_session_debug_route_not_registered_when_gate_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 1.13: gate OFF → GET /v1/test/session-debug returns 404."""
+    monkeypatch.setattr(settings, "enable_test_reset", False)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=False, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 404
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_missing_authorization_header(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13: no Authorization header → 401 session_expired envelope."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get("/v1/test/session-debug")
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_session_debug_unauthorized: missing_header" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_wrong_bearer_token(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13: Bearer mismatch → 401 token_mismatch."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.WARNING, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+        assert response.status_code == 401
+        assert response.json() == _UNAUTHORIZED_BODY
+        assert any(
+            "test_session_debug_unauthorized: token_mismatch" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_no_session_cookie_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13: bearer correct but no bff_session cookie → 404 session_not_found."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 404
+        body = response.json()
+        assert body["errorCode"] == "session_not_found"
+        assert body["detail"] is None
+        assert "message" in body
+        assert any("test_session_debug_no_cookie" in r.message for r in caplog.records)
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_unknown_session_id_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13: bearer correct, cookie does not match any row → 404."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            client.cookies.set("bff_session", "nonexistent-session-id-12345")
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 404
+        body = response.json()
+        assert body["errorCode"] == "session_not_found"
+        assert any(
+            "test_session_debug_unknown_session" in r.message for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_empty_refresh_token_returns_404(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13 (review patch): bearer correct, session row exists but
+    `refresh_token` is empty → 404 session_not_found.
+
+    `bff.api.auth` stores `str(token.get("refresh_token", ""))` at callback
+    time, so a Keycloak response without a refresh_token persists "" into
+    the row. Returning 200 with `{"refresh_token": ""}` would silently
+    pass the J5 spec's downstream Keycloak POST (empty refresh_token also
+    returns invalid_grant) for the wrong reason. Defense-in-depth: treat
+    empty refresh_token the same as session_not_found.
+    """
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+
+    session_id = "seeded-session-empty-rt-9999"
+    async with ctx.factory() as db:
+        db.add(
+            entities.Session(
+                id=session_id,
+                sub="testuser-sub-empty",
+                access_token="at",
+                refresh_token="",  # empty — the regression case
+                id_token="it",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                csrf_secret="cs",
+            )
+        )
+        await db.commit()
+
+    try:
+        async with ctx.make_client() as client:
+            client.cookies.set("bff_session", session_id)
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 404
+        body = response.json()
+        assert body["errorCode"] == "session_not_found"
+        assert any(
+            "test_session_debug_empty_refresh_token" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_happy_path_returns_refresh_token(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Story 1.13: bearer correct + valid session → 200 with refresh_token + sub.
+
+    The refresh_token value MUST NOT appear in any captured log line.
+    """
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+
+    refresh_token_value = "rt-secret-do-not-log-abc123"
+    session_id = "seeded-session-debug-1234567890"
+    sub_value = "testuser-sub-uuid-9876"
+    async with ctx.factory() as db:
+        db.add(
+            entities.Session(
+                id=session_id,
+                sub=sub_value,
+                access_token="at",
+                refresh_token=refresh_token_value,
+                id_token="it",
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                csrf_secret="cs",
+            )
+        )
+        await db.commit()
+
+    try:
+        async with ctx.make_client() as client:
+            client.cookies.set("bff_session", session_id)
+            response = await client.get(
+                "/v1/test/session-debug",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["refresh_token"] == refresh_token_value
+        assert body["sub"] == sub_value
+        # session_id_safe = first-8-chars + "..." per _safe_session_id_log.
+        assert body["session_id_safe"] == f"{session_id[:8]}..."
+
+        # The served-log INFO line was emitted.
+        assert any("test_session_debug_served" in r.message for r in caplog.records)
+        # The refresh_token value MUST NOT appear in any log line.
+        assert refresh_token_value not in caplog.text
+        # The full session_id must NOT appear in any log line either.
+        assert session_id not in caplog.text
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_openapi_lists_route_when_gate_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 1.13: gate ON → `/v1/test/session-debug` appears in OpenAPI."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get("/openapi.json")
+        assert response.status_code == 200
+        body = response.json()
+        assert "/v1/test/session-debug" in body["paths"]
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_session_debug_openapi_omits_route_when_gate_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 1.13: gate OFF → `/v1/test/session-debug` NOT in OpenAPI."""
+    monkeypatch.setattr(settings, "enable_test_reset", False)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    ctx = await _build_context(enable=False, token=_DEFAULT_TOKEN)
+    try:
+        async with ctx.make_client() as client:
+            response = await client.get("/openapi.json")
+        assert response.status_code == 200
+        body = response.json()
+        assert "/v1/test/session-debug" not in body["paths"]
     finally:
         await ctx.engine.dispose()
 
