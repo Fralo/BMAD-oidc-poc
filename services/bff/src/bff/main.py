@@ -1,9 +1,13 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.responses import FileResponse, Response
+from starlette.staticfiles import StaticFiles
 
 from bff.api.auth import router as auth_router
 from bff.api.health import router as health_router
@@ -20,6 +24,60 @@ from bff.core.errors import (
 )
 from bff.middleware.security_headers import SecurityHeadersMiddleware
 from bff.observability.logging import configure_logging
+
+# Default SPA static directory — populated by the multi-stage Dockerfile
+# (Story 1.14 / AR24). In dev runs (plain `uv run uvicorn`) this path does
+# not exist and the SPA mount is skipped (see `_register_spa` guard).
+_SPA_DIR = Path("/app/static")
+
+
+def _register_spa(application: FastAPI, static_dir: Path) -> None:
+    """Conditionally mount the Angular SPA bundle on `application`.
+
+    Called at startup with `_SPA_DIR` (production) or with a `tmp_path`
+    fixture-supplied directory (tests — AC7). Factored into a helper so
+    that tests can call it directly after constructing a fresh app instance
+    without coupling to module-load-time side effects.
+
+    Mount order (AC3, AC4):
+    1. /assets  — StaticFiles without html fallback (real asset files only)
+    2. /{full_path:path}  — FastAPI catch-all: serves index.html for HTML
+       clients, returns the 404 JSON envelope (D16) for non-HTML clients.
+
+    The catch-all FastAPI route is registered BEFORE the StaticFiles mount so
+    it takes priority in FastAPI's router. For requests to known paths that
+    exist as files, FileResponse is returned directly; for unknown paths,
+    the Accept header determines whether to serve index.html or the 404 envelope.
+    """
+    assets_dir = static_dir / "assets"
+    if assets_dir.is_dir():
+        application.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="spa-assets",
+        )
+
+    @application.api_route(
+        "/{full_path:path}",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def _spa_or_404(request: Request, full_path: str) -> Response:
+        # Try to resolve as a real file first (e.g. favicon.ico, main.js, etc.)
+        candidate = static_dir / full_path
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        # Not a real file — check whether the client accepts HTML.
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept or "*/*" in accept or accept == "":
+            # Browser navigation: serve the Angular shell (history-API fallback).
+            return FileResponse(str(static_dir / "index.html"))
+        # Non-HTML client (e.g. curl with Accept: application/json) hitting an
+        # unknown path → project 404 envelope (D16, AC4).
+        return JSONResponse(
+            {"errorCode": "not_found", "message": "Not found", "detail": None},
+            status_code=404,
+        )
 
 
 @asynccontextmanager
@@ -69,3 +127,10 @@ app.include_router(v1_router)
 # (default compose profile) this is a no-op; the e2e profile flips the
 # gate via compose/app.e2e.yml.
 register_test_reset_router(app, settings)
+
+# Story 1.14 (AR24): conditionally mount the Angular SPA bundle.
+# The guard means `uv run uvicorn bff.main:app` (dev mode, no built bundle)
+# starts cleanly without /app/static. In the compose-built image, /app/static
+# is always present (copied from the node-builder stage in the Dockerfile).
+if _SPA_DIR.is_dir():
+    _register_spa(app, _SPA_DIR)

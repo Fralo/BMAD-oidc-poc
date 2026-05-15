@@ -1,7 +1,10 @@
 # compose/app.yml
 # Included from the top-level docker-compose.yml via the `include:` directive.
 # This file owns application-tier services. Story 1.3 lands the BFF; the
-# Resource Server arrives in Story 3.1 and the SPA (prod build) in Story 1.8.
+# Resource Server arrives in Story 3.1.
+# Story 1.14 (AR24): the SPA bundle is compiled inside the BFF image via a
+# multi-stage Dockerfile (Node build stage → Python runtime stage); there is
+# no separate `spa` service.
 #
 # Story 1.12: the `e2e` profile flips `ENABLE_TEST_RESET=true` for this
 # service via the `compose/app.e2e.yml` OVERRIDE file, applied with the
@@ -15,10 +18,12 @@
 services:
   bff:
     build:
-      # Per-service build context (Story 1.3 closes deferred D4): only the BFF
-      # service tree is sent to the daemon; services/bff/.dockerignore prunes
-      # tests/, dev-only docs, caches, and .env.* (except .env.example).
-      context: ../services/bff
+      # Story 1.14 (closes D4): build context is the repo root so the Node
+      # builder stage can COPY spa/ (sibling of services/bff/).
+      # The root .dockerignore applies; services/bff/.dockerignore is unused
+      # with a root context but kept as documentation.
+      context: ..
+      dockerfile: services/bff/Dockerfile
     container_name: bff
     # Story 1.12 will add ENABLE_TEST_RESET=true and TEST_RESET_TOKEN
     # to this service's `environment:` for the e2e profile only. Until
