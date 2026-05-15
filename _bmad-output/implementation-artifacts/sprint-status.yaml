@@ -1,5 +1,5 @@
 # generated: 2026-05-14
-# last_updated: 2026-05-15 (story 1.11 implemented; status → review)
+# last_updated: 2026-05-15 (epic-1 closed; stories 1.10/1.11/1.12 code-reviewed and patched → done)
 # project: BMAD_books
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (story 1.13 code-reviewed and patched; 3 patches applied (Playwright cookie-jar, empty refresh_token, env-var fail-fast); 6 defers added to deferred-work.md; status → done)
+last_updated: 2026-05-15 (epic-1 closed; stories 1.10/1.11/1.12 code-reviewed in parallel worktrees, 6 patches applied across SPA + compose + e2e, 6 defers added (D47-D48 + 4 unnumbered) → done)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -43,7 +43,7 @@ story_location: "{project-root}/_bmad-output/implementation-artifacts"
 
 development_status:
   # Epic 1: Foundational Login & Identity (J1, J5)
-  epic-1: in-progress
+  epic-1: done
   1-1-repo-scaffold-compose-skeleton: done
   1-2-keycloak-realm-as-code-compose-service: done
   1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates: done
@@ -53,9 +53,9 @@ development_status:
   1-7-bff-logout-endpoint-revoke-end-session-degrade-honestly: done
   1-8-spa-scaffold-tailwind-v4-design-tokens: done
   1-9-spa-authservice-interceptors-functional-guards: done
-  1-10-spa-loginview-topchrome-route-table: review
-  1-11-playwright-project-setup-fixtures-helpers: review
-  1-12-bff-post-v1-test-reset-endpoint: review
+  1-10-spa-loginview-topchrome-route-table: done
+  1-11-playwright-project-setup-fixtures-helpers: done
+  1-12-bff-post-v1-test-reset-endpoint: done
   1-13-e2e-spec-j1-first-time-login-j5-logout: done
   epic-1-retrospective: optional
 
