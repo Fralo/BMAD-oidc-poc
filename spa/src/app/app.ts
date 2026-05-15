@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 
 import { TopChrome } from './shared/chrome/top-chrome';
@@ -9,6 +9,4 @@ import { TopChrome } from './shared/chrome/top-chrome';
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
-export class App {
-  protected readonly title = signal('spa');
-}
+export class App {}
