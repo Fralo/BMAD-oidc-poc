@@ -2,6 +2,16 @@
 # Included from the top-level docker-compose.yml via the `include:` directive.
 # This file owns application-tier services. Story 1.3 lands the BFF; the
 # Resource Server arrives in Story 3.1 and the SPA (prod build) in Story 1.8.
+#
+# Story 1.12: the `e2e` profile flips `ENABLE_TEST_RESET=true` for this
+# service via the `compose/app.e2e.yml` OVERRIDE file, applied with the
+# explicit `-f` flag pattern. That override is NOT in `include:` because
+# compose's `include:` is unconditional (its nominal `profiles:` field
+# is silently ignored — verified against compose v5.1.3) so an unconditional
+# include would interpolate `${TEST_RESET_TOKEN:?...}` even on the
+# `default` profile and also leak `ENABLE_TEST_RESET=true` into the
+# non-e2e stack. The repo-root `Justfile` wraps the `-f`-flag invocation
+# behind `just e2e-up` / `just e2e-config` so operators cannot forget it.
 services:
   bff:
     build:
@@ -10,6 +20,9 @@ services:
       # tests/, dev-only docs, caches, and .env.* (except .env.example).
       context: ../services/bff
     container_name: bff
+    # Story 1.12 will add ENABLE_TEST_RESET=true and TEST_RESET_TOKEN
+    # to this service's `environment:` for the e2e profile only. Until
+    # then, `resetState` calls return 404 (route not registered).
     env_file:
       - ../services/bff/.env
     ports:
@@ -35,6 +48,34 @@ services:
       start_period: 30s
     profiles: [default, dev, e2e]
     restart: unless-stopped
+
+  playwright:
+    # Story 1.11: Playwright runner for the `e2e` compose profile.
+    # One-shot container that executes the E2E specs against the live stack
+    # and exits. Depends on BFF + Keycloak healthchecks so tests only start
+    # after the OIDC + session machinery is reachable.
+    build:
+      context: ../e2e
+    container_name: playwright
+    depends_on:
+      bff:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    environment:
+      # Override the helpers' default of http://localhost:8000 so the runner
+      # reaches the BFF via the compose network (where `localhost` would be
+      # the runner container itself).
+      E2E_BASE_URL: http://bff:8000
+      # Forwarded from the root `.env`; used by `resetState` helper. Story
+      # 1.12 will register the BFF-side /v1/test/reset endpoint that this
+      # token authenticates against.
+      TEST_RESET_TOKEN: ${TEST_RESET_TOKEN}
+    volumes:
+      # Persist trace/screenshot/video artifacts to the host after a run.
+      - ../e2e/test-results:/e2e/test-results
+    profiles: [e2e]
+    restart: "no"
 
 volumes:
   # Persists the BFF's SQLite file across container recreation; destroyed by

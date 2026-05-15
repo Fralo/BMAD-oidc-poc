@@ -6,7 +6,10 @@ Returns 200 only when **all three** of the following are true:
       migrations; with zero migrations both head and current are None, which
       trivially satisfies the check until Story 1.4 lands the first migration),
   (c) the OIDC discovery doc at ${OIDC_ISSUER_URL}/.well-known/openid-configuration
-      is reachable AND advertises a matching `issuer` field.
+      is reachable and advertises a non-empty `issuer` field (proves
+      Keycloak is alive and serving the realm's discovery document; the
+      `iss` value is intentionally NOT byte-compared against
+      OIDC_ISSUER_URL — see D45 + `_check_oidc_discovery` docstring).
 
 On any failure, returns 503 with the archetype error envelope and ErrorCode
 `service_unavailable`. The endpoint is always unauthenticated (architecture
@@ -97,14 +100,23 @@ async def _check_oidc_discovery(
     client_factory: Callable[..., httpx.AsyncClient] | None = None,
 ) -> tuple[bool, str]:
     """GET ${OIDC_ISSUER_URL}/.well-known/openid-configuration; require a 2xx
-    JSON response whose `issuer` field matches OIDC_ISSUER_URL.
+    JSON object response carrying a non-empty `issuer` string.
+
+    Liveness, not configuration-correctness. The probe answers a narrow
+    question — is Keycloak up and serving *some* realm's discovery document
+    on this URL? — not the broader question of whether the discovery doc's
+    `iss` byte-matches `OIDC_ISSUER_URL`. The latter is reconciled at boot
+    (see D2/D8 resolution): under `KC_HOSTNAME=localhost` (the
+    browser-correct setting), Keycloak emits
+    `iss=http://localhost:8080/realms/...` even when the back-channel URL is
+    `http://keycloak:8080/realms/...`, and that's expected. Asserting the
+    `issuer` field is a present, non-empty string still rejects a generic
+    reverse-proxy 200 (which would have no `issuer` key) without coupling
+    /health to Keycloak's frontend-URL configuration. Closes D45.
 
     Honors architecture §C6 timeouts (5s connect, 10s read) and zero retries.
     Follows 3xx redirects (Story 1.3 Review Findings P6) — Keycloak behind
     ingress with trailing-slash normalization 302-redirects on this path.
-    Validates the response body declares the expected issuer (Story 1.3
-    Review Findings P5) — without it any landing page returning 200 would
-    satisfy the probe.
     """
     issuer = cfg.oidc_issuer_url.strip()
     if not issuer:
@@ -129,11 +141,15 @@ async def _check_oidc_discovery(
         payload = response.json()
     except ValueError as exc:
         return False, f"oidc discovery returned non-JSON body: {exc!s}"
-    declared_issuer = payload.get("issuer") if isinstance(payload, dict) else None
-    if declared_issuer != canonical_issuer:
+    if not isinstance(payload, dict):
         return False, (
-            f"oidc discovery issuer mismatch: "
-            f"expected {canonical_issuer!r}, got {declared_issuer!r}"
+            f"oidc discovery body is not a JSON object: got {type(payload).__name__}"
+        )
+    declared_issuer = payload.get("issuer")
+    if not isinstance(declared_issuer, str) or not declared_issuer:
+        return False, (
+            "oidc discovery body is missing a non-empty 'issuer' field: "
+            f"got {declared_issuer!r}"
         )
     return True, ""
 

@@ -8,6 +8,11 @@ every state-changing request. Rejections short-circuit with the documented
 The middleware is read-only with respect to cookies — the `bff_csrf` cookie
 is minted at `/auth/callback` time (Story 1.5) and cleared at
 `/auth/logout` (Story 1.7). This module never mints or rotates it.
+
+`POST /v1/test/reset` is exempt from CSRF enforcement (Story 1.12); it
+authenticates via a shared bearer token (`Authorization: Bearer ...`)
+instead. The exemption is hard-coded as a single path in
+`_CSRF_EXEMPT_PATHS` so a misconfiguration cannot broaden it.
 """
 
 import hmac
@@ -27,6 +32,23 @@ logger = logging.getLogger(__name__)
 _SAFE_METHODS: Final[frozenset[str]] = frozenset({"GET", "HEAD", "OPTIONS"})
 _DEFAULT_PORTS: Final[dict[str, int]] = {"http": 80, "https": 443}
 
+# Paths exempted from CSRF enforcement (Story 1.12). Currently only the
+# test-reset endpoint, which authenticates via a shared bearer token and
+# is itself gated behind `ENABLE_TEST_RESET=true`. The route is only
+# mounted when that gate is on; the exemption here is unconditional on
+# the gate so a malicious POST under gate-off still bypasses CSRF — but
+# it then hits FastAPI's default 404 (no handler is registered), which
+# is acceptable because there's no state-change downstream. Hard-coded
+# strings (not a prefix, not a config var) so an operator can't broaden
+# the exemption via env. Both the canonical path and its trailing-slash
+# variant are listed because FastAPI's `redirect_slashes=True` 307 still
+# flows through this middleware on the original request URL — a POST to
+# `/v1/test/reset/` without the explicit entry would 403 here BEFORE
+# the slash-redirect ever fires.
+_CSRF_EXEMPT_PATHS: Final[frozenset[str]] = frozenset(
+    {"/v1/test/reset", "/v1/test/reset/"}
+)
+
 
 class CsrfMiddleware(BaseHTTPMiddleware):
     """Enforces double-submit cookie + custom header + Origin/Referer check."""
@@ -35,6 +57,17 @@ class CsrfMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         if request.method.upper() in _SAFE_METHODS:
+            return await call_next(request)
+
+        if request.url.path in _CSRF_EXEMPT_PATHS:
+            # Story 1.12: bearer-authenticated test-reset endpoint. Log
+            # the exemption at WARN so an operator auditing logs can see
+            # which paths bypassed the middleware.
+            logger.warning(
+                "csrf_exempt_path path=%s method=%s",
+                request.url.path,
+                request.method,
+            )
             return await call_next(request)
 
         cookie_value = request.cookies.get(settings.bff_csrf_cookie_name) or ""
