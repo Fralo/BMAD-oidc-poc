@@ -1,5 +1,5 @@
 # generated: 2026-05-14
-# last_updated: 2026-05-15 (story 1.10 created; status → ready-for-dev)
+# last_updated: 2026-05-15 (story 1.11 implemented; status → review)
 # project: BMAD_books
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-15 (story 1.10 implemented; status → review)
+last_updated: 2026-05-15 (story 1.11 implemented; status → review)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -54,7 +54,7 @@ development_status:
   1-8-spa-scaffold-tailwind-v4-design-tokens: done
   1-9-spa-authservice-interceptors-functional-guards: done
   1-10-spa-loginview-topchrome-route-table: review
-  1-11-playwright-project-setup-fixtures-helpers: ready-for-dev
+  1-11-playwright-project-setup-fixtures-helpers: review
   1-12-bff-post-v1-test-reset-endpoint: ready-for-dev
   1-13-e2e-spec-j1-first-time-login-j5-logout: backlog
   epic-1-retrospective: optional
