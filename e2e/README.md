@@ -29,6 +29,16 @@ expected to be running on the host if a spec needs the SPA in the loop. The
 helpers (`fixtures/helpers.ts`) target `http://localhost:8000` by default
 (`baseURL` in the config).
 
+Pick the `baseURL` based on which stack you're targeting:
+
+- **Fully containerized stack** (BFF serves the built SPA bundle): the default
+  `http://localhost:8000` is correct — leave `E2E_BASE_URL` unset.
+- **Local dev with `ng serve`** (the typical Angular dev workflow under the
+  `dev` profile): export `E2E_BASE_URL=http://localhost:4200` before running
+  `npm test`. The SPA's `/login` route is served by `ng serve` at `:4200`
+  (the BFF has no `/login` endpoint); `ng serve`'s proxy (`spa/proxy.conf.json`)
+  forwards `/auth`, `/api`, and `/v1` calls back to the BFF at `:8000`.
+
 ## Running via compose
 
 From the repo root:
@@ -45,10 +55,13 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
 
 ## Environment variables
 
-- `E2E_BASE_URL` — base URL for the SPA + BFF. Defaults to
-  `http://localhost:8000` for the local-dev workflow. The `e2e` compose profile
-  sets it to `http://bff:8000` automatically so the runner reaches the BFF via
-  the compose network.
+- `E2E_BASE_URL` — base URL Playwright navigates to. Defaults to
+  `http://localhost:8000`, which is correct when targeting the fully
+  containerized stack (BFF serves the built SPA bundle). Override to
+  `http://localhost:4200` when targeting `ng serve` under the `dev` profile,
+  since the SPA's `/login` route lives on the dev server (not the BFF). The
+  `e2e` compose profile sets it to `http://bff:8000` automatically so the
+  runner reaches the BFF via the compose network.
 - `TEST_RESET_TOKEN` — bearer token required by `resetState`. Must be set in
   the repo-root `.env` for either workflow; the `e2e` profile forwards it to
   the runner container. Story 1.12 lands the actual BFF endpoint that validates
