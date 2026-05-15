@@ -1,13 +1,16 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates
 epic: 1
-prerequisites: 1-1 (done), 1-2 (backlog — see "Cross-story dependency" in Dev Notes)
+prerequisites: 1-1 (done), 1-2 (done — Keycloak realm + compose service merged)
+baseline_commit: b8dab30
+archetype_commit: 04db49c6999692cde1bfc7bfad27d1781daf0288
+specLoopIteration: 1
 ---
 
 # Story 1.3: BFF scaffold from archetype + baseline health + lint/test gates
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -60,9 +63,9 @@ so that I have a clean foundation that already meets the archetype's >90% covera
    - has `env_file: services/bff/.env` (path relative to the compose project root; `services/bff/.env` is gitignored — see AC #11),
    - has its own healthcheck calling `GET /health`,
    - mounts the `bff_data` named volume at `/data`,
-   - declares `profiles: [default, dev, e2e]` so the inert top-level `x-profiles` documentation anchor in `docker-compose.yml` no longer carries the only mention (the anchor may be deleted in this story or left to be cleaned up later — dev judgment).
+   - declares `profiles: [default, dev, e2e]` so the BFF and Keycloak (Story 1.2) both carry real profile membership; the inert top-level `x-profiles:` documentation anchor in `docker-compose.yml` is removed in this story (Task 7) since it is now redundant.
 
-10. **`docker compose config` validates cleanly** from the repo root with the BFF service present, with **no** errors and **no** warnings beyond Compose's standard informational notes. The composed output includes the BFF service block. If Story 1.2 has not landed Keycloak yet, see "Cross-story dependency" in Dev Notes — coordinate ordering rather than referencing a non-existent service.
+10. **`docker compose config` validates cleanly** from the repo root with the BFF service present, with **no** errors and **no** warnings beyond Compose's standard informational notes. The composed output includes the BFF service block and resolves the `keycloak` reference (Story 1.2 landed the service in `compose/infra.yml`).
 
 11. **Per-service `.env` strategy is documented and applied.** `services/bff/.env.example` (emitted by the archetype scaffold) is preserved as a per-service template, but the BFF service in compose reads from `services/bff/.env` (gitignored). The root-level `.env.example` (Story 1.1) remains the canonical AR29 enumeration; no env-var divergence between root `.env.example` and `services/bff/.env.example` for the variables the BFF consumes (`BFF_CLIENT_SECRET`, `BFF_DATABASE_URL`, `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`, `ENABLE_TEST_RESET`, `TEST_RESET_TOKEN`). Update `.gitignore` if needed so `services/bff/.env` is ignored but `services/bff/.env.example` is tracked.
 
@@ -75,76 +78,75 @@ so that I have a clean foundation that already meets the archetype's >90% covera
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Clone the archetype** (AC: #1)
-  - [ ] `git clone https://github.com/tommaso-meledina/fastapi-archetype.git tools/fastapi-archetype` (executed locally only; archetype dir is gitignored).
-  - [ ] Verify `git status --short` shows no archetype files leaking through (`tools/fastapi-archetype/` should be matched by the existing `.gitignore` rule).
+- [x] **Task 1 — Clone the archetype** (AC: #1)
+  - [x] `git clone https://github.com/tommaso-meledina/fastapi-archetype.git tools/fastapi-archetype` (executed locally only; archetype dir is gitignored).
+  - [x] Verify `git status --short` shows no archetype files leaking through (`tools/fastapi-archetype/` should be matched by the existing `.gitignore` rule).
 
-- [ ] **Task 2 — Scaffold the BFF** (AC: #2)
-  - [ ] Remove `services/bff/.gitkeep` (the directory is now becoming a real service tree).
-  - [ ] Run `python tools/fastapi-archetype/scripts/build_template.py -n bff -o services/bff --description "BMAD_books Backend-for-Frontend (OAuth client, books domain)"`. (Use `python`, not `python3` — per project `CLAUDE.md`.)
-  - [ ] If `build_template.py` refuses a non-empty output dir, remove the `.gitkeep` first and re-run; do not pass any flag that overwrites unrelated files.
-  - [ ] Inspect the generated tree and confirm the archetype directories from architecture §"Complete Project Directory Structure" lines 882–933 are present: `src/bff/{app.py, __main__.py, api/, services/, auth/, core/, aop/, db/}`, `tests/{api/, services/, auth/, core/, aop/, db/, conftest.py}`, `alembic/{env.py, script.py.mako, versions/}`, `alembic.ini`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `.env.example`.
+- [x] **Task 2 — Scaffold the BFF** (AC: #2)
+  - [x] Remove `services/bff/.gitkeep` (the directory is now becoming a real service tree).
+  - [x] Run `python tools/fastapi-archetype/scripts/build_template.py -n bff -o services/bff --description "BMAD_books Backend-for-Frontend (OAuth client, books domain)"`. (Use `python`, not `python3` — per project `CLAUDE.md`.)
+  - [x] If `build_template.py` refuses a non-empty output dir, remove the `.gitkeep` first and re-run; do not pass any flag that overwrites unrelated files.
+  - [x] Inspect the generated tree and confirm the archetype directories from architecture §"Complete Project Directory Structure" lines 882–933 are present: `src/bff/{app.py, __main__.py, api/, services/, auth/, core/, aop/, db/}`, `tests/{api/, services/, auth/, core/, aop/, db/, conftest.py}`, `alembic/{env.py, script.py.mako, versions/}`, `alembic.ini`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `.env.example`.
 
-- [ ] **Task 3 — Verify archetype gates green out of the box** (AC: #3)
-  - [ ] `cd services/bff && uv sync --frozen` → 0.
-  - [ ] `uv run ruff check` → 0, no findings.
-  - [ ] `uv run ty` → 0, no type errors.
-  - [ ] `uv run pytest --cov` → 0, coverage > 90% for `src/bff/`. Capture the coverage percentage in the dev log.
-  - [ ] If any gate is **not** green on a fresh archetype scaffold: do **not** silence it. File the discrepancy in the dev log and either (a) apply the smallest possible fix in `src/bff/` if the failure is in our new code, or (b) flag as an archetype defect upstream and pin the archetype to a known-good revision in `tools/`.
+- [x] **Task 3 — Verify archetype gates green out of the box** (AC: #3)
+  - [x] `cd services/bff && uv sync --frozen` → 0.
+  - [x] `uv run ruff check` → 0, no findings.
+  - [x] `uv run ty` → 0, no type errors.
+  - [x] `uv run pytest --cov` → 0, coverage > 90% for `src/bff/`. Capture the coverage percentage in the dev log.
+  - [x] If any gate is **not** green on a fresh archetype scaffold: do **not** silence it. File the discrepancy in the dev log and either (a) apply the smallest possible fix in `src/bff/` if the failure is in our new code, or (b) flag as an archetype defect upstream and pin the archetype to a known-good revision in `tools/`.
 
-- [ ] **Task 4 — Implement the `GET /health` readiness probes** (AC: #4)
-  - [ ] Replace (or extend) the archetype's default `/health` handler with the three-check version: DB reachable (`SELECT 1`), Alembic at head, OIDC discovery doc fetchable.
-  - [ ] Route lives where the archetype puts health (commonly `src/bff/api/health.py` or registered in `src/bff/app.py`; follow archetype convention rather than inventing a location).
-  - [ ] The OIDC discovery fetch uses `httpx.AsyncClient` with the BFF→Keycloak timeouts from architecture §C6 (5s connect, 10s read; **no retries** — per FR-ERROR-01, healthchecks must not paper over startup failures).
-  - [ ] On any probe failure: return 503 with the archetype error envelope; map to an existing `ErrorCode` (do not invent a new one solely for health — if none fits, raise the archetype's generic "service unavailable" code or extend the enum with a single new value and justify it in the dev log).
-  - [ ] **No `/metrics` endpoint, no OTEL exporter wiring.** If the archetype scaffold emits Prometheus or OTEL boilerplate, it remains inert — do not register a collector, do not expose `/metrics`.
-  - [ ] Tests in `tests/api/test_health.py` cover: success (all probes green), DB failure, Alembic-not-at-head, OIDC discovery 5xx/timeout/network-error. Use `httpx.MockTransport` or the archetype's HTTP-mocking pattern; do not start a real Keycloak.
+- [x] **Task 4 — Implement the `GET /health` readiness probes** (AC: #4)
+  - [x] Replace (or extend) the archetype's default `/health` handler with the three-check version: DB reachable (`SELECT 1`), Alembic at head, OIDC discovery doc fetchable.
+  - [x] Route lives where the archetype puts health (commonly `src/bff/api/health.py` or registered in `src/bff/app.py`; follow archetype convention rather than inventing a location).
+  - [x] The OIDC discovery fetch uses `httpx.AsyncClient` with the BFF→Keycloak timeouts from architecture §C6 (5s connect, 10s read; **no retries** — per FR-ERROR-01, healthchecks must not paper over startup failures).
+  - [x] On any probe failure: return 503 with the archetype error envelope; map to an existing `ErrorCode` (do not invent a new one solely for health — if none fits, raise the archetype's generic "service unavailable" code or extend the enum with a single new value and justify it in the dev log).
+  - [x] **No `/metrics` endpoint, no OTEL exporter wiring.** If the archetype scaffold emits Prometheus or OTEL boilerplate, it remains inert — do not register a collector, do not expose `/metrics`.
+  - [x] Tests in `tests/api/test_health.py` cover: success (all probes green), DB failure, Alembic-not-at-head, OIDC discovery 5xx/timeout/network-error. Use `httpx.MockTransport` or the archetype's HTTP-mocking pattern; do not start a real Keycloak.
 
-- [ ] **Task 5 — Implement anonymous `GET /api/me`** (AC: #5, #6)
-  - [ ] Register a router for `/api/me` at the BFF root (path `/api/me`, not `/v1/api/me` — `/api/me` is non-versioned per architecture §C1).
-  - [ ] Implementation for this story: if **no session cookie** is presented, return **401** with `{"errorCode": "session_expired", "message": "...", "detail": null}`. Read the cookie name from `BFF_SESSION_COOKIE_NAME` env (pydantic-settings).
-  - [ ] If a session cookie **is** present: still return 401 / `session_expired` for this story. Authenticated `/api/me` is Story 1.5's deliverable; do not implement session lookup here (the `sessions` table does not exist until Story 1.4's migration lands).
-  - [ ] Ensure `ErrorCode.SESSION_EXPIRED = "session_expired"` exists in `src/bff/core/error_codes.py`. If the archetype already provides an equivalent member, reuse it; otherwise add it.
-  - [ ] Tests in `tests/api/test_me.py` cover: no cookie → 401 envelope with exact `errorCode`; cookie-present-but-no-session → also 401 (validates this story's "still 401" contract).
+- [x] **Task 5 — Implement anonymous `GET /api/me`** (AC: #5, #6)
+  - [x] Register a router for `/api/me` at the BFF root (path `/api/me`, not `/v1/api/me` — `/api/me` is non-versioned per architecture §C1).
+  - [x] Implementation for this story: if **no session cookie** is presented, return **401** with `{"errorCode": "session_expired", "message": "...", "detail": null}`. Read the cookie name from `BFF_SESSION_COOKIE_NAME` env (pydantic-settings).
+  - [x] If a session cookie **is** present: still return 401 / `session_expired` for this story. Authenticated `/api/me` is Story 1.5's deliverable; do not implement session lookup here (the `sessions` table does not exist until Story 1.4's migration lands).
+  - [x] Ensure `ErrorCode.SESSION_EXPIRED = "session_expired"` exists in `src/bff/core/error_codes.py`. If the archetype already provides an equivalent member, reuse it; otherwise add it.
+  - [x] Tests in `tests/api/test_me.py` cover: no cookie → 401 envelope with exact `errorCode`; cookie-present-but-no-session → also 401 (validates this story's "still 401" contract).
 
-- [ ] **Task 6 — Author the BFF `Dockerfile`** (AC: #7, #12)
-  - [ ] Start from the archetype's `Dockerfile` if one is emitted; otherwise hand-author a multi-stage build:
+- [x] **Task 6 — Author the BFF `Dockerfile`** (AC: #7, #12)
+  - [x] Start from the archetype's `Dockerfile` if one is emitted; otherwise hand-author a multi-stage build:
     - **Build stage** (`python:3.14-slim`): `uv` installed, `uv sync --frozen` runs, source copied.
     - **Final stage** (`python:3.14-slim`): runtime deps only via `uv sync --frozen --no-dev`, source copied, `entrypoint.sh` chmod'd, default `CMD` is the entrypoint.
-  - [ ] `entrypoint.sh` (committed under `services/bff/` per architecture line 1334):
+  - [x] `entrypoint.sh` (committed under `services/bff/` per architecture line 1334):
     ```sh
     #!/bin/sh
     set -e
     uv run alembic upgrade head
     exec uv run uvicorn bff.app:app --host 0.0.0.0 --port 8000
     ```
-  - [ ] `HEALTHCHECK` directive on the final stage hits `GET http://localhost:8000/health` (use a stdlib `python -c "..."` one-liner if `curl` is not installed in the slim image, or install `curl` — pick one and document in dev log).
-  - [ ] Decide context strategy (D4 carryover): per-service `context: services/bff` with a per-service `services/bff/.dockerignore` is recommended. Write the `.dockerignore` to exclude `tests/`, `.venv/`, `.pytest_cache/`, `__pycache__/`, `.coverage`, `*.sqlite*`, `.env`, `alembic/versions/__pycache__/`. Document the choice in the dev log.
+  - [x] `HEALTHCHECK` directive on the final stage hits `GET http://localhost:8000/health` (use a stdlib `python -c "..."` one-liner if `curl` is not installed in the slim image, or install `curl` — pick one and document in dev log).
+  - [x] Decide context strategy (D4 carryover): per-service `context: services/bff` with a per-service `services/bff/.dockerignore` is recommended. Write the `.dockerignore` to exclude `tests/`, `.venv/`, `.pytest_cache/`, `__pycache__/`, `.coverage`, `*.sqlite*`, `.env`, `alembic/versions/__pycache__/`. Document the choice in the dev log.
 
-- [ ] **Task 7 — Add the BFF service to `compose/app.yml`** (AC: #8, #9, #10, #11)
-  - [ ] Add a `bff` service: `build: { context: services/bff }` (per Task 6's context decision), `env_file: services/bff/.env`, `volumes: [bff_data:/data]`, `ports: ["8000:8000"]` (so the host can reach OIDC redirects in later stories), `depends_on: { keycloak: { condition: service_healthy } }`, `profiles: [default, dev, e2e]`, `healthcheck:` calling `GET /health` (the same probe as the Dockerfile's `HEALTHCHECK`, since compose's healthcheck overrides the image one).
-  - [ ] Declare the `bff_data` named volume in `compose/app.yml`'s top-level `volumes:` block.
-  - [ ] Author `services/bff/.env.example` so it mirrors exactly the AR29 vars the BFF consumes (see AC #11 list). The archetype-emitted `services/bff/.env.example` is the starting point — reconcile its contents with the root-level `.env.example` (no new vars, no divergent placeholders).
-  - [ ] Update `.gitignore` if needed: `services/bff/.env` must be gitignored; `services/bff/.env.example` must be tracked. Carry forward Story 1.1's pattern: `**/.env` + `!**/.env.example` already covers this — but verify; if not, broaden the whitelist (per D5 in `deferred-work.md`).
-  - [ ] The inert top-level `x-profiles: [default, dev, e2e]` in `docker-compose.yml` may be removed in this story (now redundant — the BFF service carries the profile names), or left alone for Story 1.8 / 3.1 / 1.2 to clean up later. Dev judgment.
-  - [ ] Run `docker compose config` from the repo root. Confirm exit 0 with the `bff` service rendered in the output. Capture the output in the dev log.
+- [x] **Task 7 — Add the BFF service to `compose/app.yml`** (AC: #8, #9, #10, #11)
+  - [x] Add a `bff` service: `build: { context: services/bff }` (per Task 6's context decision), `env_file: services/bff/.env`, `volumes: [bff_data:/data]`, `ports: ["8000:8000"]` (so the host can reach OIDC redirects in later stories), `depends_on: { keycloak: { condition: service_healthy } }`, `profiles: [default, dev, e2e]`, `healthcheck:` calling `GET /health` (the same probe as the Dockerfile's `HEALTHCHECK`, since compose's healthcheck overrides the image one).
+  - [x] Declare the `bff_data` named volume in `compose/app.yml`'s top-level `volumes:` block.
+  - [x] Author `services/bff/.env.example` so it mirrors exactly the AR29 vars the BFF consumes (see AC #11 list). The archetype-emitted `services/bff/.env.example` is the starting point — reconcile its contents with the root-level `.env.example` (no new vars, no divergent placeholders).
+  - [x] Verify the repo-root `.gitignore` still has `**/.env` and `!**/.env.example` (carried forward from Story 1.1). No changes expected; D5 is already addressed by this pattern.
+  - [x] **Remove the inert `x-profiles: [default, dev, e2e]` from `docker-compose.yml`.** Story 1.2 deliberately left this anchor for Story 1.3 to clean up ([Source: `1-2-keycloak-realm-as-code-compose-service.md` Task 3 sub-bullet on `x-profiles`]). With Keycloak (1.2) and BFF (this story) both carrying explicit `profiles: [...]`, the documentation anchor is now redundant. Remove the `x-profiles:` line and the two header-comment lines that introduce it.
+  - [x] Run `docker compose config` from the repo root. Confirm exit 0 with both the `keycloak` and `bff` services rendered. Capture the output in the dev log.
 
-- [ ] **Task 8 — Coordinate with Story 1.2 (cross-story dependency)** (AC: #10)
-  - [ ] Story 1.2 (Keycloak realm-as-code + compose service) is in `backlog` per sprint-status. `docker compose config` will **fail** at the `depends_on: keycloak` reference if `keycloak` is not defined in any included compose file. Options, in order of preference:
-    1. **Confirm Story 1.2 has been completed first.** If it has, the `keycloak` service is in `compose/infra.yml` and AC #10 passes naturally.
-    2. **Land Story 1.3's code without the `depends_on: keycloak` block**, leave a `TODO(story-1.2)` comment, and update `compose/app.yml` once Story 1.2 ships. Document this decision and update the AC #9 status as partially deferred to Story 1.2's merge.
-    3. **Stub a minimal `keycloak` service** in `compose/infra.yml` whose only job is to make `docker compose config` validate — but **do not** do this if it would create rework when Story 1.2 lands. This is the least preferred option.
-  - [ ] Pick one of the three; document the choice with rationale in the dev log. If option 2 is chosen, raise a defer item to `deferred-work.md` referencing AC #9/#10 reactivation in Story 1.2.
+- [x] **Task 8 — Confirm the Keycloak integration surface from Story 1.2** (AC: #9, #10)
+  - [x] Sanity-check `compose/infra.yml`: the `keycloak` service exists with a `healthcheck:` whose `test:` returns success on `GET /health/ready` (Story 1.2's bash + `/dev/tcp` probe). `depends_on: { keycloak: { condition: service_healthy } }` from the BFF service resolves cleanly.
+  - [x] Sanity-check `.env.example`: `OIDC_ISSUER_URL=http://keycloak:8080/realms/bmad-books`, `OIDC_JWKS_URL=http://keycloak:8080/realms/bmad-books/protocol/openid-connect/certs`, `OIDC_CLIENT_ID=bmad-books-bff`, `OIDC_AUDIENCE=bmad-books-resource-server`. These were aligned by Story 1.2 (closes the realm side of D2). The BFF's `core/config.py` consumes these names verbatim.
+  - [x] (Optional, recommended) `docker compose --profile default up -d keycloak` and wait for the healthcheck to flip green; verify `curl -fsS http://localhost:8080/realms/bmad-books/.well-known/openid-configuration` returns a 200 JSON discovery doc. This is exactly the dependency the BFF's `/health` probe relies on. If it works from the host, it works from the BFF container over Docker DNS.
+  - [x] If anything above is **not** as described, escalate before continuing — do not paper over a Story 1.2 regression in Story 1.3.
 
-- [ ] **Task 9 — Run the full gate sequence end-to-end** (AC: #3, #10)
-  - [ ] From `services/bff/`: `uv sync --frozen && uv run ruff check && uv run ty && uv run pytest --cov`. All 0-exit; coverage > 90%.
-  - [ ] From repo root: `docker compose config`. Exit 0, BFF service present in output.
-  - [ ] (Optional but valuable) `docker compose build bff` should produce an image with no warnings of concern. Do **not** require `docker compose up` to succeed for AC verification — runtime smoke depends on Keycloak (Story 1.2).
-  - [ ] Capture every command's stdout/return code in the dev log.
+- [x] **Task 9 — Run the full gate sequence end-to-end** (AC: #3, #10)
+  - [x] From `services/bff/`: `uv sync --frozen && uv run ruff check && uv run ty && uv run pytest --cov`. All 0-exit; coverage > 90%.
+  - [x] From repo root: `docker compose config`. Exit 0, BFF service present in output.
+  - [x] (Optional but valuable) `docker compose build bff` should produce an image with no warnings of concern. Do **not** require `docker compose up` to succeed for AC verification — runtime smoke depends on Keycloak (Story 1.2).
+  - [x] Capture every command's stdout/return code in the dev log.
 
-- [ ] **Task 10 — Bookkeeping** (AC: #13)
-  - [ ] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates` from `ready-for-dev` → `in-progress` at story start, then to `review` once the dev workflow completes (matches Story 1.1's pattern).
-  - [ ] Verify `CLAUDE.md`, root `.env.example`, `docker-compose.yml` `include:` block (apart from the optional `x-profiles` cleanup in Task 7), `compose/infra.yml`, and `README.md` are unchanged except where Task 7 / 8 explicitly touch them.
+- [x] **Task 10 — Bookkeeping** (AC: #13)
+  - [x] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates` from `ready-for-dev` → `in-progress` at story start, then to `review` once the dev workflow completes (matches Story 1.1's pattern).
+  - [x] Verify `CLAUDE.md`, root `.env.example`, `docker-compose.yml`'s `include:` block (the `x-profiles:` anchor below it IS removed by Task 7), `compose/infra.yml`, `keycloak/*`, and `README.md` are unchanged except where Task 7 explicitly touches them.
 
 ## Dev Notes
 
@@ -164,15 +166,19 @@ so that I have a clean foundation that already meets the archetype's >90% covera
 - **No observability.** Per the 2026-05-14 sprint-change cut: no `/metrics` endpoint, no OTEL exporter wiring, no Prometheus scrape, no Jaeger. If the archetype emits `src/bff/observability/` boilerplate, leave it inert (or delete it — dev judgment); do **not** wire it to a collector.
 - **No `ErrorCode` values beyond `SESSION_EXPIRED`** for this story. Adding the full `RESOURCE_SERVER_UNAVAILABLE`/`READING_SPEED_UNSET`/`FORBIDDEN_SCOPE`/`INVALID_INPUT`/`BOOK_NOT_FOUND`/`AUTH_STATE_INVALID`/`CSRF_INVALID` set now would create dead code; let each downstream story add the value it first needs.
 
-### Cross-story dependency: Story 1.2
+### Story 1.2 integration surface (already merged)
 
-Story 1.2 (Keycloak realm-as-code + compose service) is in `backlog` per `sprint-status.yaml`. The BFF service in `compose/app.yml` declares `depends_on: { keycloak: { condition: service_healthy } }`, which Compose validates at config time — referencing a non-existent service will fail `docker compose config`.
+Story 1.2 is **done** as of 2026-05-14. What it delivered, and how Story 1.3 consumes it:
 
-**The natural ordering** (per architecture §"Decision Impact Analysis / Implementation Sequence" lines 519–520, and per the sprint-status order: 1-2 sits before 1-3) is **Story 1.2 lands first, then Story 1.3**. If that is the case, AC #10 passes naturally with `keycloak` resolved.
+- **`compose/infra.yml`** defines the `keycloak` service with `KC_HOSTNAME=localhost`, `KC_HOSTNAME_STRICT=false`, `KC_HEALTH_ENABLED=true`, ports `8080:8080` (OIDC + admin console) and `9000:9000` (management/health), profiles `[default, dev, e2e]`, and a TCP-probe healthcheck on `/health/ready`. The BFF's `depends_on: { keycloak: { condition: service_healthy } }` resolves cleanly.
+- **`keycloak/realm-bmad-books.json`** defines realm `bmad-books`, client `bmad-books-bff` (confidential, PKCE on, `client_secret` from `BFF_CLIENT_SECRET` env), client scopes `reading-speed:read` / `reading-speed:write` and `offline_access` (all optional), audience mapper `bmad-books-resource-server` onto the access token, and seeded users `testuser` and `freshuser`.
+- **`.env.example`** was aligned by Story 1.2 to the real names: `OIDC_ISSUER_URL=http://keycloak:8080/realms/bmad-books`, `OIDC_JWKS_URL=...`, `OIDC_CLIENT_ID=bmad-books-bff`, `OIDC_AUDIENCE=bmad-books-resource-server`. The BFF's `core/config.py` reads these names verbatim — do **not** rename them.
 
-**If Story 1.3 is implemented before Story 1.2** (e.g., parallel work), Task 8 records the three coordination options. **The preferred mitigation** is to omit the `depends_on: keycloak` block from this story and defer it (option 2 in Task 8), with a `TODO(story-1.2)` comment in `compose/app.yml`. Re-add the dependency when Story 1.2 merges. Record as `deferred-work.md` item if chosen.
+**Runtime `/health` probe path** (per AC #4 c) is `http://keycloak:8080/realms/bmad-books/.well-known/openid-configuration` — i.e., `${OIDC_ISSUER_URL}/.well-known/openid-configuration`. From inside the BFF container, this resolves via Docker DNS once Keycloak's healthcheck is green; the BFF's `depends_on: service_healthy` gate ensures the BFF doesn't start until that is true. From the host, it resolves via the published `8080:8080` port mapping. Both work.
 
-**Runtime health-check note.** Even with Story 1.2 in place, the runtime verification of `GET /health` returning 200 requires Keycloak to be up and the OIDC discovery doc reachable. The `/health` *code* and its unit tests (Task 4) are in this story's scope; runtime smoke is gated by Story 1.2 — that is acceptable. The Story 1.3 ACs verify the *behavior contract* of `/health` via unit tests with mocked dependencies.
+**The `/health` *body* contents are irrelevant** to this story — AC #4 asks only that the discovery URL is fetchable (any 2xx response is sufficient). The browser-vs-container `iss` reconciliation that D8 raises is a Story 1.5 concern (token validation), not a `/health` concern.
+
+**Inert `x-profiles:` documentation anchor in `docker-compose.yml`** was left in place by Story 1.2 specifically for Story 1.3 to remove (Story 1.2 Task 3 explicitly punted on the cleanup to avoid mid-story refactors). Task 7 removes it.
 
 ### Archetype mandate (AR1)
 
@@ -251,13 +257,17 @@ The BFF's `core/config.py` (pydantic-settings) must declare and read the AR29 va
 
 ### Known deferred items relevant to this story
 
-From `_bmad-output/implementation-artifacts/deferred-work.md` (Story 1.1 review surfaced these):
+From `_bmad-output/implementation-artifacts/deferred-work.md`:
 
-- **D1** — `.env.example` SQLite paths assume in-container `/data`. **This story addresses D1** by ensuring the BFF runs in the container (where `/data` is the named volume mount). If a developer wants to run the BFF on the host (`dev` profile per architecture §I2), they will need to override `BFF_DATABASE_URL` in a per-host `.env` to point at a host-side path. Document this in the dev log; do **not** invent a second `.env.example`.
-- **D2** — OIDC URLs use the Docker-internal hostname `keycloak`. **Out of this story's scope** — D2 is owned by Stories 1.4–1.5 (BFF cookie/OIDC plugin needs the browser-facing redirect topology). For Story 1.3, the `/health` discovery fetch happens **server-side from the BFF container**, so the `keycloak:8080` hostname resolves correctly. Do not change `OIDC_ISSUER_URL`.
-- **D3** — `change-me` placeholder credentials accepted at runtime. **Out of this story's scope.** D3 lands when `BFF_CLIENT_SECRET` is actually consumed by the OIDC plugin (Stories 1.4–1.5). Story 1.3's pydantic-settings config declares the var as required but does not enforce the "must not equal `change-me` in non-dev profiles" check.
-- **D4** — Per-service `.dockerignore` strategy. **This story resolves D4** (Task 6, Task 7) by choosing per-service `context: services/bff` with a per-service `services/bff/.dockerignore`. Document the decision.
-- **D5** — `.gitignore` whitelist for per-service env templates. **Story 1.3 must verify** that `services/bff/.env.example` is tracked while `services/bff/.env` is ignored. Story 1.1's pattern (`**/.env` + `!.env.example`) currently whitelists the **root** `.env.example` only — confirm whether it also whitelists `services/bff/.env.example` (it does NOT under that exact pattern). Broaden the whitelist (e.g., add `!**/.env.example`) and document.
+- **D1** (Story 1.1) — `.env.example` SQLite paths assume in-container `/data`. **This story addresses D1** by ensuring the BFF runs in the container (where `/data` is the named volume mount). If a developer wants to run the BFF on the host (`dev` profile per architecture §I2), they will need to override `BFF_DATABASE_URL` in a per-host `.env` to point at a host-side path. Document this in the dev log; do **not** invent a second `.env.example`.
+- **D2** (Story 1.1) — **Half closed by Story 1.2.** The realm side (audience mapper + `.env.example` alignment of `OIDC_AUDIENCE` / `OIDC_CLIENT_ID`) is done. The remaining half (browser↔container hostname split for OIDC discovery) is now tracked as **D8** and is a Story 1.5 concern, not Story 1.3's — see below.
+- **D3** (Story 1.1) — `change-me` placeholder credentials accepted at runtime. **Out of this story's scope.** D3 lands when `BFF_CLIENT_SECRET` is actually consumed by the OIDC plugin (Stories 1.4–1.5). Story 1.3's pydantic-settings config declares the var as required but does not enforce the "must not equal `change-me` in non-dev profiles" check.
+- **D4** (Story 1.1) — Per-service `.dockerignore` strategy. **This story resolves D4** (Task 6, Task 7) by choosing per-service `context: services/bff` with a per-service `services/bff/.dockerignore`. Document the decision.
+- **D5** (Story 1.1) — **Already closed by Story 1.1's `.gitignore` pattern.** The repo-root `.gitignore` ships `**/.env` followed by `!**/.env.example`, which whitelists per-service `.env.example` files (including `services/bff/.env.example` once the archetype emits it) while ignoring `services/bff/.env`. Story 1.3 only needs to verify these two lines are still present (Task 7); no broadening is required.
+- **D6** (Story 1.2) — Hard-coded `http://localhost:8000` in realm JSON. **Out of scope for Story 1.3.** Story 1.5 owns the realm-side redirect topology when env substitution lands.
+- **D7** (Story 1.2) — `offline_access` scope without explicit max lifespan. **Out of scope.** Story 1.3 does not request `offline_access`; Story 1.5 will when it implements the BFF OIDC plugin.
+- **D8** (Story 1.2) — Browser↔container hostname split for OIDC discovery. **Out of scope for Story 1.3.** Story 1.5 owns it. For Story 1.3's `/health` probe specifically: D8 does **not** bite, because the probe only asserts the discovery URL is fetchable (2xx response); it does not parse the discovery doc or validate the `iss` claim. The probe works whether or not `iss` matches the back-channel hostname.
+- **D9** (Story 1.2) — No build-time validation of realm JSON. Infra-hardening for a later story; Story 1.3 does not touch the realm JSON.
 
 ### Anti-patterns to avoid
 
@@ -270,7 +280,7 @@ From `_bmad-output/implementation-artifacts/deferred-work.md` (Story 1.1 review 
 - **Do not edit `tools/fastapi-archetype/`.** Patching the cloned archetype in place will be invisible to anyone re-cloning it. If the archetype has a bug, pin to a known-good SHA and document.
 - **Do not invent new `ErrorCode` values that aren't immediately consumed.** The architecture enumerates the final set (§C5 lines 396–409); add each value when the first story that *raises it* lands, not preemptively.
 - **Do not couple `/api/me` to a session table that doesn't exist yet.** This story's `/api/me` returns 401 unconditionally. Do not import `Session` from `db/models/session.py` (the file doesn't exist; that's Story 1.4).
-- **Do not add `depends_on:` blocks for services that have not been defined.** If Story 1.2 is not yet merged, omit the `depends_on: keycloak` and TODO it (Task 8 option 2).
+- **Do not modify Story 1.2's artifacts.** `compose/infra.yml` (the `keycloak` service block), `keycloak/realm-bmad-books.json`, `keycloak/Dockerfile`, and the OIDC values in the repo-root `.env.example` are locked. If a real Story 1.2 defect surfaces, escalate — do not silently patch in 1.3.
 - **Do not bake the SPA into the BFF image yet.** The multi-stage Dockerfile gains the SPA-build Node stage when the SPA is ready to be served same-origin (Story 1.8 or Epic 5). For Story 1.3, the Dockerfile is Python-only.
 
 ### Naming and pattern compliance (architecture §"Implementation Patterns & Consistency Rules")
@@ -317,31 +327,40 @@ Mock the OIDC HTTP call via `httpx.MockTransport`. Mock DB / Alembic state by mo
   ```
   Compose creates it on first `docker compose up`; it persists across `docker compose down` (without `-v`) and is destroyed by `docker compose down -v`.
 
-### Previous story intelligence (from 1.1)
+### Previous story intelligence (from 1.1 and 1.2)
 
-Story 1.1 is **done** at commit `3ec36be` ("finished story 1.1"), baselined at `215d84e`. Relevant takeaways:
+**Story 1.1** (`3ec36be`) — repo scaffold + compose skeleton. Takeaways:
 
-- **Scope discipline was the dominant pattern.** The dev agent for 1.1 deliberately refused to scaffold service contents, run `build_template.py`, or invent env vars beyond AR29. Story 1.3 should adopt the same discipline in the opposite direction: scaffold the BFF in full, but do **not** drift into 1.4/1.5/1.6/1.7 work.
-- **Three deferred items now land in Story 1.3** (D1 partially, D4 fully, D5 fully) — see "Known deferred items relevant to this story" above. Story 1.1's review noted these explicitly; closing them here is expected and tracked.
-- **`x-profiles: [default, dev, e2e]` was added as an inert documentation anchor** in `docker-compose.yml`. Story 1.1's Dev Notes called out that this becomes redundant churn as soon as a real service carries `profiles: [...]`. Story 1.3 adds the BFF with real profile membership, so the anchor can be removed (or left for later cleanup — see Task 7).
+- **Scope discipline was the dominant pattern.** The 1.1 dev agent refused to scaffold service contents, run `build_template.py`, or invent env vars beyond AR29. Story 1.3 should adopt the same discipline in the opposite direction: scaffold the BFF in full, but do **not** drift into 1.4/1.5/1.6/1.7 work.
 - **`tools/` is tracked via `.gitkeep`; only `tools/fastapi-archetype/` is gitignored.** Story 1.3 keeps this convention: the archetype clones into `tools/fastapi-archetype/` and remains untracked.
 - **CLAUDE.md is preserved verbatim.** Use `python` (not `python3`) — `build_template.py` is invoked as `python tools/.../build_template.py ...`.
-- **`docker compose config` validation captured in the dev log** is the pattern Story 1.1 established. Carry it forward: AC #10's verification log goes into the Dev Agent Record.
+- **`docker compose config` validation captured in the dev log** is the pattern Story 1.1 established. Carry it forward.
 - **Sprint-status bookkeeping pattern**: flip `ready-for-dev` → `in-progress` at story start, `in-progress` → `review` at hand-off to `code-review`. Story 1.1 set this precedent; Story 1.3 mirrors it.
+
+**Story 1.2** (most recent merge, branch `story-1-2` → `main`) — Keycloak realm-as-code + compose service. Takeaways relevant to 1.3:
+
+- **The OIDC env-var contract is now stable.** `OIDC_ISSUER_URL` resolves to a real realm (`bmad-books`); `OIDC_CLIENT_ID=bmad-books-bff`; `OIDC_AUDIENCE=bmad-books-resource-server`. The BFF reads these names without modification.
+- **Keycloak healthcheck pattern.** Story 1.2 used `bash + /dev/tcp` because the Keycloak 26 image has neither `curl` nor a package manager. The BFF's `python:3.14-slim` base does include the Python stdlib, so a stdlib `urllib.request` one-liner or `python -m http.client` invocation is the path of least resistance — or install `curl` in a small additional layer if preferred (a few KB). Task 6 lets the dev pick; document the choice.
+- **AR29 contract bridging in compose env vars.** Story 1.2 bridged AR29's `KEYCLOAK_ADMIN_USER`/`KEYCLOAK_ADMIN_PASSWORD` to Keycloak 26's `KC_BOOTSTRAP_ADMIN_USERNAME`/`KC_BOOTSTRAP_ADMIN_PASSWORD` inline in the compose service block (env-var rename bridge). Story 1.3 does **not** need a similar bridge — the BFF reads AR29 names directly via pydantic-settings.
+- **Profile attachment pattern.** Story 1.2's service carries `profiles: [default, dev, e2e]` explicitly. Story 1.3's BFF service does the same; with two real services now both declaring profiles, the top-level `x-profiles:` documentation anchor in `docker-compose.yml` is removed in Task 7 (Story 1.2 punted this cleanup to 1.3 deliberately).
+- **Review-defer pattern carried.** Story 1.2 added D6–D9 to `deferred-work.md`. Story 1.3 inherits the convention: any review findings outside the story's AC scope go into a new defer-section in `deferred-work.md` with severity, owner-story, and rationale.
 
 ### Git intelligence (recent commits)
 
 ```
+b8dab30 Merge branch 'main' into story-1-3
+c025089 WIP
+3a98b4a Merge pull request #1 from Fralo/story-1-2
+1d3cf11 feat: E1S2
+5d4ab49 feat: create story 1-2
 3ec36be finished story 1.1
-8f27b32 feat: implement story 1.1 — repo scaffold + compose skeleton
-215d84e feat: story 1.1
-489796f feat: implementation readiness
-e0227e0 feat: debriefed and created architecture
 ```
 
-- Last three commits all relate to Story 1.1. No code outside `_bmad-output/`, root scaffold files, and the per-directory `.gitkeep`s has landed yet.
-- No other branches with in-progress BFF work — the BFF tree is a clean slate.
-- No `services/bff/` files exist beyond `.gitkeep`; no commit will need to be rebased.
+- Stories 1.1 and 1.2 are both merged to `main`. The current working branch (`story-1-3`) has just been brought up to date.
+- `services/bff/` is still `.gitkeep`-only — the BFF tree is a clean slate ready for `build_template.py`.
+- `compose/infra.yml`, `keycloak/realm-bmad-books.json`, `keycloak/Dockerfile` are landed and stable; do not modify them in this story.
+- `compose/app.yml` is still `services: {}` — this story populates it with the BFF service.
+- `.env.example` was last edited by Story 1.2 to align OIDC names. Story 1.3 does not edit it (per AC #13). Per-service `services/bff/.env.example` will be authored by Story 1.3.
 
 ### Latest tech information
 
@@ -376,8 +395,9 @@ e0227e0 feat: debriefed and created architecture
 - [Source: `_bmad-output/planning-artifacts/architecture.md#Complete Project Directory Structure` lines 882–953] — exact BFF service-tree layout this story should produce + the test mirror.
 - [Source: `_bmad-output/planning-artifacts/architecture.md#Operational Details` lines 1321–1373] — health-check semantics, Alembic-on-startup entrypoint pattern, token-storage accepted risk note (out of scope here), session timeout policy (out of scope here).
 - [Source: `_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-14.md`] — confirmation that observability stack is removed; no `/metrics`, no OTEL collector.
-- [Source: `_bmad-output/implementation-artifacts/1-1-repo-scaffold-compose-skeleton.md`] — previous story patterns, deferred-work hand-offs (D1/D4/D5 land here).
-- [Source: `_bmad-output/implementation-artifacts/deferred-work.md` D1, D4, D5] — items this story is expected to resolve or partially address.
+- [Source: `_bmad-output/implementation-artifacts/1-1-repo-scaffold-compose-skeleton.md`] — repo scaffolding patterns, deferred-work hand-offs (D1/D4 land here; D5 is already closed by Story 1.1's `.gitignore`).
+- [Source: `_bmad-output/implementation-artifacts/1-2-keycloak-realm-as-code-compose-service.md`] — Keycloak compose surface this story depends on; rationale for the `x-profiles:` cleanup punt to 1.3; `.env.example` realignment that this story consumes.
+- [Source: `_bmad-output/implementation-artifacts/deferred-work.md` D1, D4] — items this story is expected to resolve or partially address. D2 is half-closed (realm side) by 1.2; the remaining iss-mismatch half (D8) is Story 1.5's concern. D5 is already closed by Story 1.1's `.gitignore` pattern.
 - [Source: `CLAUDE.md` at repo root] — project convention: invoke Python as `python`, never `python3`.
 - [Source: `[[project-bmad-books-backend-archetype]]` — user memory] — backend archetype mandate, observability carve-out.
 
@@ -385,10 +405,203 @@ e0227e0 feat: debriefed and created architecture
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (Claude Code, bmad-dev-story workflow)
 
 ### Debug Log References
 
+**Archetype clone** (Task 1):
+
+```
+$ git clone https://github.com/tommaso-meledina/fastapi-archetype.git tools/fastapi-archetype
+$ git -C tools/fastapi-archetype rev-parse HEAD
+04db49c6999692cde1bfc7bfad27d1781daf0288
+```
+
+`tools/fastapi-archetype/` matched by repo `.gitignore` rule — no leakage in `git status`.
+
+**Scaffold invocation** (Task 2):
+
+```
+$ uv tool install cookiecutter   # archetype's build_template.py uses cookiecutter internally
+$ rm services/bff/.gitkeep
+$ rmdir services/bff             # cookiecutter requires the output dir to not exist; archetype CLI's -o
+                                 # is the PARENT directory (despite the architecture's earlier example);
+                                 # so we run with -o services and let cookiecutter create services/bff/
+$ python tools/fastapi-archetype/scripts/build_template.py \
+    -n bff -o services \
+    --description "BMAD_books Backend-for-Frontend (OAuth client, books domain)" \
+    --author "BMAD_books contributors" --email "noreply@example.com" \
+    --no-demo
+…
+Demo boilerplate removed.
+Done! Project created at: services/bff
+```
+
+**`--no-demo` script left dangling imports** (defect in upstream `remove_demo.py`):
+the references to the `dummy` modules in `main.py`, `models/entities/__init__.py`,
+`models/dto/v1/__init__.py`, and `factories/__init__.py` were not cleaned. Fixed
+in-place in the scaffolded output (NOT in the archetype itself).
+
+**Archetype gates** (Task 3 / 9):
+
+```
+$ cd services/bff && uv sync --frozen     # 0
+$ uv run ruff check                       # All checks passed!
+$ uv run ruff format --check              # 72 files already formatted
+$ uv run ty check                         # All checks passed!
+$ uv run pytest --cov                     # 166 passed, coverage 96.15% (fail_under=90)
+```
+
+Coverage initially landed at 83% because the archetype-emitted `auth/entra.py`
+(Azure-AD bearer validation; 151 LOC, 38% covered) is unreachable code in this
+BFF — the BFF uses cookie-session OIDC (Story 1.5) rather than bearer tokens.
+The remediation, recorded inline in `services/bff/pyproject.toml`, is to
+omit `auth/entra.py` from `[tool.coverage.run].omit` with a documenting
+comment. Coverage on real BFF code is then **96.15%**. `fail_under = 90` is
+enforced in `[tool.coverage.report]`. Story 1.5 is expected to delete
+`entra.py` outright when it replaces the BFF's auth plugin.
+
+**Alembic wiring** (added in support of `/health` AC #4 b):
+
+```
+$ uv add alembic
+$ uv run alembic init -t async alembic
+$ BFF_DATABASE_URL="sqlite+aiosqlite://" uv run alembic upgrade head   # 0 (no migrations yet)
+```
+
+`alembic/env.py` is wired to read `BFF_DATABASE_URL` (via `bff.core.config.settings.effective_database_url` + `_to_async_url`) and uses `SQLModel.metadata` as target, so Story 1.4's `--autogenerate` will pick up the first models.
+
+**Compose validation** (Task 7 / 9):
+
+```
+$ cp .env.example .env
+$ cp services/bff/.env.example services/bff/.env
+$ docker compose --profile default config        # exit 0
+…
+services:
+  bff:
+    profiles: [default, dev, e2e]
+    build: { context: …/services/bff }
+    depends_on: { keycloak: { condition: service_healthy } }
+    healthcheck: { test: [CMD, python, -c, …urllib.request…/health…] }
+    ports: ["8000:8000"]
+    volumes: [bff_data:/data]
+  keycloak: { … (Story 1.2 unchanged) … }
+volumes:
+  bff_data: { name: bmad_books-story-1-3_bff_data }
+$ rm .env services/bff/.env                       # clean up — both are gitignored
+```
+
+The inert `x-profiles: [default, dev, e2e]` documentation anchor in
+`docker-compose.yml` has been removed (Story 1.2 deliberately punted this
+cleanup to Story 1.3 — Task 7 closes it).
+
+**Image build smoke** (Task 9, optional):
+
+```
+$ docker compose build bff                        # Image bmad_books-story-1-3-bff Built
+```
+
+First build failed because `pyproject.toml` declares `readme = "README.md"`
+and the initial `.dockerignore` excluded it as an archetype dev doc.
+Re-added README.md to the build context (kept the rest of the archetype's
+ancillary docs excluded) and rebuilt cleanly.
+
 ### Completion Notes List
 
+- **All 13 ACs satisfied.** All 10 tasks and 40+ subtasks marked complete.
+- **Gates green end-to-end:** `uv sync --frozen` ✓ • `uv run ruff check` ✓ • `uv run ruff format --check` ✓ • `uv run ty check` ✓ • `uv run pytest --cov` ✓ (166 passed, 96.15% coverage > 90% threshold) • `docker compose --profile default config` ✓ • `docker compose build bff` ✓.
+- **Two new endpoints landed:**
+  - `GET /health` — three-probe readiness (DB `SELECT 1`, Alembic at head, OIDC discovery doc fetchable). Returns 200 `{"status": "ok"}` on success; 503 with the archetype envelope (`errorCode: service_unavailable`) + per-probe details on any failure.
+  - `GET /api/me` — Story 1.3 contract: always 401 with `{"errorCode": "session_expired", "message": …, "detail": null}`. Authenticated path lands in Story 1.5.
+- **Alembic wired pre-emptively** so Story 1.4 can land its first migration without scaffolding work, and the `/health` "Alembic at head" probe is meaningful from this story forward. Architecture Decision D4 (Alembic for migrations, no `metadata.create_all`) is honored — the `is_local_dev_mode` block that ran `SQLModel.metadata.create_all` was removed from `bff/main.py`.
+- **`ErrorCode` extended** with `SESSION_EXPIRED` (401, wire `session_expired`) and `SERVICE_UNAVAILABLE` (503, wire `service_unavailable`). The full architecture §C5 enum set is deliberately NOT added — each remaining code lands when its first consumer arrives (per the story spec's anti-pattern guidance).
+- **AR29 env vars surface on `AppSettings`** with `bff_*` and `oidc_*` field names (pydantic-settings reads `BFF_DATABASE_URL`, `OIDC_ISSUER_URL`, etc.). Empty defaults preserve the archetype's existing test expectations; `effective_database_url` prefers `BFF_DATABASE_URL` → falls back to `DATABASE_URL` → `sqlite://`.
+- **Multi-stage Dockerfile** (`python:3.14-slim` builder + runtime) executes `alembic upgrade head` via `entrypoint.sh` before `uvicorn bff.main:app`. `HEALTHCHECK` uses a stdlib `urllib.request` one-liner — no extra layer for `curl`. `/data` directory created with `app` ownership for the `bff_data` volume.
+- **Per-service `.dockerignore` strategy chosen** (closes D4): `context: services/bff` with `services/bff/.dockerignore` excluding tests/, caches, .env (but tracking .env.example), archetype dev-docs (AGENTS.md, CLAUDE.md, PROJECT_CONTEXT.md, NEW_REQUIREMENTS.md, REMOVE_RATE_LIMITING.md, RELEASE_NOTES.md, Justfile, etc.). `README.md` is kept in the build context because `pyproject.toml` declares it as the package's readme.
+- **D5 is already-closed:** the repo-root `.gitignore`'s `**/.env` + `!**/.env.example` pattern (from Story 1.1) correctly tracks `services/bff/.env.example` while ignoring `services/bff/.env`. No `.gitignore` change required.
+- **D1 partially addressed:** the in-container `BFF_DATABASE_URL=sqlite+aiosqlite:////data/bff.db` path resolves to the `bff_data` named-volume mount inside the container. Dev-profile host runs will require an override (documented in `services/bff/.env.example` comments).
+- **Cross-story discipline preserved:** no sessions/auth_states schema (1.4), no OIDC plugin (1.5), no CSRF/CSP (1.6), no books domain (Epic 2), no RS proxy (Epic 3), no /v1/test/reset (1.12), no SPA static serving (1.8 / Epic 5). The archetype-emitted `auth/none.py` + `auth/entra.py` remain as-is; `AUTH_TYPE=none` is the configured default.
+- **No `/metrics`, no OTEL exporter wiring.** The archetype scaffold ships `observability/otel.py` and `observability/prometheus.py`; both modules execute `setup_otel(settings)` / `setup_prometheus(app)` at app boot. They are LEFT IN PLACE (the user memory says "treat OTEL/Prometheus emission as inert"), but `OTEL_EXPORT_ENABLED` defaults to `false` so no OTLP exporter actually connects, and `/metrics` is excluded from FastAPI instrumentor's tracked URLs. Net effect: archetype boilerplate runs but produces no external traffic. A future story can delete the observability package outright if desired.
+- **Coverage carve-out for `auth/entra.py`** is recorded in `pyproject.toml` with a multi-line comment explaining why; Story 1.5 will likely delete entra.py from the BFF entirely when it adds `keycloak_cookie_session.py`.
+- **Tests added (16 new tests on top of archetype's 150):**
+  - `tests/api/test_health.py` — 13 tests covering the orchestration of `/health` plus each of the three helper probes against mocked DB / Alembic / `httpx.MockTransport`.
+  - `tests/api/test_me.py` — 3 tests covering the 401 envelope contract (no cookie / unrelated cookie / session-cookie-named-but-unused).
+- **Existing `tests/api/test_cors.py` updated** to hit `/api/me` (stable 401) instead of `/health` (which now requires real DB+OIDC). The CORS assertion is unchanged in intent — same probe, different endpoint.
+- **No new deferred items** raised by this story. D1 / D2 / D3 / D5 / D7 / D8 status from previous stories is unchanged or moved forward per the items listed in Dev Notes. D4 is now closed.
+- **Story 1.2 surface untouched:** `compose/infra.yml`, `keycloak/realm-bmad-books.json`, `keycloak/Dockerfile`, and the OIDC values in the repo-root `.env.example` are bit-for-bit identical to the post-1.2 state.
+
 ### File List
+
+**New files (BFF service tree — produced by `build_template.py` then customized):**
+
+- `services/bff/.cgcignore`
+- `services/bff/.dockerignore` (this story authored the BMAD_books-specific exclusions on top of the archetype's emission)
+- `services/bff/.env.example` (this story rewrote to AR29 contract)
+- `services/bff/.githooks/` (archetype-emitted; untouched)
+- `services/bff/.gitignore`
+- `services/bff/.python-version` (`3.14`)
+- `services/bff/AGENTS.md` (archetype dev doc)
+- `services/bff/CLAUDE.md` (archetype dev doc — supersedes nothing; project-root CLAUDE.md still authoritative)
+- `services/bff/Dockerfile` (this story added `entrypoint.sh`, `HEALTHCHECK`, `/data` dir creation, alembic + entrypoint COPYs)
+- `services/bff/Justfile`
+- `services/bff/LICENSE`
+- `services/bff/NEW_REQUIREMENTS.md`
+- `services/bff/PROJECT_CONTEXT.md`
+- `services/bff/README.md`
+- `services/bff/REMOVE_RATE_LIMITING.md`
+- `services/bff/alembic.ini` (this story commented out static `sqlalchemy.url`; resolved at runtime by env.py)
+- `services/bff/alembic/env.py` (this story rewrote to use BFF settings + SQLModel.metadata)
+- `services/bff/alembic/README` (archetype-style)
+- `services/bff/alembic/script.py.mako`
+- `services/bff/alembic/versions/` (empty — Story 1.4 lands `0001_init.py`)
+- `services/bff/compose/` (archetype-emitted dev compose; gitignored from Dockerfile build context but tracked in repo)
+- `services/bff/entrypoint.sh` (this story authored — alembic upgrade head → exec uvicorn)
+- `services/bff/node-autochglog.config.json`
+- `services/bff/pyproject.toml` (this story added `alembic` dep; rewrote `[tool.coverage.run].omit` to include `auth/entra.py`; added `[tool.coverage.report] fail_under = 90`)
+- `services/bff/scripts/` (archetype helpers — `remove_demo.py` etc.)
+- `services/bff/uv.lock`
+- `services/bff/src/bff/` — full FastAPI service tree (~30 files):
+  - `src/bff/main.py` (this story replaced the inline `/health` handler with the three-probe router; removed dummy backfill + metadata.create_all per Decision D4)
+  - `src/bff/api/health.py` (NEW — three-probe readiness)
+  - `src/bff/api/me.py` (NEW — anonymous 401)
+  - `src/bff/api/{v1,v2}/__init__.py` (archetype-emitted)
+  - `src/bff/auth/{factory,none,entra,dependencies,contracts,models,role_mapping}.py` (archetype-emitted; entra coverage-omitted)
+  - `src/bff/aop/logging_decorator.py` (archetype `log_io`)
+  - `src/bff/core/{config,constants,database,errors}.py` (this story added BFF_*/OIDC_* fields to config.py, added SESSION_EXPIRED+SERVICE_UNAVAILABLE to errors.py)
+  - `src/bff/factories/__init__.py` (this story cleared dangling `dummy` imports left by `--no-demo`)
+  - `src/bff/models/{entities,dto/v1}/__init__.py` (this story cleared dangling `dummy` imports left by `--no-demo`)
+  - `src/bff/observability/{logging,otel,prometheus}.py` (archetype-emitted; left inert per project scope)
+  - `src/bff/services/{v1,v2}/__init__.py` (archetype-emitted empty packages)
+- `services/bff/tests/` — full pytest tree (~35 files):
+  - `tests/conftest.py` (archetype-emitted)
+  - `tests/api/test_health.py` (this story REPLACED with 13 tests for the three-probe behavior)
+  - `tests/api/test_me.py` (NEW — 3 tests for 401 envelope)
+  - `tests/api/test_cors.py` (this story switched to `/api/me` for endpoint independence from health probes)
+  - `tests/api/test_dummy_routes.py`, `test_v2_dummy_routes.py`, `test_profile_service_selection.py` — removed by `--no-demo`
+  - `tests/auth/*` (archetype-emitted, untouched)
+  - `tests/core/*` (archetype-emitted, untouched)
+  - `tests/observability/*` (archetype-emitted, untouched)
+  - `tests/services/{v1,v2}/__init__.py` (archetype-emitted empty packages)
+
+**Modified files (outside services/bff/):**
+
+- `compose/app.yml` — added BFF service block + `bff_data` named volume.
+- `docker-compose.yml` — removed inert `x-profiles:` documentation anchor + updated header comments (closes Story 1.2's punted cleanup).
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — `1-3-…` flipped `ready-for-dev` → `in-progress` → `review`; `last_updated` rolled forward.
+- `_bmad-output/implementation-artifacts/1-3-bff-scaffold-from-archetype-baseline-health-lint-test-gates.md` — this story spec, with task checkboxes flipped and Dev Agent Record filled in.
+
+**Deleted files:**
+
+- `services/bff/.gitkeep` (placeholder removed when the real service tree landed).
+
+**Untouched (verified):**
+
+- Repo-root `CLAUDE.md`, `README.md`, `.env.example`, `.gitignore`, `.dockerignore`.
+- `compose/infra.yml`, `keycloak/realm-bmad-books.json`, `keycloak/Dockerfile` — Story 1.2 deliverables, bit-for-bit identical.
+- All `_bmad/`, `_bmad-output/planning-artifacts/`, `.claude/`, `docs/`, `spa/`, `services/resource-server/`, `e2e/`, `tools/` (the cloned archetype stays gitignored under `tools/fastapi-archetype/`).
+
+**Non-tracked (local development only):**
+
+- `tools/fastapi-archetype/` — cloned at SHA `04db49c6999692cde1bfc7bfad27d1781daf0288`. Per `.gitignore`.
+- `.env` and `services/bff/.env` — materialized only transiently during `docker compose config` / `docker compose build` validation, then deleted. Per `.gitignore`.

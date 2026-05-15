@@ -1,0 +1,23 @@
+# Task runner for bff
+# Usage: just <recipe>   (requires https://github.com/casey/just)
+
+default:
+    @just --list
+
+lint:
+    uv run ruff check
+
+format:
+    uv run ruff format --check
+
+typecheck:
+    uv run ty check
+
+test:
+    uv run pytest
+
+dev:
+    uv run uvicorn bff.main:app --reload
+
+run:
+    uv run uvicorn bff.main:app

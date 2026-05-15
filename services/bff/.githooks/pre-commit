@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "[pre-commit] npx not found; skipping release notes generation."
+  exit 0
+fi
+
+echo "[pre-commit] Generating RELEASE_NOTES.md via node-autochglog..."
+npx --yes node-autochglog
+
+git add RELEASE_NOTES.md
