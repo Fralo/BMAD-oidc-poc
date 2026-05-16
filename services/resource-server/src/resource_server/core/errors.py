@@ -16,12 +16,22 @@ class ErrorCode(enum.Enum):
     # BMAD_books project-specific codes (architecture §C5). Wire values are
     # lower_snake_case per the documented contract; only codes consumed by
     # this story's surface are added now — later stories add their own as
-    # they introduce the consuming handlers (Story 3.2: SESSION_EXPIRED,
-    # FORBIDDEN_SCOPE; Story 3.3: READING_SPEED_UNSET, INVALID_INPUT).
+    # they introduce the consuming handlers (Story 3.3: READING_SPEED_UNSET,
+    # INVALID_INPUT; Story 4.x: RESOURCE_SERVER_UNAVAILABLE on the BFF).
     SERVICE_UNAVAILABLE = (
         "service_unavailable",
         "A required dependency is unavailable",
         503,
+    )
+    SESSION_EXPIRED = (
+        "session_expired",
+        "Authentication required",
+        401,
+    )
+    FORBIDDEN_SCOPE = (
+        "forbidden_scope",
+        "Required scope is missing",
+        403,
     )
 
     def __init__(self, code: str, message: str, http_status: int) -> None:

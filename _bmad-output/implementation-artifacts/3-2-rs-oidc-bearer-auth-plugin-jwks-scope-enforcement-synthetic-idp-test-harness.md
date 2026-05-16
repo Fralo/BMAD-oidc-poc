@@ -1,5 +1,5 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded from archetype, `/health` with three readiness probes, RS in compose default/dev, `ErrorCode.SERVICE_UNAVAILABLE`, required-fail-fast OIDC config); epic-1 (done — Keycloak realm-as-code, BFF cookie-session + synthetic-IdP harness pattern proven)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.2: RS — `oidc_bearer` auth plugin (JWKS) + scope enforcement + synthetic-IdP test harness
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -152,13 +152,13 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Add `pyjwt[crypto]` dependency and confirm the lockfile is clean** (AC: #1, #16)
-  - [ ] From `services/resource-server/`, run `uv add 'pyjwt[crypto]'`. Inspect `pyproject.toml` — the `[project] dependencies` list should now include a pinned `pyjwt[crypto]` line. `uv.lock` updates with the new transitive `cryptography` cohort (this is also pulled by the archetype's existing `httpx[http2]` indirectly, so the lock diff should be small).
-  - [ ] **Sanity check the existing `httpx`-bound jwt import in `auth/entra.py`** — that file already imports `import jwt` (PyJWT) and `from jwt import PyJWK`. This means PyJWT is already a transitive dep of the archetype. Running `uv add 'pyjwt[crypto]'` makes it a direct + explicit dep with the `crypto` extra (which pulls `cryptography` for RS256). This is intentional — `pyjwt` without `[crypto]` cannot verify RS256 signatures.
-  - [ ] `uv sync --frozen` → 0. If `--frozen` complains, do NOT run `uv lock` to regenerate — investigate the diff (the only acceptable changes are the new explicit pyjwt[crypto] pin + transitive cryptography pin).
+- [x] **Task 1 — Add `pyjwt[crypto]` dependency and confirm the lockfile is clean** (AC: #1, #16)
+  - [x] From `services/resource-server/`, run `uv add 'pyjwt[crypto]'`. Inspect `pyproject.toml` — the `[project] dependencies` list should now include a pinned `pyjwt[crypto]` line. `uv.lock` updates with the new transitive `cryptography` cohort (this is also pulled by the archetype's existing `httpx[http2]` indirectly, so the lock diff should be small).
+  - [x] **Sanity check the existing `httpx`-bound jwt import in `auth/entra.py`** — that file already imports `import jwt` (PyJWT) and `from jwt import PyJWK`. This means PyJWT is already a transitive dep of the archetype. Running `uv add 'pyjwt[crypto]'` makes it a direct + explicit dep with the `crypto` extra (which pulls `cryptography` for RS256). This is intentional — `pyjwt` without `[crypto]` cannot verify RS256 signatures.
+  - [x] `uv sync --frozen` → 0. If `--frozen` complains, do NOT run `uv lock` to regenerate — investigate the diff (the only acceptable changes are the new explicit pyjwt[crypto] pin + transitive cryptography pin).
 
-- [ ] **Task 2 — Extend `Principal` with `scopes: frozenset[str]`** (AC: #2, #6)
-  - [ ] Edit `services/resource-server/src/resource_server/auth/models.py`:
+- [x] **Task 2 — Extend `Principal` with `scopes: frozenset[str]`** (AC: #2, #6)
+  - [x] Edit `services/resource-server/src/resource_server/auth/models.py`:
     ```python
     @dataclass(frozen=True, kw_only=True)
     class Principal:
@@ -172,12 +172,12 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         groups: list[str] = field(default_factory=list)
         claims: dict[str, Any] = field(default_factory=dict)
     ```
-  - [ ] Run `uv run ty check` → 0 errors. `frozenset[str]` is parseable in Python 3.14.
-  - [ ] Run `uv run pytest tests/auth/ -v` → all existing tests pass (Principal's existing callers don't pass `scopes`; the default is empty frozenset).
-  - [ ] Coverage of `auth/models.py` is unchanged (it's all `@dataclass`-generated; no runtime branches).
+  - [x] Run `uv run ty check` → 0 errors. `frozenset[str]` is parseable in Python 3.14.
+  - [x] Run `uv run pytest tests/auth/ -v` → all existing tests pass (Principal's existing callers don't pass `scopes`; the default is empty frozenset).
+  - [x] Coverage of `auth/models.py` is unchanged (it's all `@dataclass`-generated; no runtime branches).
 
-- [ ] **Task 3 — Author `core/errors.py` additions: `SESSION_EXPIRED` (401) + `FORBIDDEN_SCOPE` (403)** (AC: #4)
-  - [ ] Edit `services/resource-server/src/resource_server/core/errors.py`. Add to the `ErrorCode` enum, immediately after `SERVICE_UNAVAILABLE`:
+- [x] **Task 3 — Author `core/errors.py` additions: `SESSION_EXPIRED` (401) + `FORBIDDEN_SCOPE` (403)** (AC: #4)
+  - [x] Edit `services/resource-server/src/resource_server/core/errors.py`. Add to the `ErrorCode` enum, immediately after `SERVICE_UNAVAILABLE`:
     ```python
     SESSION_EXPIRED = (
         "session_expired",
@@ -190,11 +190,11 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         403,
     )
     ```
-  - [ ] Update the doc comment above the project-specific block to extend the consumer-mapping note: Story 3.2 lands SESSION_EXPIRED + FORBIDDEN_SCOPE; Story 3.3 will land INVALID_INPUT + READING_SPEED_UNSET.
-  - [ ] Run `uv run pytest tests/core/` → existing errors-module tests still pass.
+  - [x] Update the doc comment above the project-specific block to extend the consumer-mapping note: Story 3.2 lands SESSION_EXPIRED + FORBIDDEN_SCOPE; Story 3.3 will land INVALID_INPUT + READING_SPEED_UNSET.
+  - [x] Run `uv run pytest tests/core/` → existing errors-module tests still pass.
 
-- [ ] **Task 4 — Author `src/resource_server/auth/oidc_bearer.py`** (AC: #1, #3, #4, #5, #7, #8)
-  - [ ] Create the file. Imports:
+- [x] **Task 4 — Author `src/resource_server/auth/oidc_bearer.py`** (AC: #1, #3, #4, #5, #7, #8)
+  - [x] Create the file. Imports:
     ```python
     import logging
     from collections.abc import Awaitable, Callable
@@ -215,7 +215,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
 
     logger = logging.getLogger(__name__)
     ```
-  - [ ] Module-level JWKS-client cache + accessor (mirrors BFF lines 193–201 verbatim modulo the package path):
+  - [x] Module-level JWKS-client cache + accessor (mirrors BFF lines 193–201 verbatim modulo the package path):
     ```python
     _jwks_clients: dict[str, jwt.PyJWKClient] = {}
 
@@ -226,7 +226,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
             )
         return _jwks_clients[jwks_url]
     ```
-  - [ ] Helper to parse the space-delimited scope claim → `frozenset[str]`:
+  - [x] Helper to parse the space-delimited scope claim → `frozenset[str]`:
     ```python
     def _parse_scopes(claim: object) -> frozenset[str]:
         if isinstance(claim, str):
@@ -234,7 +234,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         return frozenset()
     ```
     Architecture note: Keycloak emits scope as a space-delimited STRING in the access token's `scope` claim. Some auth servers emit a list; we accept only the string form to match Keycloak's actual emission (verified via realm-bmad-books.json scope-mapper config).
-  - [ ] JWT validation helper:
+  - [x] JWT validation helper:
     ```python
     def _validate_access_token(token: str) -> dict[str, Any]:
         try:
@@ -256,7 +256,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         return decoded
     ```
     Note: `jwt.decode(audience=..., issuer=...)` enforces aud/iss as part of decode and raises `InvalidAudienceError` / `InvalidIssuerError` — both subclass `InvalidTokenError`, so the single `except` covers all the failure modes.
-  - [ ] Build `Principal` from claims:
+  - [x] Build `Principal` from claims:
     ```python
     def _principal_from_claims(claims: dict[str, Any]) -> Principal:
         scope_raw = claims.get("scope")
@@ -270,7 +270,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         )
     ```
     `sub` is required by `_validate_access_token` (per `options.require`), so `claims["sub"]` is safe.
-  - [ ] FastAPI dependency:
+  - [x] FastAPI dependency:
     ```python
     bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -287,7 +287,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         claims = _validate_access_token(token)
         return _principal_from_claims(claims)
     ```
-  - [ ] Scope-enforcement factory:
+  - [x] Scope-enforcement factory:
     ```python
     def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
         async def _dependency(
@@ -303,7 +303,7 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
             return principal
         return _dependency
     ```
-  - [ ] AuthFunctions factory (archetype seam — required for AC #5/#7):
+  - [x] AuthFunctions factory (archetype seam — required for AC #5/#7):
     ```python
     def make_oidc_bearer_auth(settings_arg: AppSettings) -> AuthFunctions:
         # settings_arg is read at module level via `settings` for the deps above;
@@ -336,19 +336,19 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
             role_mapper=identity_role_mapper,
         )
     ```
-  - [ ] Update `auth/__init__.py` if needed (it is currently 4 lines — likely just a docstring or empty package marker; do NOT export oidc_bearer symbols at package level — callers import from the submodule).
+  - [x] Update `auth/__init__.py` if needed (it is currently 4 lines — likely just a docstring or empty package marker; do NOT export oidc_bearer symbols at package level — callers import from the submodule).
 
-- [ ] **Task 5 — Wire `oidc_bearer` into `core/config.py` Literal + `auth/factory.py` dispatch** (AC: #5, #14)
-  - [ ] Edit `core/config.py:102`: change `auth_type: Literal["none", "entra"]` → `auth_type: Literal["none", "entra", "oidc_bearer"]`. Default stays `"none"`.
-  - [ ] Edit `auth/factory.py`. Add a `_build_oidc_bearer` builder mirroring `_build_entra` (with lazy import). Add `"oidc_bearer": _build_oidc_bearer` to the `builders` dict.
-  - [ ] Run `uv run ty check` → 0 errors. The dispatch table's keys must match the Literal's members exactly (ty will catch a mismatch).
-  - [ ] Run `uv run pytest tests/auth/test_factory_and_none_provider.py -v` → existing tests pass.
+- [x] **Task 5 — Wire `oidc_bearer` into `core/config.py` Literal + `auth/factory.py` dispatch** (AC: #5, #14)
+  - [x] Edit `core/config.py:102`: change `auth_type: Literal["none", "entra"]` → `auth_type: Literal["none", "entra", "oidc_bearer"]`. Default stays `"none"`.
+  - [x] Edit `auth/factory.py`. Add a `_build_oidc_bearer` builder mirroring `_build_entra` (with lazy import). Add `"oidc_bearer": _build_oidc_bearer` to the `builders` dict.
+  - [x] Run `uv run ty check` → 0 errors. The dispatch table's keys must match the Literal's members exactly (ty will catch a mismatch).
+  - [x] Run `uv run pytest tests/auth/test_factory_and_none_provider.py -v` → existing tests pass.
 
-- [ ] **Task 6 — Author `tests/auth/synthetic_idp.py`** (AC: #9)
-  - [ ] Place at `services/resource-server/tests/auth/synthetic_idp.py`.
-  - [ ] Generate an RSA-2048 keypair at module-level (use `cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key(public_exponent=65537, key_size=2048)`).
-  - [ ] Provide `_b64u(data: bytes) -> str`, `_int_to_b64u(n: int) -> str`, `_public_jwk(key, kid)` helpers (copy from `services/bff/tests/auth/synthetic_idp.py` lines 44–74 verbatim — these are MIT-style boilerplate).
-  - [ ] Dataclass:
+- [x] **Task 6 — Author `tests/auth/synthetic_idp.py`** (AC: #9)
+  - [x] Place at `services/resource-server/tests/auth/synthetic_idp.py`.
+  - [x] Generate an RSA-2048 keypair at module-level (use `cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key(public_exponent=65537, key_size=2048)`).
+  - [x] Provide `_b64u(data: bytes) -> str`, `_int_to_b64u(n: int) -> str`, `_public_jwk(key, kid)` helpers (copy from `services/bff/tests/auth/synthetic_idp.py` lines 44–74 verbatim — these are MIT-style boilerplate).
+  - [x] Dataclass:
     ```python
     @dataclass
     class SyntheticRsIdp:
@@ -376,36 +376,36 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
         ) -> str: ...
     ```
     Defaults `aud` / `iss` to `self.audience` / `self.issuer`. Implementation mirrors `SyntheticIdp.make_id_token` from the BFF.
-  - [ ] `build_synthetic_rs_idp(monkeypatch, *, issuer=..., audience=..., jwks_url=...) -> SyntheticRsIdp` builder. The monkeypatch performs three actions:
+  - [x] `build_synthetic_rs_idp(monkeypatch, *, issuer=..., audience=..., jwks_url=...) -> SyntheticRsIdp` builder. The monkeypatch performs three actions:
     1. Clear the RS's `oidc_bearer._jwks_clients` cache (`monkeypatch.setattr(oidc_bearer, "_jwks_clients", {})`).
     2. Patch `jwt.PyJWKClient.fetch_data` to return `{"keys": [self.public_jwk]}` (or include the alt-kid JWK if registered).
     3. Patch `settings.oidc_issuer_url` / `settings.oidc_audience` / `settings.oidc_jwks_url` for the test scope (use `monkeypatch.setattr` — pydantic-settings allows attribute mutation in tests; if not, set the env vars and re-instantiate `AppSettings` — implementer's choice).
-  - [ ] `register_rotated_kid(new_kid)` helper that adds a SECOND public JWK to the `fetch_data` patch (so calling `make_access_token(kid=new_kid)` after `register_rotated_kid` produces a token validatable against the second-fetched JWKS). The test simulates rotation by clearing the cache between calls and verifying `fetch_data` is invoked twice.
-  - [ ] Track `fetch_data` invocations: include a `fetch_call_count: int` attribute that the patched `fetch_data` increments. The kid-cache-hit test (AC #10 case 9) asserts this is 1; the rotation test (AC #10 case 8) asserts this is 2.
-  - [ ] Export `build_synthetic_rs_idp`, `SyntheticRsIdp`, default constants (`DEFAULT_ISSUER`, `DEFAULT_AUDIENCE`, `DEFAULT_JWKS_URL`, `DEFAULT_KID`, `DEFAULT_ROTATED_KID`) via `__all__`.
+  - [x] `register_rotated_kid(new_kid)` helper that adds a SECOND public JWK to the `fetch_data` patch (so calling `make_access_token(kid=new_kid)` after `register_rotated_kid` produces a token validatable against the second-fetched JWKS). The test simulates rotation by clearing the cache between calls and verifying `fetch_data` is invoked twice.
+  - [x] Track `fetch_data` invocations: include a `fetch_call_count: int` attribute that the patched `fetch_data` increments. The kid-cache-hit test (AC #10 case 9) asserts this is 1; the rotation test (AC #10 case 8) asserts this is 2.
+  - [x] Export `build_synthetic_rs_idp`, `SyntheticRsIdp`, default constants (`DEFAULT_ISSUER`, `DEFAULT_AUDIENCE`, `DEFAULT_JWKS_URL`, `DEFAULT_KID`, `DEFAULT_ROTATED_KID`) via `__all__`.
 
-- [ ] **Task 7 — Author `tests/auth/test_oidc_bearer.py`** (AC: #10, #11, #12)
-  - [ ] Use `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` per the existing `tests/auth/conftest.py` pattern.
-  - [ ] **Mount the fixture endpoint** via a test-only sub-app OR via a route added at fixture setup. Recommended: in a fixture, `from resource_server.main import app` then `app.add_api_route("/_test/scoped-read", _handler, dependencies=[Depends(require_scope("reading-speed:read"))])`. Remove the route in fixture teardown by popping from `app.router.routes` (or use a fresh FastAPI instance — implementer's call).
-  - [ ] Implement all 23 cases from AC #10.
-  - [ ] Use `caplog.set_level(logging.WARNING, logger="resource_server.auth.oidc_bearer")` for the log-assertion tests (#21, #22). Assert on `record.message` substrings; assert no token contents leak.
-  - [ ] For the kid-rotation test (#7, #8): assert `synthetic_idp.fetch_call_count == 2` post-test.
-  - [ ] For the kid-cache-hit test (#9): make the request three times; assert `synthetic_idp.fetch_call_count == 1`.
-  - [ ] For the `alg: none` test (#14): construct manually — `jwt.encode({...}, "", algorithm="none")` is rejected by PyJWT by default; you may need to construct the token bytes by hand via base64-encoded `{"alg":"none","typ":"JWT"}` + claim + empty signature.
-  - [ ] For the `alg: HS256` test (#15): `jwt.encode(claims, "shared-secret", algorithm="HS256")` is straightforward; the decode call's `algorithms=["RS256"]` rejects.
+- [x] **Task 7 — Author `tests/auth/test_oidc_bearer.py`** (AC: #10, #11, #12)
+  - [x] Use `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` per the existing `tests/auth/conftest.py` pattern.
+  - [x] **Mount the fixture endpoint** via a test-only sub-app OR via a route added at fixture setup. Recommended: in a fixture, `from resource_server.main import app` then `app.add_api_route("/_test/scoped-read", _handler, dependencies=[Depends(require_scope("reading-speed:read"))])`. Remove the route in fixture teardown by popping from `app.router.routes` (or use a fresh FastAPI instance — implementer's call).
+  - [x] Implement all 23 cases from AC #10.
+  - [x] Use `caplog.set_level(logging.WARNING, logger="resource_server.auth.oidc_bearer")` for the log-assertion tests (#21, #22). Assert on `record.message` substrings; assert no token contents leak.
+  - [x] For the kid-rotation test (#7, #8): assert `synthetic_idp.fetch_call_count == 2` post-test.
+  - [x] For the kid-cache-hit test (#9): make the request three times; assert `synthetic_idp.fetch_call_count == 1`.
+  - [x] For the `alg: none` test (#14): construct manually — `jwt.encode({...}, "", algorithm="none")` is rejected by PyJWT by default; you may need to construct the token bytes by hand via base64-encoded `{"alg":"none","typ":"JWT"}` + claim + empty signature.
+  - [x] For the `alg: HS256` test (#15): `jwt.encode(claims, "shared-secret", algorithm="HS256")` is straightforward; the decode call's `algorithms=["RS256"]` rejects.
 
-- [ ] **Task 8 — Update `services/resource-server/.env.example` AUTH_TYPE comment block** (AC: #15)
-  - [ ] Add the comment block per AC #15. Keep `AUTH_TYPE=oidc_bearer` itself commented out (operators copy + uncomment in their `.env`).
-  - [ ] Do NOT touch compose env stanzas in `compose/app.yml` — that wiring is downstream (Story 3.3 or 3.6).
+- [x] **Task 8 — Update `services/resource-server/.env.example` AUTH_TYPE comment block** (AC: #15)
+  - [x] Add the comment block per AC #15. Keep `AUTH_TYPE=oidc_bearer` itself commented out (operators copy + uncomment in their `.env`).
+  - [x] Do NOT touch compose env stanzas in `compose/app.yml` — that wiring is downstream (Story 3.3 or 3.6).
 
-- [ ] **Task 9 — Run the full gate sequence** (AC: #16, #17)
-  - [ ] From `services/resource-server/`:
-    - [ ] `uv sync --frozen` → 0.
-    - [ ] `uv run ruff check` → 0 findings.
-    - [ ] `uv run ruff format --check` → 0 reformats needed.
-    - [ ] `uv run ty check` → 0 errors.
-    - [ ] `uv run pytest --cov` → all pass; coverage ≥ 90% (project threshold). Capture the post-change % in the dev log. Specifically capture `pytest --cov=resource_server.auth.oidc_bearer --cov-report=term-missing` to verify ≥90% on the new file.
-  - [ ] **`git diff --stat`** to confirm the change set is scoped per AC #17. Expected files touched:
+- [x] **Task 9 — Run the full gate sequence** (AC: #16, #17)
+  - [x] From `services/resource-server/`:
+    - [x] `uv sync --frozen` → 0.
+    - [x] `uv run ruff check` → 0 findings.
+    - [x] `uv run ruff format --check` → 0 reformats needed.
+    - [x] `uv run ty check` → 0 errors.
+    - [x] `uv run pytest --cov` → all pass; coverage ≥ 90% (project threshold). Capture the post-change % in the dev log. Specifically capture `pytest --cov=resource_server.auth.oidc_bearer --cov-report=term-missing` to verify ≥90% on the new file.
+  - [x] **`git diff --stat`** to confirm the change set is scoped per AC #17. Expected files touched:
     - `services/resource-server/pyproject.toml` (+ `pyjwt[crypto]` dep)
     - `services/resource-server/uv.lock` (+ pin updates only)
     - `services/resource-server/src/resource_server/auth/models.py` (Principal.scopes field)
@@ -419,10 +419,10 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
     - `_bmad-output/implementation-artifacts/sprint-status.yaml` (status flip)
     - `_bmad-output/implementation-artifacts/3-2-rs-...md` (this story file — Tasks ticked, Dev Agent Record populated)
 
-- [ ] **Task 10 — Bookkeeping** (AC: #17)
-  - [ ] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness` from `ready-for-dev` → `in-progress` at story start, then to `review` once dev-story completes. Update `last_updated`.
-  - [ ] If new defers surface during code review, append them under a new `## Deferred from: code review of 3-2-...` section in `deferred-work.md`. Continue D-number sequence from D58 (current ceiling from Story 3.1 review).
-  - [ ] Verify the untouched-files list per AC #17 — `CLAUDE.md`, root files, `compose/*.yml`, `keycloak/*`, `services/bff/**`, `spa/**`, `e2e/**`, `services/resource-server/{Dockerfile,entrypoint.sh,.gitattributes,alembic/**}` are unchanged.
+- [x] **Task 10 — Bookkeeping** (AC: #17)
+  - [x] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness` from `ready-for-dev` → `in-progress` at story start, then to `review` once dev-story completes. Update `last_updated`.
+  - [x] If new defers surface during code review, append them under a new `## Deferred from: code review of 3-2-...` section in `deferred-work.md`. Continue D-number sequence from D58 (current ceiling from Story 3.1 review).
+  - [x] Verify the untouched-files list per AC #17 — `CLAUDE.md`, root files, `compose/*.yml`, `keycloak/*`, `services/bff/**`, `spa/**`, `e2e/**`, `services/resource-server/{Dockerfile,entrypoint.sh,.gitattributes,alembic/**}` are unchanged.
 
 ## Dev Notes
 
@@ -643,16 +643,66 @@ tests/auth/
 
 ### Agent Model Used
 
-(to be filled by dev-story)
+claude-opus-4-7 (Claude Code, bmad-dev-story workflow)
 
 ### Debug Log References
 
-(to be filled by dev-story)
+**Task 1 — Add `pyjwt[crypto]` dep:** PyJWT 2.11 was already pulled transitively (via `auth/entra.py`). Ran `uv add 'pyjwt[crypto]>=2.10'` → `pyproject.toml` gained an explicit pin under `[project] dependencies`; lockfile regenerated by `uv add`. `uv sync --frozen` exits 0 (84 packages).
+
+**Task 2 — `Principal.scopes`:** Added `scopes: frozenset[str] = field(default_factory=frozenset)` to `auth/models.py`. Existing tests pass without modification — default factory means callers that don't pass `scopes` get an empty `frozenset()`.
+
+**Task 3 — `ErrorCode.SESSION_EXPIRED` + `FORBIDDEN_SCOPE`:** Added after `SERVICE_UNAVAILABLE` in `core/errors.py`. Wire values lower_snake per §C5; HTTP 401 / 403.
+
+**Task 4 — `auth/oidc_bearer.py`:** Authored the module (~165 LOC after `ruff format`). Module-level `_jwks_clients` cache; `_get_jwks_client` lazy-builds `PyJWKClient(jwks_url, cache_keys=True, max_cached_keys=4)` (BFF parity). `_parse_scopes` returns `frozenset[str]` for string claims and `frozenset()` otherwise. `_validate_access_token` uses `algorithms=["RS256"]`, `options={"require": ["iss", "aud", "exp", "sub"]}`, `audience=settings.oidc_audience`, `issuer=settings.oidc_issuer_url`. Catches `jwt.InvalidTokenError | jwt.PyJWKClientError` → `AppException(SESSION_EXPIRED)`; WARNING log carries only `type(exc).__name__` (no token/claim leak). `get_authenticated_principal` rejects missing/non-Bearer/empty/whitespace tokens before JWT validation. `require_scope` raises `FORBIDDEN_SCOPE` on missing scope (WARNING log with sub + required scope). `make_oidc_bearer_auth` returns the archetype `AuthFunctions`.
+
+**Task 5 — Config Literal + factory dispatch:** Expanded `auth_type` Literal to `Literal["none", "entra", "oidc_bearer"]`. Added lazy-import `_build_oidc_bearer` to `auth/factory.py`. `builders` dict now maps three keys.
+
+**Task 6 — `tests/auth/synthetic_idp.py`:** ~219 LOC. RSA-2048 keypair helpers, `SyntheticRsIdp` dataclass (configurable issuer/audience/jwks_url/kid; `fetch_call_count` for cache assertions; `register_rotated_kid` for rotation tests). `build_synthetic_rs_idp(monkeypatch, ...)` clears `oidc_bearer._jwks_clients`, patches `jwt.PyJWKClient.fetch_data` (NOT httpx — PyJWKClient uses synchronous urllib that respx cannot intercept), and patches `settings.oidc_*`.
+
+**Task 7 — `tests/auth/test_oidc_bearer.py`:** 33 tests. Module-scoped autouse fixture mounts `/_test/oidc/scoped-read` and `/_test/oidc/scoped-write` on the prod app and pops them at teardown. Cases cover: happy path, wrong scope → 403, expired/wrong-aud/wrong-iss/malformed/wrong-key/alg-none/alg-HS256/missing-exp/missing-sub → 401, missing/empty/Basic-scheme bearer → 401, JWKS cache hit (`fetch_call_count == 1` after 3 valid requests), kid-miss-after-rotation → 200 (`fetch_call_count == 2`), kid-miss-no-match → 401, Principal field shape, cross-user isolation, WARNING-log sanitization, `make_oidc_bearer_auth` surface, factory dispatch, `_parse_scopes` unit tests.
+
+**Task 8 — `.env.example`:** AUTH_TYPE comment block added documenting `oidc_bearer` as the production-intended value (commented-out; archetype default `"none"` preserved).
+
+**Task 9 — Gates:**
+- `uv sync --frozen` → 0 (84 packages)
+- `uv run ruff check` → All checks passed!
+- `uv run ruff format --check` → 73 files already formatted
+- `uv run ty check` → All checks passed!
+- `uv run pytest --cov` → **204 passed**, coverage **97.83%** (171 baseline → 204 = +33 new tests)
+- `uv run pytest --cov=resource_server.auth.oidc_bearer tests/auth/test_oidc_bearer.py` → coverage of `oidc_bearer.py` = **100.00%** (65/65 statements; AC #11 ≥90% gate met).
 
 ### Completion Notes List
 
-(to be filled by dev-story)
+- All 17 ACs satisfied. RS now has `oidc_bearer` auth plugin exposing `get_authenticated_principal` + `require_scope(scope)` as FastAPI dependencies, plus archetype-seam `make_oidc_bearer_auth` wired into the dict-dispatched factory alongside `none` and `entra`.
+- Synthetic-IdP test harness mints in-process RS256 tokens against an ephemeral RSA-2048 keypair and patches `jwt.PyJWKClient.fetch_data` so signature verification runs entirely offline. No real Keycloak. Mirrors Story 1.5; lives in the RS test tree (cross-service Python imports forbidden).
+- `Principal` gained `scopes: frozenset[str]` alongside the existing archetype `scope: str | None` field.
+- `ErrorCode.SESSION_EXPIRED` (401) and `ErrorCode.FORBIDDEN_SCOPE` (403) added with lower_snake wire values per §C5.
+- Coverage of `oidc_bearer.py` is **100%** (well above ≥90% gate). Whole-suite coverage 98.42% → 97.83% — the slight drop is `oidc_bearer.py` joining the measured surface; `auth/dependencies.py` is unchanged at 96%.
+- **No production-handler changes.** `/_test/oidc/*` routes exist only within the test module's autouse fixture. Production surface still: `/health` only.
+- **No archetype regressions.** All 171 Story-3.1 tests continue green.
+- **No defers introduced.** D54–D58 from Story 3.1's review remain open; none re-surfaced here.
+- **D59 candidate (for code-review triage):** JWKS cache TTL is per-process-lifetime + `max_cached_keys=4` LRU, not the architectural §C6 24h. The kid-miss re-fetch path satisfies the underlying invariant ("validation survives key rotation without operator intervention"); documented in `oidc_bearer.py:42-48` + AC #8. Reviewers may want a TTL-aware wrapper.
+- **Architecture line 1191 says scope enforcement is "via archetype's RoleMappingProvider".** Implemented as a direct dependency-factory (`require_scope`) — RoleMappingProvider's single-string mapping is built for role-name translation, not space-delimited scope parsing. Reviewers may want a parallel `ScopeMappingProvider` later.
+- `auth/entra.py` intentionally NOT deleted (AC #6 — entra tests still pass); coordinated cleanup deferred until post-Story-4.1.
 
 ### File List
 
-(to be filled by dev-story)
+**New files:**
+- `services/resource-server/src/resource_server/auth/oidc_bearer.py` — ~165 LOC. `_jwks_clients` cache, `_get_jwks_client`, `_parse_scopes`, `_validate_access_token`, `_principal_from_claims`, `bearer_scheme`, `get_authenticated_principal`, `require_scope`, `make_oidc_bearer_auth`.
+- `services/resource-server/tests/auth/synthetic_idp.py` — ~219 LOC. Keypair helpers, `SyntheticRsIdp`, `build_synthetic_rs_idp`, `random_subject`, default constants.
+- `services/resource-server/tests/auth/test_oidc_bearer.py` — 33 tests covering AC #10 + helper units + archetype-seam + factory dispatch.
+
+**Modified files:**
+- `services/resource-server/src/resource_server/auth/models.py` — `Principal.scopes: frozenset[str]` field added.
+- `services/resource-server/src/resource_server/auth/factory.py` — `_build_oidc_bearer` builder + `builders["oidc_bearer"]` mapping.
+- `services/resource-server/src/resource_server/core/config.py` — `auth_type` Literal expanded to include `"oidc_bearer"`.
+- `services/resource-server/src/resource_server/core/errors.py` — `ErrorCode.SESSION_EXPIRED` (401) + `ErrorCode.FORBIDDEN_SCOPE` (403); leading comment updated.
+- `services/resource-server/pyproject.toml` — `pyjwt[crypto]>=2.10` added.
+- `services/resource-server/uv.lock` — regenerated by `uv add`.
+- `services/resource-server/.env.example` — AUTH_TYPE comment block.
+
+**BMAD bookkeeping:**
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — story status: `ready-for-dev` → `in-progress` → `review` (final flip at end of workflow).
+- `_bmad-output/implementation-artifacts/3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness.md` — frontmatter + status header → `review`; all 59 task/subtask checkboxes ticked; Dev Agent Record populated.
+
+**Untouched (verified via `git diff --name-only`):** `CLAUDE.md`, root files, `docker-compose.yml`, `compose/*.yml`, `keycloak/**`, `services/bff/**`, `spa/**`, `e2e/**`, `services/resource-server/{Dockerfile,entrypoint.sh,.gitattributes,alembic/**,tests/conftest.py,tests/auth/conftest.py,tests/auth/test_auth_*.py,tests/auth/test_entra_*.py,tests/auth/test_external_*.py,tests/auth/test_factory_*.py,tests/auth/test_require_*.py,tests/auth/test_role_*.py}` — bit-for-bit identical.
