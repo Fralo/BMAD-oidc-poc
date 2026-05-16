@@ -142,9 +142,12 @@ async def test_auth_login_redirects_to_idp_with_pkce_params(
     assert params["state"]
     assert params["nonce"]
     assert "openid" in params["scope"]
-    assert "offline_access" in params["scope"]
     assert "reading-speed:read" in params["scope"]
     assert "reading-speed:write" in params["scope"]
+    # offline_access intentionally NOT requested — Keycloak rejects CODE_TO_TOKEN
+    # for users without the offline_access realm role; refresh tokens still flow
+    # under the standard authorization_code grant. See _AUTHORIZE_SCOPES doc.
+    assert "offline_access" not in params["scope"]
     # Row persisted with the right return_to.
     result = await session.execute(
         select(entities.AuthState).where(entities.AuthState.state == params["state"])

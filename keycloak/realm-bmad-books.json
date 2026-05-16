@@ -16,6 +16,31 @@
 
   "clientScopes": [
     {
+      "name": "profile",
+      "description": "OpenID Connect standard 'profile' scope. Adds preferred_username to id_token / access_token / userinfo. Imported realms do not get the Keycloak built-in profile scope automatically, so it is declared here explicitly.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "preferred_username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
       "name": "reading-speed:read",
       "description": "Read the user's reading-speed value and compute estimates",
       "protocol": "openid-connect",
@@ -73,6 +98,9 @@
             "userinfo.token.claim": "false"
           }
         }
+      ],
+      "defaultClientScopes": [
+        "profile"
       ],
       "optionalClientScopes": [
         "reading-speed:read",

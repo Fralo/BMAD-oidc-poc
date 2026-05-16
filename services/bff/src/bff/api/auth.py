@@ -56,11 +56,16 @@ router = APIRouter(tags=["Auth"])
 BFF_AUTH_STATE_COOKIE_NAME: Final[str] = "bff_auth_state"
 
 # Scope set per architecture A1 + epics line 364. `openid` makes it an OIDC
-# flow; `offline_access` ensures a refresh token; the two reading-speed
-# scopes are what the RS will enforce in Epic 3.
+# flow; the two reading-speed scopes are what the RS will enforce in Epic 3.
+# `offline_access` was previously requested here on the mistaken belief that
+# it was required for refresh tokens — refresh tokens come with the standard
+# `authorization_code` grant. Requesting `offline_access` requires the user
+# to hold the `offline_access` realm role (the seeded test users do not) and
+# Keycloak rejects the token exchange with CODE_TO_TOKEN_ERROR
+# "Offline tokens not allowed for the user or client". See D7 in
+# deferred-work.md for the related "no offline session max lifespan" concern.
 _AUTHORIZE_SCOPES: Final[tuple[str, ...]] = (
     "openid",
-    "offline_access",
     "reading-speed:read",
     "reading-speed:write",
 )
