@@ -37,6 +37,7 @@ from .synthetic_idp import (
 
 _TEST_ROUTE_READ = "/_test/oidc/scoped-read"
 _TEST_ROUTE_WRITE = "/_test/oidc/scoped-write"
+_TEST_ROUTE_TYPE = "/_test/oidc/scopes-type"
 
 
 async def _handler_read(
@@ -55,6 +56,16 @@ async def _handler_write(
     return {"sub": principal.subject}
 
 
+async def _handler_type(
+    principal: Annotated[Principal, Depends(require_scope("reading-speed:read"))],
+) -> dict[str, Any]:
+    # AC #10 case #18: pin the type at the request layer (the unit-level
+    # _parse_scopes tests already cover frozenset; this also pins the dep-chain
+    # construction.) Returns the runtime type name so the test asserts on
+    # 'frozenset' verbatim — not just on shape.
+    return {"scopes_type": type(principal.scopes).__name__}
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _mount_test_routes() -> Any:
     """Mount /_test/oidc/* endpoints on the prod app for this module only.
@@ -62,15 +73,23 @@ def _mount_test_routes() -> Any:
     Removes them in teardown so other test modules don't see them. The routes
     must NOT be exposed in production — they exist solely to exercise
     `require_scope` from the request layer.
+
+    Teardown runs inside `try/finally` so a fixture-side exception cannot leak
+    the test routes onto the `app` singleton for any later test module in the
+    same pytest session.
     """
     app.add_api_route(_TEST_ROUTE_READ, _handler_read, methods=["GET"])
     app.add_api_route(_TEST_ROUTE_WRITE, _handler_write, methods=["GET"])
-    yield
-    app.router.routes = [
-        r
-        for r in app.router.routes
-        if getattr(r, "path", None) not in (_TEST_ROUTE_READ, _TEST_ROUTE_WRITE)
-    ]
+    app.add_api_route(_TEST_ROUTE_TYPE, _handler_type, methods=["GET"])
+    try:
+        yield
+    finally:
+        app.router.routes = [
+            r
+            for r in app.router.routes
+            if getattr(r, "path", None)
+            not in (_TEST_ROUTE_READ, _TEST_ROUTE_WRITE, _TEST_ROUTE_TYPE)
+        ]
 
 
 @pytest.fixture(name="synthetic_rs_idp")
@@ -357,6 +376,14 @@ async def test_jwks_kid_miss_unknown_after_refetch_returns_401(
     JWKS (key truly does not exist), validation fails 401."""
     from cryptography.hazmat.primitives.asymmetric import rsa
 
+    # Prime the JWKS cache so the unknown-kid path goes through a real
+    # re-fetch (the very first call hits the JWKS endpoint either way; we
+    # need fetch_call_count >= 2 to prove the re-fetch happened).
+    primer_token = synthetic_rs_idp.make_access_token()
+    primer = await oidc_client.get(_TEST_ROUTE_READ, headers=_auth_header(primer_token))
+    assert primer.status_code == 200
+    assert synthetic_rs_idp.fetch_call_count == 1
+
     rogue_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     token = synthetic_rs_idp.make_access_token(
         signing_key=rogue_key, kid="never-issued-kid"
@@ -365,6 +392,10 @@ async def test_jwks_kid_miss_unknown_after_refetch_returns_401(
     response = await oidc_client.get(_TEST_ROUTE_READ, headers=_auth_header(token))
     assert response.status_code == 401
     assert response.json()["errorCode"] == "session_expired"
+    # PyJWKClient re-fetches exactly once when the kid is missing from the
+    # cache; the second fetch still doesn't contain the unknown kid, so the
+    # request is rejected. The assertion pins the re-fetch invariant.
+    assert synthetic_rs_idp.fetch_call_count >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -569,3 +600,67 @@ def test_factory_dispatch_includes_oidc_bearer(
     assert callable(auth_fns.authenticate_bearer_token)
     assert callable(auth_fns.get_client_credentials_access_token)
     assert callable(auth_fns.get_on_behalf_of_access_token)
+
+
+# ---------------------------------------------------------------------------
+# CR1–CR7 — patches applied during 2026-05-16 code review
+# ---------------------------------------------------------------------------
+
+
+def test_require_scope_rejects_empty_scope_at_factory_time() -> None:
+    """CR2 — `require_scope("")` MUST fail fast at factory-call time so a
+    silently-403-everywhere bug cannot reach production. The dependency
+    closure must NOT even be built."""
+    with pytest.raises(ValueError, match="non-empty"):
+        require_scope("")
+
+
+def test_require_scope_rejects_whitespace_padded_scope_at_factory_time() -> None:
+    """CR2 — `require_scope(" reading-speed:read")` (leading space) would
+    never match any parsed scope (which `_parse_scopes` whitespace-cleans),
+    silently 403ing every caller. Fail fast at factory-call time instead."""
+    with pytest.raises(ValueError, match="whitespace"):
+        require_scope(" reading-speed:read")
+    with pytest.raises(ValueError, match="whitespace"):
+        require_scope("reading-speed:read ")
+
+
+async def test_principal_scopes_is_frozenset_at_request_layer(
+    synthetic_rs_idp: SyntheticRsIdp, oidc_client: AsyncClient
+) -> None:
+    """CR6 / AC #10 case #18 — pin the runtime type via a request-layer
+    test, not just the _parse_scopes unit tests. Ensures the dep chain
+    constructs Principal with a frozenset."""
+    token = synthetic_rs_idp.make_access_token(scope="openid reading-speed:read")
+    response = await oidc_client.get(_TEST_ROUTE_TYPE, headers=_auth_header(token))
+    assert response.status_code == 200
+    assert response.json()["scopes_type"] == "frozenset"
+
+
+def test_parse_scopes_logs_warning_on_non_string_claim(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CR7 — Auth0/Okta-shape `scope: [...]` claims silently produce an empty
+    frozenset, which 403s every request without any operator signal. The
+    warning makes the misconfiguration observable."""
+    caplog.set_level(logging.WARNING, logger="resource_server.auth.oidc_bearer")
+    result = oidc_bearer._parse_scopes(["openid", "reading-speed:read"])
+    assert result == frozenset()
+    assert any(
+        "non-string" in r.getMessage() and r.name == "resource_server.auth.oidc_bearer"
+        for r in caplog.records
+    )
+
+
+def test_parse_scopes_does_not_log_for_none_claim(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CR7 — `claim is None` is the legitimate "scope claim absent" case
+    (e.g., during a `none` auth_type test) and should NOT log a warning."""
+    caplog.set_level(logging.WARNING, logger="resource_server.auth.oidc_bearer")
+    result = oidc_bearer._parse_scopes(None)
+    assert result == frozenset()
+    assert not any(
+        "non-string" in r.getMessage() and r.name == "resource_server.auth.oidc_bearer"
+        for r in caplog.records
+    )

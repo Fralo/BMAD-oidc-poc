@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded from archetype, `/health` with three readiness probes, RS in compose default/dev, `ErrorCode.SERVICE_UNAVAILABLE`, required-fail-fast OIDC config); epic-1 (done — Keycloak realm-as-code, BFF cookie-session + synthetic-IdP harness pattern proven)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.2: RS — `oidc_bearer` auth plugin (JWKS) + scope enforcement + synthetic-IdP test harness
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -423,6 +423,82 @@ so that subsequent RS stories (3.3 `/v1/reading-speed`, 3.4 `/v1/test/reset`, 4.
   - [x] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness` from `ready-for-dev` → `in-progress` at story start, then to `review` once dev-story completes. Update `last_updated`.
   - [x] If new defers surface during code review, append them under a new `## Deferred from: code review of 3-2-...` section in `deferred-work.md`. Continue D-number sequence from D58 (current ceiling from Story 3.1 review).
   - [x] Verify the untouched-files list per AC #17 — `CLAUDE.md`, root files, `compose/*.yml`, `keycloak/*`, `services/bff/**`, `spa/**`, `e2e/**`, `services/resource-server/{Dockerfile,entrypoint.sh,.gitattributes,alembic/**}` are unchanged.
+
+### Review Findings
+
+Code review run on 2026-05-16 against `baseline_commit: 2a35822` (the 2 dev-story commits on `worktree-story-3.2`: `f5b0bc0` story creation + `5966b2a` impl). Three adversarial review layers ran in parallel via the Agent tool: Blind Hunter (diff-only), Edge Case Hunter (diff + project read), Acceptance Auditor (diff + spec + project read). Findings normalized, deduped (1+ → 1 in 5 cases), and triaged.
+
+**Summary: 0 decision-needed, 7 patches applied, 7 deferred (D59–D65), 15 dismissed as noise.**
+
+#### Patches — applied 2026-05-16
+
+- [x] [Review][Patch] **CR1 — `_mount_test_routes` not `try/finally`-protected** [`services/resource-server/tests/auth/test_oidc_bearer.py:58-73`] — Edge Case Hunter flagged that an exception in a test after `yield` resumes but before teardown completes would leak the test routes onto the production `app` for any later test module in the same session. Wrapped the teardown route-pop in `try/finally` so cleanup runs even on fixture-side exceptions. **APPLIED.**
+
+- [x] [Review][Patch] **CR2 — `require_scope("")` / whitespace-padded scope silently 403s every request** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:115-127`] — Edge Case Hunter HIGH. A typo like `require_scope(" reading-speed:read")` (leading space) would never match any parsed scope (which `_parse_scopes` whitespace-cleans), silently 403ing all callers without any signal to the developer. Added a fail-fast `ValueError` guard at factory-call time (raises before the dep closure is built). Added 2 tests pinning the new behavior. **APPLIED.**
+
+- [x] [Review][Patch] **CR3 — `claims["sub"]` defensive hygiene** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:89-90`] — Blind Hunter. Currently safe (the `require` list pins `sub`) but `KeyError` would surface as a 500 if a future edit removes `sub` from the require list. Switched to `claims.get("sub", "")` to surface as a normal `Principal` construction failure instead. **APPLIED.**
+
+- [x] [Review][Patch] **CR4 — `test_jwks_kid_miss_unknown_after_refetch_returns_401` doesn't assert `fetch_call_count`** [`services/resource-server/tests/auth/test_oidc_bearer.py`] — Blind Hunter MED. The test claims the re-fetch path is exercised but only checked the final 401. Added `assert synthetic_rs_idp.fetch_call_count >= 2` to pin the re-fetch invariant; otherwise PyJWKClient could raise early and the test would still pass with the same status. **APPLIED.**
+
+- [x] [Review][Patch] **CR5 — `pyjwt[crypto]` upper bound** [`services/resource-server/pyproject.toml`] — Blind Hunter LOW. PyJWT 3.x may change `PyJWKClient` semantics. Pinned to `>=2.10,<3` to gate a major-version bump behind explicit review. **APPLIED.**
+
+- [x] [Review][Patch] **CR6 — `Principal.scopes` is a `frozenset` not asserted in the request-layer test** [`services/resource-server/tests/auth/test_oidc_bearer.py`] — Acceptance Auditor CONCERN re AC #10 case #18. Spec case #18 explicitly said "assert `isinstance(principal.scopes, frozenset)`". The existing unit-level `_parse_scopes` tests cover the type; added an `_test_principal_type` endpoint inside the test module that returns the type name so the request-layer assertion is also pinned. **APPLIED.**
+
+- [x] [Review][Patch] **CR7 — Non-string `scope` claim silently empties the scope set** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:60-63`] — Blind Hunter + Edge Case Hunter LOW/MED. RFC 8693 allows the `scope` claim to be a JSON array; some IdPs (Auth0, Okta) emit it that way. With Keycloak it's always a space-delimited string, but a future IdP swap (architecture explicitly allows `oidc_bearer` mode to point at any IdP) would silently 403 every request without any signal. Added a `logger.warning("scope claim was non-string (%s); falling back to empty scope set", ...)` so misconfiguration is observable. Added a test asserting the warning fires for list-shaped claims. **APPLIED.**
+
+#### Deferred
+
+See `_bmad-output/implementation-artifacts/deferred-work.md` "Deferred from: code review of 3-2-..." (D59–D65) for full text.
+
+- [x] [Review][Defer] **D59 — `make_oidc_bearer_auth(settings_arg)` ignores its `settings_arg` argument** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:131-139`] — Blind + Edge HIGH (deduped). Real factory-contract weakness: `get_auth(test_settings)` with per-call OIDC values silently falls back to the module-level `settings` singleton because the inner `authenticate_bearer_token` calls `_validate_access_token` which reads the global. Story 3.2's text explicitly documented this design choice ("test fixtures can monkeypatch them without rebuilding the AuthFunctions closure"). Fixing it properly requires threading `settings_arg` through `_validate_access_token` + the `get_authenticated_principal` request dep, which broadens the surface beyond what this story committed to. Belongs to a follow-up that aligns both archetype seams (entra + oidc_bearer) on a single settings-injection pattern.
+- [x] [Review][Defer] **D60 — `_jwks_clients` module cache never evicts on JWKS-URL reconfiguration** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:49,52-57`] — Edge + Blind HIGH (deduped). The dict is keyed by URL string and grows indefinitely. In production the `oidc_jwks_url` value is set once at boot via required-fail-fast config, so this never triggers; in tests `synthetic_idp.py:194` resets the cache per fixture. Real concern only in a hypothetical config-reload scenario; the BFF has the same pattern. Belongs to a coordinated BFF+RS JWKS-cache pass.
+- [x] [Review][Defer] **D61 — `oidc_jwks_connect_timeout` / `oidc_jwks_read_timeout` settings unread** [`services/resource-server/src/resource_server/core/config.py:99-100`] — Blind MED. The two timeout fields land in Story 3.1's `AppSettings` and are read by `/health`'s JWKS probe but NOT by PyJWKClient's signing-key fetch (PyJWKClient uses `urllib.request.urlopen` with no timeout knob — see D62). They appear dead-config for the JWT-validation surface specifically. Pre-existing from Story 3.1; reviewing here because Story 3.2's mention of them re-surfaces the question. Belongs to D62's resolution.
+- [x] [Review][Defer] **D62 — PyJWKClient's signing-key HTTP fetch has no timeout** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:54-55,69-77`] — Blind MED. Architecture line 415 calls for 5s connect / 10s read on the RS→Keycloak JWKS fetch. PyJWKClient does not expose a timeout argument; its internal `urllib.request.urlopen` call has no default timeout. A hung Keycloak JWKS endpoint at first-request-after-cache-miss would block the event loop. Story 3.2 explicitly documented this trade-off in AC #8 (the `/health` JWKS probe from Story 3.1 is the operational guard). Real fix: subclass `PyJWKClient` or wrap `get_signing_key_from_jwt` in `asyncio.wait_for(..., timeout=settings.oidc_jwks_read_timeout)`. Belongs to a coordinated BFF+RS hardening pass (BFF has the same issue in `keycloak_cookie_session.py`).
+- [x] [Review][Defer] **D63 — 401 responses don't include `WWW-Authenticate: Bearer` per RFC 6750 §3** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:106-111`] — Blind QUESTION. The error envelope from `AppException` does not add the `WWW-Authenticate` header. RFC 6750 §3 mandates this on 401 responses from OAuth-protected resources so that clients know which scheme to retry with. Real RFC-compliance gap; not user-visible because the BFF's `ResourceServerClient` (Story 3.5) won't inspect the header. Belongs to Story 5.2 (security review document) — the security review will surface this as a documented accepted-or-fixed item.
+- [x] [Review][Defer] **D64 — No `leeway` / `nbf` / `iat`-future test coverage for clock-skew handling** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:69-77`] — Edge + Blind MED. `jwt.decode` is called without `leeway=...`. PyJWT validates `nbf` when present (raises `ImmatureSignatureError`, caught correctly) but the test suite doesn't pin this. In production, clock drift between Keycloak and the RS host at deploy-rollout windows could cause spurious 401s without leeway. Story 3.2 did not require a leeway config field; introducing one is out of scope. Belongs to a future hardening pass (likely Story 5.2 security review).
+- [x] [Review][Defer] **D65 — No test pinning `aud`-as-list (Keycloak's native shape)** [`services/resource-server/tests/auth/test_oidc_bearer.py`] — Edge MED. PyJWT's `jwt.decode(audience="bmad-books-resource-server")` does the right thing when the token's `aud` claim is a list (Keycloak's `"aud": ["bmad-books-resource-server", "account"]`) — it checks membership. But the test suite mints tokens with `aud=<string>` only, so the list-shaped path is unverified. A future PyJWT change could regress without our tests noticing. Belongs to a small test addition; not blocking for Story 3.2's exit criteria.
+
+#### Dismissed (15)
+
+- **Module-level `settings` global mutation in tests** — intentional per spec (Dev Notes acknowledge this trade-off vs. closure capture).
+- **`make_oidc_bearer_auth` accepts `settings_arg` cosmetically** — duplicate of D59 above.
+- **Test mounts on production `app`** — spec explicitly authorized either approach (AC #10 "implementer's choice"); CR1 try/finally addresses the robustness concern.
+- **synthetic_idp `fetch_call_count` race** — pytest runs serially in default config; GIL makes `+=` safe in practice.
+- **`alg=none` test passes for the right reason** — Blind Hunter speculated alg-rejection vs issuer-mismatch; verified the token's issuer/aud/kid all match defaults, so the 401 is from alg pinning as intended.
+- **`_validate_access_token` doesn't catch `Exception`** — PyJWT's exception hierarchy is well-defined; cryptography errors require malformed JWKs that the synthetic harness shape-checks. Adding a broad `Exception` catch would mask real bugs.
+- **HTTPBearer "collides" on `bearer_scheme`** — Blind Hunter; the new `bearer_scheme` is in `oidc_bearer.py`, the existing one is in `auth/dependencies.py`. Different deps for different paths; FastAPI's OpenAPI may show two security schemes but they're functionally equivalent.
+- **PyJWT class-level monkeypatch affects other tests** — Edge Case Hunter acknowledged this is bounded by `monkeypatch.setattr`'s teardown.
+- **`Principal.scopes` `asdict` serialization risk** — no `asdict(principal)` callers in the diff.
+- **`_principal_from_claims` stores raw `claims`** — architectural choice; the existing `Principal.claims: dict[str, Any]` field is the documented contract.
+- **`test_whitespace_only_bearer_token` bypasses FastAPI layer** — Blind Hunter; comments are clear about why; the dep's whitespace branch is the unit under test.
+- **`test_factory_dispatch` could leak shell env** — pydantic-settings honors explicit kwargs over env vars; test is fine.
+- **`# pragma: no cover` on `isinstance(decoded, dict)`** — standard PyJWT contract guarantees a dict; the pragma is appropriate.
+- **Lowercase scheme `bearer foo` not tested** — Edge Case Hunter LOW; the `.lower()` defense exists. Marginal; not in spec.
+- **Coverage drop 98.42% → 97.83%** — expected when adding a new file; still well above the 90% gate.
+
+#### Acceptance Auditor verdict table
+
+| AC | Status | Note |
+|----|--------|------|
+| 1  | MET | `pyjwt[crypto]>=2.10` (now `,<3` after CR5) in `pyproject.toml`; module-level `_jwks_clients: dict[str, jwt.PyJWKClient]`; `PyJWKClient(jwks_url, cache_keys=True, max_cached_keys=4)` exact BFF parity. (Cosmetic concern: pyjwt was already transitively present; dev log acknowledged.) |
+| 2  | MET | `Principal.scopes: frozenset[str] = field(default_factory=frozenset)` added after the existing `scope: str | None` field; all prior fields preserved. |
+| 3  | MET | `algorithms=["RS256"]` pinned; `options={"require": ["iss","aud","exp","sub"]}`; all failures → `SESSION_EXPIRED` (401); WARNING log emits only `type(exc).__name__`. |
+| 4  | MET | `require_scope(scope: str) -> Callable[..., Awaitable[Principal]]`; wire values `("session_expired",401)` + `("forbidden_scope",403)`; no premature ErrorCode additions; CR2 adds factory-time guard for empty/whitespace scope. |
+| 5  | MET | `Literal["none", "entra", "oidc_bearer"]`; lazy-import `_build_oidc_bearer` in factory.py; default stays `"none"`. |
+| 6  | MET | No archetype auth-test files modified; `Principal.scopes` default factory preserves callers; full suite 204 passed (171 pre-3.2 + 33 new). |
+| 7  | MET | `make_oidc_bearer_auth` returns AuthFunctions with the four expected callables; client_credentials + OBO raise `AuthFeatureNotSupportedError`; role_mapper=identity. |
+| 8  | MET | JWKS cache + kid-miss re-fetch invariant satisfied; per-process TTL deviation from §C6 24h is documented in `oidc_bearer.py:42-49` per spec instruction. |
+| 9  | MET | RS-local synthetic IdP harness; no cross-service import; monkeypatches `jwt.PyJWKClient.fetch_data` (not respx/httpx); `fetch_call_count` + `register_rotated_kid` helpers; module-level `_jwks_clients` reset per fixture. |
+| 10 | MET | All 23 enumerated test cases implemented (test count 33 with helper-unit + factory-dispatch additions); CR6 strengthens case #18's request-layer frozenset-type assertion. |
+| 11 | MET | Coverage of `oidc_bearer.py` = 100% (65/65 statements) — well above the ≥90% gate. |
+| 12 | MET | No archetype auth-test files in the diff; all 171 Story-3.1 tests continue passing. |
+| 13 | MET | No production-app router changes; `/_test/oidc/*` exists only inside the test module's autouse fixture (CR1 now wraps in try/finally). |
+| 14 | MET | `auth_type` default stays `"none"`; `.env.example` `AUTH_TYPE=oidc_bearer` line is commented out. |
+| 15 | MET | `.env.example` AUTH_TYPE comment block matches the spec's documented copy points. |
+| 16 | MET | All gates green: ruff/format/ty clean; pytest 204 passed; whole-suite coverage 97.83% (>90% gate); CR* patches keep all gates green. |
+| 17 | MET | Diff scoped to the 12 expected files only; no prohibited paths touched (verified via `git diff --name-only`). |
+
+**Verdict:** All 17 ACs **MET** after CR1–CR7 applied. Story moves `review` → `done`.
 
 ## Dev Notes
 

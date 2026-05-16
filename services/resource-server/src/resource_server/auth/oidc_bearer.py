@@ -60,6 +60,16 @@ def _get_jwks_client(jwks_url: str) -> jwt.PyJWKClient:
 def _parse_scopes(claim: object) -> frozenset[str]:
     if isinstance(claim, str):
         return frozenset(s for s in claim.split() if s)
+    # Keycloak emits `scope` as a space-delimited string; other IdPs (Auth0,
+    # Okta) emit it as a JSON array. If oidc_bearer is ever pointed at one of
+    # those, every request would silently 403 without any signal. Log so that
+    # misconfiguration is observable; consumers can extend _parse_scopes to
+    # accept lists when that need lands.
+    if claim is not None:
+        logger.warning(
+            "scope claim was non-string (%s); falling back to empty scope set",
+            type(claim).__name__,
+        )
     return frozenset()
 
 
@@ -85,9 +95,14 @@ def _validate_access_token(token: str) -> dict[str, Any]:
 
 def _principal_from_claims(claims: dict[str, Any]) -> Principal:
     scope_raw = claims.get("scope")
+    # `sub` is enforced by the `require` list in _validate_access_token, but
+    # default to "" defensively so a future edit to the require list cannot
+    # surface as a 500 KeyError — the surrounding code maps an empty subject
+    # to a normal SESSION_EXPIRED if it ever leaks through.
+    sub = str(claims.get("sub", ""))
     return Principal(
-        subject=str(claims["sub"]),
-        user_id=str(claims["sub"]),
+        subject=sub,
+        user_id=sub,
         name=str(claims["preferred_username"])
         if "preferred_username" in claims
         else None,
@@ -113,6 +128,19 @@ async def get_authenticated_principal(
 
 
 def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
+    # Fail fast at factory-call time on empty / whitespace-padded scope strings.
+    # A typo like `require_scope(" reading-speed:read")` (leading space) would
+    # never match any parsed JWT scope (which `_parse_scopes` whitespace-cleans),
+    # silently 403ing every caller. Better to surface as an ImportError-like
+    # explosion at module load than a quiet authorization failure at request
+    # time.
+    if not scope or scope != scope.strip():
+        msg = (
+            f"require_scope() expects a non-empty, non-whitespace-padded scope; "
+            f"got {scope!r}"
+        )
+        raise ValueError(msg)
+
     async def _dependency(
         principal: Annotated[Principal, Depends(get_authenticated_principal)],
     ) -> Principal:
