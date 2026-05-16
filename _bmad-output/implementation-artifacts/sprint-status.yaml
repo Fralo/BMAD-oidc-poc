@@ -36,6 +36,7 @@
 
 generated: 2026-05-14
 last_updated: 2026-05-16 (epic-2 opened — story 2.1 (BFF Book SQLModel + migration + Pydantic boundary models) prepared and ready-for-dev)
+last_updated: 2026-05-16 (epic-1 retrospective held — retro doc saved at epic-1-retro-2026-05-16.md, status optional → done; epic-2 in flight — 2.1 in-progress (parallel worktree), 2.2/2.3/2.4 all ready-for-dev)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -58,14 +59,14 @@ development_status:
   1-12-bff-post-v1-test-reset-endpoint: done
   1-13-e2e-spec-j1-first-time-login-j5-logout: done
   1-14-bff-multi-stage-build-serves-spa-bundle: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # Epic 2: Personal Book List (J2)
   epic-2: in-progress
-  2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: ready-for-dev
-  2-2-bff-full-books-crud-v1-books-v1-books-id: backlog
-  2-3-bff-extend-v1-test-reset-to-truncate-books: backlog
-  2-4-spa-booksservice-types: backlog
+  2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: in-progress
+  2-2-bff-full-books-crud-v1-books-v1-books-id: ready-for-dev
+  2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev
+  2-4-spa-booksservice-types: ready-for-dev
   2-5-spa-booklist-page-bookform-add-variant-states: backlog
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: backlog
   2-7-e2e-spec-j2-manage-books: backlog
