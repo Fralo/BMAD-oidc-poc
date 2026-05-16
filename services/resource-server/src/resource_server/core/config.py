@@ -99,7 +99,7 @@ class AppSettings(BaseSettings):
     oidc_jwks_connect_timeout: float = 5.0
     oidc_jwks_read_timeout: float = 10.0
 
-    auth_type: Literal["none", "entra"] = "none"
+    auth_type: Literal["none", "entra", "oidc_bearer"] = "none"
     auth_external_issuer: str = ""
     auth_external_audience: str = ""
     auth_external_discovery_uri: str = ""

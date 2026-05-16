@@ -30,9 +30,25 @@ def get_auth(settings: AppSettings) -> AuthFunctions:
             raise
         return make_entra_auth(settings)
 
+    def _build_oidc_bearer() -> AuthFunctions:
+        try:
+            from resource_server.auth.oidc_bearer import (  # noqa: PLC0415
+                make_oidc_bearer_auth,
+            )
+        except ModuleNotFoundError as exc:
+            if exc.name == "jwt":
+                msg = (
+                    "AUTH_TYPE=oidc_bearer requires pyjwt[crypto] at runtime. "
+                    "Install runtime dependencies before starting the app."
+                )
+                raise RuntimeError(msg) from exc
+            raise
+        return make_oidc_bearer_auth(settings)
+
     builders: dict[str, Callable[[], AuthFunctions]] = {
         "none": _build_none,
         "entra": _build_entra,
+        "oidc_bearer": _build_oidc_bearer,
     }
     builder = builders.get(settings.auth_type)
     if builder is None:

@@ -16,6 +16,7 @@ class Principal:
     user_id: str
     name: str | None = None
     scope: str | None = None
+    scopes: frozenset[str] = field(default_factory=frozenset)
     app_id: str | None = None
     roles: list[str] = field(default_factory=list)
     groups: list[str] = field(default_factory=list)
