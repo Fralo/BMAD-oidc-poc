@@ -1,12 +1,12 @@
 ---
-status: review
+status: done
 story_key: 2-2-bff-full-books-crud-v1-books-v1-books-id
 created: 2026-05-16
 ---
 
 # Story 2.2: BFF — full books CRUD (`/v1/books` + `/v1/books/{id}`)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -537,6 +537,35 @@ From `services/bff/`:
   - [x] On story start: flip `2-2-bff-full-books-crud-v1-books-v1-books-id: ready-for-dev` → `in-progress`. Bump `last_updated`.
   - [x] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
   - [x] If any defect surfaces (test_errors fallout, ty-check issues, etc.), append to `deferred-work.md` with the next sequential D-number.
+
+### Review Findings
+
+Code-review pass (2026-05-16) ran three layers (Blind Hunter / Edge Case
+Hunter / Acceptance Auditor) against the diff vs. `epic-2`. Triage
+classified 1 must-fix (patch), 4 deferred, 4 dismissed as noise.
+
+- [x] [Review][Patch] Reverted inline `_safe_sub_log` helper in
+  `books_service.py` to satisfy Task 4 instruction line 391 ("Do NOT
+  add a `_safe_sub_log` helper to this file — keep the truncation
+  inline"). Truncation logic now inlined at both `create` and `delete`
+  log sites, mirroring `session_service.py:235–238`. Coverage on
+  `books_service.py` improved from 98% to 100% as a side effect.
+- [x] [Review][Defer] W3 — No row-level lock on PATCH path
+  `[services/bff/src/bff/services/books_service.py:update]` — deferred,
+  no correctness impact under SQLite single-writer (W3 in
+  deferred-work.md).
+- [x] [Review][Defer] W4 — `VALIDATION_ERROR` enum member retained
+  as dead surface `[services/bff/src/bff/core/errors.py:11]` —
+  deferred, AC11-mandated enum-surface stability (W4 in
+  deferred-work.md).
+- [x] [Review][Defer] W5 — PATCH `{"title": null}` → 500
+  IntegrityError instead of 422 `[services/bff/src/bff/api/schemas/book.py + bff.services.books_service.update]`
+  — deferred, explicitly accepted in story Dev Notes line 591 (W5 in
+  deferred-work.md).
+- [x] [Review][Defer] W6 — No pagination on `GET /v1/books`
+  `[services/bff/src/bff/services/books_service.py:list_for_user]`
+  — deferred, architecture §C8 line 420 explicit deferral (W6 in
+  deferred-work.md).
 
 ## Dev Notes
 

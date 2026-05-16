@@ -18,20 +18,6 @@ from bff.models import entities
 logger = logging.getLogger(__name__)
 
 
-def _safe_sub_log(sub: str) -> str:
-    """Truncate `sub` to 8 chars + literal "..." only when actually truncated.
-
-    Mirrors the `_safe_session_id_log` idiom from `session_service.py:235–238`
-    (Story 1.7 Review Findings). For short subs (e.g. test fixtures) the
-    literal "..." would lie about truncation, so it is only appended when
-    `len(sub) > 8`.
-    """
-    if not sub:
-        return "(none)"
-    suffix = "..." if len(sub) > 8 else ""
-    return f"{sub[:8]}{suffix}"
-
-
 class BooksService:
     """Lifecycle owner for `books` rows. Per-user isolation via WHERE sub=:sub."""
 
@@ -90,7 +76,11 @@ class BooksService:
         db.add(book)
         await db.commit()
         await db.refresh(book)
-        logger.info("book_created sub=%s id=%s", _safe_sub_log(sub), book.id)
+        # Truncate sub to 8 chars + "..." only when actually truncated (per
+        # session_service.py:235–238 idiom — Story 1.7 Review Findings).
+        # Task 4 instruction: keep this inline; do not extract a helper.
+        sub_log = f"{sub[:8]}{'...' if len(sub) > 8 else ''}" if sub else "(none)"
+        logger.info("book_created sub=%s id=%s", sub_log, book.id)
         return book
 
     async def update(
@@ -134,5 +124,6 @@ class BooksService:
             return False
         await db.delete(book)
         await db.commit()
-        logger.info("book_deleted sub=%s id=%s", _safe_sub_log(sub), book_id)
+        sub_log = f"{sub[:8]}{'...' if len(sub) > 8 else ''}" if sub else "(none)"
+        logger.info("book_deleted sub=%s id=%s", sub_log, book_id)
         return True
