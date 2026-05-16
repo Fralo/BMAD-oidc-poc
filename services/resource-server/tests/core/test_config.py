@@ -181,3 +181,50 @@ def test_profile_invalid_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROFILE", "staging")
     with pytest.raises(ValidationError, match="Invalid profile"):
         AppSettings()
+
+
+# ---------------------------------------------------------------------------
+# Required-fail-fast: OIDC_ISSUER_URL / OIDC_JWKS_URL / OIDC_AUDIENCE
+# ---------------------------------------------------------------------------
+# Story 3.1 review patch CR1: add the missing fail-fast tests for the
+# `_validate_oidc_required_fail_fast` model_validator (spec Dev Notes lines
+# 313-315 + "Previous story intelligence" line 394: "Two tests per field
+# (missing + whitespace-only)" — required-fail-fast mirrors BFF Story 1.3
+# review's decision-needed #3). Closes coverage gap on core/config.py
+# lines 133-138 (the raise path).
+
+
+def test_oidc_issuer_url_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OIDC_ISSUER_URL", raising=False)
+    with pytest.raises(ValidationError, match="OIDC_ISSUER_URL is required"):
+        AppSettings()
+
+
+def test_oidc_issuer_url_required_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OIDC_ISSUER_URL", "   ")
+    with pytest.raises(ValidationError, match="OIDC_ISSUER_URL is required"):
+        AppSettings()
+
+
+def test_oidc_jwks_url_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OIDC_JWKS_URL", raising=False)
+    with pytest.raises(ValidationError, match="OIDC_JWKS_URL is required"):
+        AppSettings()
+
+
+def test_oidc_jwks_url_required_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OIDC_JWKS_URL", "   ")
+    with pytest.raises(ValidationError, match="OIDC_JWKS_URL is required"):
+        AppSettings()
+
+
+def test_oidc_audience_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OIDC_AUDIENCE", raising=False)
+    with pytest.raises(ValidationError, match="OIDC_AUDIENCE is required"):
+        AppSettings()
+
+
+def test_oidc_audience_required_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OIDC_AUDIENCE", "   ")
+    with pytest.raises(ValidationError, match="OIDC_AUDIENCE is required"):
+        AppSettings()
