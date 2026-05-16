@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (story 1.14 code-reviewed — F1 path-traversal fix + F2 docstring patch + 5 defers (D49-D53); 348 tests pass; epic-1 closed)
+last_updated: 2026-05-16 (story 3.1 created — RS scaffold + baseline /health + compose default/dev; ready-for-dev; epic-3 in-progress)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -72,8 +72,8 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Reading Speed Settings (J4)
-  epic-3: backlog
-  3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev: backlog
+  epic-3: in-progress
+  3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev: ready-for-dev
   3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness: backlog
   3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: backlog
   3-4-rs-post-v1-test-reset-endpoint: backlog
