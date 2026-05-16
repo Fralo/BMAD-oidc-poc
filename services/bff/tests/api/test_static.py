@@ -126,3 +126,29 @@ async def test_get_unknown_path_with_json_accept_returns_404_envelope(
     assert body["detail"] is None
     # The response body must NOT be the SPA shell.
     assert "<app-root>" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Path-traversal defence — a crafted `..` URL must not escape static_dir
+# ---------------------------------------------------------------------------
+
+
+async def test_path_traversal_does_not_escape_static_dir(spa_app: FastAPI) -> None:
+    """The catch-all resolves `static_dir / full_path` and must stay inside
+    `static_dir`. A URL like `/../../../etc/passwd` must NOT serve the real
+    /etc/passwd; instead it falls through to the SPA shell (HTML accept) or
+    the 404 envelope (JSON accept)."""
+    async with AsyncClient(
+        transport=ASGITransport(app=spa_app),
+        base_url="http://test",
+        headers={"Accept": "application/json"},
+    ) as client:
+        response = await client.get("/../../../etc/passwd")
+
+    # The escape attempt is not served as a file — must hit the 404 envelope
+    # (because the Accept header is JSON, the unknown-path branch fires).
+    assert response.status_code == 404
+    body = response.json()
+    assert body["errorCode"] == "not_found"
+    # And definitely not the contents of a real system file.
+    assert "root:" not in response.text

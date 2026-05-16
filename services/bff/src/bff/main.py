@@ -40,14 +40,17 @@ def _register_spa(application: FastAPI, static_dir: Path) -> None:
     without coupling to module-load-time side effects.
 
     Mount order (AC3, AC4):
-    1. /assets  — StaticFiles without html fallback (real asset files only)
+    1. /assets  — StaticFiles without html fallback (real asset files only).
+       Registered first so /assets/* hits the StaticFiles handler.
     2. /{full_path:path}  — FastAPI catch-all: serves index.html for HTML
        clients, returns the 404 JSON envelope (D16) for non-HTML clients.
 
-    The catch-all FastAPI route is registered BEFORE the StaticFiles mount so
-    it takes priority in FastAPI's router. For requests to known paths that
-    exist as files, FileResponse is returned directly; for unknown paths,
-    the Accept header determines whether to serve index.html or the 404 envelope.
+    Starlette matches routes in declaration order: the /assets mount is added
+    BEFORE the catch-all so /assets/* requests are served by StaticFiles, and
+    everything else falls through to the catch-all. For requests to known
+    paths that exist as files, FileResponse is returned directly; for unknown
+    paths, the Accept header determines whether to serve index.html or the
+    404 envelope.
     """
     assets_dir = static_dir / "assets"
     if assets_dir.is_dir():
@@ -57,6 +60,8 @@ def _register_spa(application: FastAPI, static_dir: Path) -> None:
             name="spa-assets",
         )
 
+    static_root = static_dir.resolve()
+
     @application.api_route(
         "/{full_path:path}",
         methods=["GET", "HEAD"],
@@ -64,8 +69,16 @@ def _register_spa(application: FastAPI, static_dir: Path) -> None:
     )
     async def _spa_or_404(request: Request, full_path: str) -> Response:
         # Try to resolve as a real file first (e.g. favicon.ico, main.js, etc.)
-        candidate = static_dir / full_path
-        if candidate.is_file():
+        # Resolve the candidate path and verify it stays within static_root so
+        # a crafted `..`-laden URL cannot escape the bundle directory.
+        try:
+            candidate = (static_dir / full_path).resolve()
+            candidate.relative_to(static_root)
+            is_file = candidate.is_file()
+        except OSError, ValueError:
+            is_file = False
+            candidate = static_root
+        if is_file:
             return FileResponse(str(candidate))
         # Not a real file — check whether the client accepts HTML.
         accept = request.headers.get("accept", "")

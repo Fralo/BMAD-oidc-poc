@@ -1,12 +1,12 @@
 ---
-status: review
+status: done
 story_key: 1-14-bff-multi-stage-build-serves-spa-bundle
 created: 2026-05-15
 ---
 
 # Story 1.14: BFF multi-stage build serves SPA bundle
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -418,3 +418,4 @@ claude-sonnet-4-6 (2026-05-15)
 ### Change Log
 
 - 2026-05-15: Story 1.14 implemented — BFF multi-stage Dockerfile (Node builder + SPA bundle), SPA static serving with Accept-aware history fallback, 3 new pytest tests (AC7a/b/c). Docker build + smoke test verified. Status: review.
+- 2026-05-16: Story 1.14 code-reviewed in main context (CR agent hit usage cap before patching). Two patches applied directly: F1 (security — path-traversal guard added to `_register_spa` catch-all: `candidate.resolve().relative_to(static_root)`), F2 (docstring corrected — mount order was inverted in the original docstring). New test added: `test_path_traversal_does_not_escape_static_dir`. 5 defers added to deferred-work.md (D49-D53). All gates green: ruff/ty/format pass, pytest 348/348. Status: done.
