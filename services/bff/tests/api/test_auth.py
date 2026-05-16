@@ -53,7 +53,7 @@ def configured_idp(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "bff_client_secret", "test-bff-secret")
     monkeypatch.setattr(settings, "bff_base_url", "http://localhost:8000")
     monkeypatch.setattr(settings, "bff_session_cookie_name", "bff_session")
-    monkeypatch.setattr(settings, "bff_csrf_cookie_name", "bff_csrf")
+    monkeypatch.setattr(settings, "bff_csrf_cookie_name", "csrf_token")
     monkeypatch.setattr(settings, "bff_session_cookie_secure", False)
 
     with respx.mock(assert_all_called=False) as mock:
@@ -239,15 +239,15 @@ async def test_auth_callback_happy_path_sets_cookies_and_redirects(
 
     cookies = response.headers.get_list("set-cookie")
     assert any("bff_session=" in c for c in cookies)
-    assert any("bff_csrf=" in c for c in cookies)
+    assert any("csrf_token=" in c for c in cookies)
     # State-id cookie cleared (Max-Age=0).
     cleared = [c for c in cookies if "bff_auth_state=" in c]
     assert cleared
     assert any("Max-Age=0" in c for c in cleared)
 
-    # bff_session is HttpOnly, bff_csrf is NOT (architecture A5).
+    # bff_session is HttpOnly, csrf_token is NOT (architecture A5).
     session_cookie = next(c for c in cookies if c.startswith("bff_session="))
-    csrf_cookie = next(c for c in cookies if c.startswith("bff_csrf="))
+    csrf_cookie = next(c for c in cookies if c.startswith("csrf_token="))
     assert "HttpOnly" in session_cookie
     assert "HttpOnly" not in csrf_cookie
 

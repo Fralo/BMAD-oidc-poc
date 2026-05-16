@@ -96,7 +96,7 @@ async def client_fixture(session):
 
 @pytest.fixture(name="client_with_csrf")
 async def client_with_csrf_fixture(session, monkeypatch: pytest.MonkeyPatch):
-    """Like `client`, but pre-seeded with the `bff_csrf` cookie + `X-CSRF-Token`
+    """Like `client`, but pre-seeded with the `csrf_token` cookie + `X-CSRF-Token`
     header + same-origin `Origin` so state-changing requests pass the CSRF
     middleware introduced in Story 1.6.
 

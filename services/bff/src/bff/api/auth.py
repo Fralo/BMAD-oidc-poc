@@ -336,7 +336,7 @@ def _as_utc_aware(dt: datetime) -> datetime:
 
 
 def _clear_session_cookies(response: Response, cfg: AppSettings) -> None:
-    """Clear `bff_session` AND `bff_csrf` by setting them to empty with Max-Age=0.
+    """Clear `bff_session` AND `csrf_token` by setting them to empty with Max-Age=0.
 
     Mirrors the original `set_cookie` attributes (Story 1.5 Review Findings P3):
     `delete_cookie` omits `secure`/`samesite` args and breaks RFC 6265bis
@@ -396,7 +396,7 @@ async def auth_logout(
       1. revoke refresh_token at Keycloak  (best effort)
       2. call end_session_endpoint        (best effort)
       3. delete local `sessions` row       (always)
-      4. clear `bff_session` + `bff_csrf` cookies (always)
+      4. clear `bff_session` + `csrf_token` cookies (always)
       5. return 204 No Content
 
     Steps 1 + 2 degrade honestly: any transport or HTTP failure is logged at

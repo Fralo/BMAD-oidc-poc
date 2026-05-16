@@ -90,7 +90,7 @@ class AppSettings(BaseSettings):
     # (See deferred-work.md#D2 / #D8, closed by Story 1.5.)
     oidc_authorize_url_browser: str = ""
     bff_session_cookie_name: str = "bff_session"
-    bff_csrf_cookie_name: str = "bff_csrf"
+    bff_csrf_cookie_name: str = "csrf_token"
     bff_session_cookie_secure: bool = False
     enable_test_reset: bool = False
     test_reset_token: str = ""

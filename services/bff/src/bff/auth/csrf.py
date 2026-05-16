@@ -1,11 +1,11 @@
 """Double-submit CSRF middleware per architecture A5.
 
 Exempts safe methods (GET/HEAD/OPTIONS); enforces `X-CSRF-Token` ==
-`bff_csrf` cookie AND a same-origin `Origin` (with `Referer` fallback) on
+`csrf_token` cookie AND a same-origin `Origin` (with `Referer` fallback) on
 every state-changing request. Rejections short-circuit with the documented
 403 `csrf_invalid` envelope (architecture C5).
 
-The middleware is read-only with respect to cookies — the `bff_csrf` cookie
+The middleware is read-only with respect to cookies — the `csrf_token` cookie
 is minted at `/auth/callback` time (Story 1.5) and cleared at
 `/auth/logout` (Story 1.7). This module never mints or rotates it.
 
