@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (epic-2 in flight — 2.1 in-progress (parallel worktree); 2.2 (BFF books CRUD), 2.3 (test/reset truncates books), 2.4 (SPA BooksService) all ready-for-dev)
+last_updated: 2026-05-16 (epic-1 retrospective held — retro doc saved at epic-1-retro-2026-05-16.md, status optional → done; epic-2 in flight — 2.1 in-progress (parallel worktree), 2.2/2.3/2.4 all ready-for-dev)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -58,7 +58,7 @@ development_status:
   1-12-bff-post-v1-test-reset-endpoint: done
   1-13-e2e-spec-j1-first-time-login-j5-logout: done
   1-14-bff-multi-stage-build-serves-spa-bundle: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   # Epic 2: Personal Book List (J2)
   epic-2: in-progress
