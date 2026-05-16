@@ -5,9 +5,9 @@ Purpose
 Provides guarded test surfaces for Playwright E2E specs.
 
 Endpoints provided when the gate is ON:
-  - `POST /v1/test/reset` (Story 1.12) — truncates `sessions` and
-    `auth_states`; returns 204. Each E2E test starts from a known clean
-    state without per-test ordering hacks.
+  - `POST /v1/test/reset` (Story 1.12 + Story 2.3) — truncates `sessions`,
+    `auth_states`, and `books`; returns 204. Each E2E test starts from a
+    known clean state without per-test ordering hacks.
   - `GET /v1/test/session-debug` (Story 1.13) — reads the `bff_session`
     cookie, looks up the row, returns the stored `refresh_token` (plus
     `sub` and a truncated `session_id_safe`). Consumed by the J5 spec
@@ -63,6 +63,7 @@ References
 - Story 1.4 (sessions/auth_states tables); Story 1.5 (session_service
   truncate idiom); Story 1.6 (CSRF middleware exemption is added there);
   Story 1.7 (Response(status_code=204) pattern).
+- epics.md §Story 2.3 (lines 854–878) — adds `books` to the truncate sequence.
 """
 
 import contextlib
@@ -199,18 +200,17 @@ async def test_reset(
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
 ) -> Response:
-    """Truncate `sessions` and `auth_states`; return 204.
+    """Truncate `sessions`, `auth_states`, and `books`; return 204.
 
     Bearer-token guarded. Auth failures emit the `session_expired` 401
     envelope (no enumeration leak via a distinct error code). On success,
     the response body is empty (Story 1.7's `Response(status_code=204)`
-    idiom). The truncate sequence is two bare `DELETE FROM <table>`
+    idiom). The truncate sequence is three bare `DELETE FROM <table>`
     statements followed by a single commit (atomic from the DB's POV).
 
-    Story 2.3 will extend this handler with a third DELETE for the
-    `books` table; keep the structure ordered and explicit (one
-    `await db.execute(...)` per table) so that addition is a one-line
-    insertion rather than a refactor.
+    Story 2.3 added the `books` DELETE; the structure remains ordered and
+    explicit (one `await db.execute(...)` per table) so future tables
+    follow the same pattern.
     """
     auth_header = request.headers.get("authorization")
     classification = _classify_auth_failure(auth_header)
@@ -255,6 +255,10 @@ async def test_reset(
             _delete(entities.AuthState),
             execution_options={"synchronize_session": False},
         )
+        books_result = await db.execute(
+            _delete(entities.Book),
+            execution_options={"synchronize_session": False},
+        )
         await db.commit()
     except (SQLAlchemyError, OSError) as exc:
         # Best-effort rollback — itself may fail (e.g. dropped connection)
@@ -279,11 +283,13 @@ async def test_reset(
     # `sqlalchemy.engine.CursorResult` into the import surface.
     sessions_deleted = getattr(sessions_result, "rowcount", -1)
     auth_states_deleted = getattr(auth_states_result, "rowcount", -1)
+    books_deleted = getattr(books_result, "rowcount", -1)
     logger.info(
-        "test_reset_truncated tables=sessions,auth_states "
-        "sessions_deleted=%s auth_states_deleted=%s",
+        "test_reset_truncated tables=sessions,auth_states,books "
+        "sessions_deleted=%s auth_states_deleted=%s books_deleted=%s",
         sessions_deleted,
         auth_states_deleted,
+        books_deleted,
     )
     return Response(status_code=204)
 
