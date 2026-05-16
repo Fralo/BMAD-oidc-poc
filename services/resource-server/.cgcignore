@@ -1,0 +1,7 @@
+_bmad
+.cursor
+.idea
+.pytest_cache
+.ruff_cache
+.venv
+compose/observability/grafana/storage

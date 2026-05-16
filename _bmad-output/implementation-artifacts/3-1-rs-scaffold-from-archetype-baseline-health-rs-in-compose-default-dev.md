@@ -1,5 +1,5 @@
 ---
-status: ready-for-dev
+status: in-progress
 story_key: 3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev
 epic: 3
 prerequisites: epic-1 (done — BFF + Keycloak + SPA + Playwright harness merged); 1-3 (done — archetype-scaffold pattern established); 1-12/1-14 (done — `compose/app.e2e.yml` overlay pattern and BFF multi-stage Dockerfile in main)
@@ -9,7 +9,7 @@ specLoopIteration: 1
 
 # Story 3.1: RS scaffold from archetype + baseline health + RS in compose (default/dev)
 
-Status: ready-for-dev
+Status: in-progress
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
