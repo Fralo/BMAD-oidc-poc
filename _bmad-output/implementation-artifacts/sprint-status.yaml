@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (story 1.14 code-reviewed — F1 path-traversal fix + F2 docstring patch + 5 defers (D49-D53); 348 tests pass; epic-1 closed)
+last_updated: 2026-05-16 (epic-2 opened — story 2.1 (BFF Book SQLModel + migration + Pydantic boundary models) prepared and ready-for-dev)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -61,8 +61,8 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Personal Book List (J2)
-  epic-2: backlog
-  2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: backlog
+  epic-2: in-progress
+  2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: ready-for-dev
   2-2-bff-full-books-crud-v1-books-v1-books-id: backlog
   2-3-bff-extend-v1-test-reset-to-truncate-books: backlog
   2-4-spa-booksservice-types: backlog
