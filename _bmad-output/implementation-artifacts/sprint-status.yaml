@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (stories 2.2 + 2.4 done in parallel worktrees — 2.2: BFF books CRUD, 422 tests, 97.56% cov, 4 defers W3–W6; 2.4: SPA BooksService + types, 65 tests, 3 defers D54–D56; 2.3 remains ready-for-dev; 2.5/2.6/2.7 backlog)
+last_updated: 2026-05-16 (story 2.5 created — SPA BookList page + BookForm add-variant + states; ready-for-dev. Stories 2.3 + 2.5 now both ready-for-dev; 2.6/2.7 remain backlog)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -66,7 +66,7 @@ development_status:
   2-2-bff-full-books-crud-v1-books-v1-books-id: done
   2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev
   2-4-spa-booksservice-types: done
-  2-5-spa-booklist-page-bookform-add-variant-states: backlog
+  2-5-spa-booklist-page-bookform-add-variant-states: ready-for-dev
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: backlog
   2-7-e2e-spec-j2-manage-books: backlog
   epic-2-retrospective: optional
