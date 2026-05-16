@@ -65,7 +65,7 @@ development_status:
   2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: in-progress
   2-2-bff-full-books-crud-v1-books-v1-books-id: ready-for-dev
   2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev
-  2-4-spa-booksservice-types: ready-for-dev
+  2-4-spa-booksservice-types: done
   2-5-spa-booklist-page-bookform-add-variant-states: backlog
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: backlog
   2-7-e2e-spec-j2-manage-books: backlog
