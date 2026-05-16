@@ -57,6 +57,47 @@ services:
     profiles: [default, dev, e2e]
     restart: unless-stopped
 
+  resource-server:
+    # Story 3.1: Resource Server. Internal-only — the BFF reaches it at
+    # http://resource-server:8000 via Docker DNS. NO `ports:` block is
+    # published to the host (architecture §F3 + §I6: only the BFF container
+    # exposes a user-facing port). Profiles are `default` + `dev` only;
+    # the `e2e` profile addition lands in Story 3.6 paired with the
+    # `ENABLE_TEST_RESET=true` overlay and the `killRs`/`startRs`
+    # /`resetState` helper extensions.
+    #
+    # The BFF's existing `depends_on` is intentionally NOT modified — per
+    # FR-ERROR-01 / J6, when the RS is down the BFF must surface
+    # `errorCode: resource_server_unavailable` honestly rather than refuse
+    # to start (Story 3.5 will land the `ResourceServerClient` that owns
+    # this honest-failure surface).
+    build:
+      # Root build context for consistency with the BFF post-1.14 posture
+      # (closes D4 for the RS). The root .dockerignore applies;
+      # services/resource-server/.dockerignore is unused with a root context
+      # but kept for documentation parity.
+      context: ..
+      dockerfile: services/resource-server/Dockerfile
+    container_name: resource-server
+    env_file:
+      - ../services/resource-server/.env
+    volumes:
+      - rs_data:/data
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # Stdlib probe (no curl in python:3.14-slim). Single-line CMD list
+      # form mirrors the BFF healthcheck per Story 1.3 review patch P11;
+      # folded-scalar YAML form is forbidden.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    profiles: [default, dev]
+    restart: unless-stopped
+
   playwright:
     # Story 1.11: Playwright runner for the `e2e` compose profile.
     # One-shot container that executes the E2E specs against the live stack
@@ -106,3 +147,8 @@ volumes:
   # Persists the BFF's SQLite file across container recreation; destroyed by
   # `docker compose down -v`. Per AR6 (architecture §I5).
   bff_data: {}
+  # Story 3.1: persists the RS's SQLite file (rs.db) across container
+  # recreation; destroyed by `docker compose down -v`. Per AR6 (§I5) the
+  # RS keeps its own named volume separate from the BFF's `bff_data` —
+  # the two services share no on-disk state.
+  rs_data: {}
