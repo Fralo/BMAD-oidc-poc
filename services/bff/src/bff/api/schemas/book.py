@@ -29,8 +29,13 @@ def _strip_and_reject_blank(value: str) -> str:
 
 
 class BookCreate(BaseModel):
-    title: str = Field(min_length=1)
-    pages: int = Field(ge=1)
+    # `max_length=500` mirrors the `Book.title` column cap so the API
+    # 422s on overlong input instead of letting it through to a 500
+    # on engines that enforce VARCHAR (Postgres/MySQL).
+    # `le=1_000_000` keeps `pages` within `Number.MAX_SAFE_INTEGER` and
+    # comfortably below 32-bit `INTEGER` overflow on non-SQLite engines.
+    title: str = Field(min_length=1, max_length=500)
+    pages: int = Field(ge=1, le=1_000_000)
     status: BookStatus = "to-read"
 
     @field_validator("title", mode="after")
@@ -40,8 +45,8 @@ class BookCreate(BaseModel):
 
 
 class BookUpdate(BaseModel):
-    title: str | None = Field(default=None, min_length=1)
-    pages: int | None = Field(default=None, ge=1)
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    pages: int | None = Field(default=None, ge=1, le=1_000_000)
     status: BookStatus | None = None
 
     @field_validator("title", mode="after")

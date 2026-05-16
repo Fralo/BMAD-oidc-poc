@@ -57,6 +57,19 @@ def test_book_create_rejects_unknown_status() -> None:
         BookCreate(title="OK", pages=10, status="archived")  # type: ignore[arg-type]
 
 
+def test_book_create_rejects_overlong_title() -> None:
+    # Boundary mirrors `Book.title`'s `max_length=500` column cap.
+    with pytest.raises(ValidationError):
+        BookCreate(title="x" * 501, pages=10)
+
+
+def test_book_create_rejects_pages_above_cap() -> None:
+    # `le=1_000_000` keeps `pages` inside JS safe-int range and well
+    # under 32-bit INTEGER overflow on non-SQLite engines.
+    with pytest.raises(ValidationError):
+        BookCreate(title="OK", pages=1_000_001)
+
+
 def test_book_update_all_fields_optional() -> None:
     # Empty patch is OK at the model layer — handler decides what to
     # do with it (see story scope note on AC3).
@@ -64,6 +77,15 @@ def test_book_update_all_fields_optional() -> None:
     assert bu.title is None
     assert bu.pages is None
     assert bu.status is None
+
+
+def test_book_update_explicit_title_none_passes_validator() -> None:
+    # Distinct from the default-omission case above: explicitly passing
+    # `title=None` runs the `mode="after"` validator (Pydantic does not
+    # short-circuit on Optional defaults when the value is explicit),
+    # which exercises the `if v is None: return v` early-return branch.
+    bu = BookUpdate(title=None)
+    assert bu.title is None
 
 
 def test_book_update_partial_status_only() -> None:
@@ -82,6 +104,10 @@ def test_book_update_rejects_invalid_values() -> None:
         BookUpdate(title="")
     with pytest.raises(ValidationError):
         BookUpdate(title="   ")
+    with pytest.raises(ValidationError):
+        BookUpdate(title="x" * 501)
+    with pytest.raises(ValidationError):
+        BookUpdate(pages=1_000_001)
 
 
 def test_book_out_roundtrips_from_orm() -> None:

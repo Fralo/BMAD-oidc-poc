@@ -140,6 +140,8 @@ async def test_check_alembic_at_head_passes_when_current_matches_head(
     engine,
 ) -> None:
     """With current==head, the probe returns success and an empty detail."""
+    from pathlib import Path
+
     from alembic.config import Config as AlembicConfig
     from alembic.script import ScriptDirectory
     from sqlalchemy import text
@@ -147,8 +149,12 @@ async def test_check_alembic_at_head_passes_when_current_matches_head(
     # Resolve the actual head from the migration tree so this test
     # survives future migrations (Story 2.1 advanced head from
     # `0001_init` → `0002_add_books`; hard-coding would rot).
+    # Resolve `alembic.ini` from the BFF project root via `__file__`
+    # rather than `health_module._ALEMBIC_INI` (which is a relative
+    # path resolved against CWD) — keeps the test CWD-independent.
+    _bff_root = Path(__file__).resolve().parents[2]
     head_rev = ScriptDirectory.from_config(
-        AlembicConfig(str(health_module._ALEMBIC_INI))
+        AlembicConfig(str(_bff_root / "alembic.ini"))
     ).get_current_head()
     assert head_rev is not None
 

@@ -1,12 +1,12 @@
 ---
-status: review
+status: done
 story_key: 2-1-bff-book-sqlmodel-migration-pydantic-boundary-models
 created: 2026-05-16
 ---
 
 # Story 2.1: BFF — Book SQLModel + migration + Pydantic boundary models
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -177,6 +177,15 @@ Create the new test package: `services/bff/tests/api/schemas/__init__.py`. The t
   - [x] 6.1 `uv run pytest` — full BFF suite green; coverage of the two new modules ≥90%.
   - [x] 6.2 `uv run ruff check` — clean.
   - [x] 6.3 `uv run ty check` — clean.
+
+### Review Findings
+
+- [x] [Review][Decision→Patch] D1/P3 — Mirrored DB cap on the boundary: `BookCreate.title` / `BookUpdate.title` now `Field(min_length=1, max_length=500)`. Added `test_book_create_rejects_overlong_title` and extended `test_book_update_rejects_invalid_values` with `title="x"*501`.
+- [x] [Review][Decision→Patch] D2/P4 — Capped `BookCreate.pages` / `BookUpdate.pages` at `Field(ge=1, le=1_000_000)`. Added `test_book_create_rejects_pages_above_cap` and extended `test_book_update_rejects_invalid_values` with `pages=1_000_001`.
+- [x] [Review][Patch] P1 — Added `test_book_update_explicit_title_none_passes_validator` to exercise the validator's `if v is None: return v` early-return. Coverage on `bff/api/schemas/book.py` rose from 97% → 100%.
+- [x] [Review][Patch] P2 — `test_check_alembic_at_head_passes_when_current_matches_head` now resolves `alembic.ini` via `Path(__file__).resolve().parents[2] / "alembic.ini"` instead of the CWD-relative `health_module._ALEMBIC_INI`. Test is now invocation-directory-independent.
+- [x] [Review][Defer] W1 — `_strip_and_reject_blank` rejects only Python-`str.isspace` whitespace, so zero-width / BOM characters (U+200B, U+FEFF, U+2060) pass through and persist [services/bff/src/bff/api/schemas/book.py:14-17]. AC4 enumerates `title="   "` only (regular spaces); broader Unicode normalization belongs to a hardening pass — deferred, pre-existing definition of "blank".
+- [x] [Review][Defer] W2 — No test asserts that `BookOut.model_validate(Book(status="archived", ...))` raises [services/bff/tests/api/schemas/test_book_schemas.py]. The Pydantic `Literal` would reject it, but a future relaxation of the type to `BookStatus | str` would silently pass — deferred, defensive coverage gap.
 
 ## Dev Notes
 
@@ -509,3 +518,4 @@ claude-opus-4-7 (Claude Code, dev-story workflow)
 | Date       | Change                                                                                                      |
 | ---------- | ----------------------------------------------------------------------------------------------------------- |
 | 2026-05-16 | Story 2.1 implemented: `Book` SQLModel + Pydantic boundary models + Alembic 0002 migration + tests. Story moved to "review". |
+| 2026-05-16 | Code review (4 patches applied): `title` max_length=500 + `pages` le=1_000_000 on `BookCreate`/`BookUpdate`; explicit `BookUpdate(title=None)` test; CWD-independent alembic-head test resolution. 370 tests pass, `schemas/book.py` coverage 100%. W1/W2 deferred. Story moved to "done". |
