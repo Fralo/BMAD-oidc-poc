@@ -48,6 +48,23 @@ def test_csrf_invalid_enum_shape() -> None:
     assert ErrorCode.CSRF_INVALID.http_status == 403
 
 
+def test_error_code_book_not_found() -> None:
+    # Story 2.2 — wire value is lower_snake_case per architecture §C5; 404 per
+    # architecture §Format Patterns line 685.
+    assert ErrorCode.BOOK_NOT_FOUND.code == "book_not_found"
+    assert ErrorCode.BOOK_NOT_FOUND.message == "Book not found"
+    assert ErrorCode.BOOK_NOT_FOUND.http_status == 404
+
+
+def test_error_code_invalid_input() -> None:
+    # Story 2.2 — wire value is lower_snake_case per architecture §C5; 422 per
+    # architecture §Format Patterns. Emitted by validation_exception_handler
+    # in place of the legacy VALIDATION_ERROR wire code.
+    assert ErrorCode.INVALID_INPUT.code == "invalid_input"
+    assert ErrorCode.INVALID_INPUT.message == "Invalid input"
+    assert ErrorCode.INVALID_INPUT.http_status == 422
+
+
 def test_app_exception_carries_error_code() -> None:
     exc = AppException(ErrorCode.NOT_FOUND)
     assert exc.error_code is ErrorCode.NOT_FOUND
@@ -82,8 +99,8 @@ async def test_validation_error_via_http(client_with_csrf: AsyncClient) -> None:
     response = await client_with_csrf.post("/test/open")
     assert response.status_code == 422
     data = response.json()
-    assert data["errorCode"] == "VALIDATION_ERROR"
-    assert data["message"] == "Request validation failed"
+    assert data["errorCode"] == "invalid_input"
+    assert data["message"] == "Invalid input"
     assert "detail" in data
 
 
