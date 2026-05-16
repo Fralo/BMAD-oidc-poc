@@ -8,6 +8,9 @@ from fastapi.responses import JSONResponse
 
 class ErrorCode(enum.Enum):
     INTERNAL_ERROR = ("INTERNAL_ERROR", "An unexpected error occurred", 500)
+    # legacy: validation_exception_handler now emits INVALID_INPUT (Story 2.2).
+    # The member stays for enum-surface stability; no handler emits it on the
+    # wire after Story 2.2.
     VALIDATION_ERROR = ("VALIDATION_ERROR", "Request validation failed", 422)
     BAD_REQUEST = ("BAD_REQUEST", "Bad request", 400)
     NOT_FOUND = ("NOT_FOUND", "Resource not found", 404)
@@ -25,6 +28,8 @@ class ErrorCode(enum.Enum):
     )
     AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
     CSRF_INVALID = ("csrf_invalid", "CSRF token missing or invalid", 403)
+    BOOK_NOT_FOUND = ("book_not_found", "Book not found", 404)
+    INVALID_INPUT = ("invalid_input", "Invalid input", 422)
 
     def __init__(self, code: str, message: str, http_status: int) -> None:
         self.code = code
@@ -59,18 +64,21 @@ async def validation_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
     val_exc = cast(RequestValidationError, exc)
-    # Drop the user-supplied `input` value from each error before serializing.
-    # Pydantic includes it verbatim; echoing it back to the client leaks raw
-    # request data (passwords, tokens, PII) into 422 responses — see Story 1.3
-    # Review Findings (Patch P3).
+    # Drop the user-supplied `input` value AND the `ctx` slot from each error
+    # before serializing. The `input` strip is the Story 1.3 P3 PII-leak fix.
+    # The `ctx` strip is the Story 2.2 fix for custom field_validator errors:
+    # when a validator raises ValueError, Pydantic stores the raw exception
+    # object under `ctx.error`, which is not JSON-serializable. Dropping `ctx`
+    # avoids a 500 cascade on the 422 response path.
     sanitized = [
-        {k: v for k, v in err.items() if k != "input"} for err in val_exc.errors()
+        {k: v for k, v in err.items() if k not in ("input", "ctx")}
+        for err in val_exc.errors()
     ]
     return JSONResponse(
-        status_code=ErrorCode.VALIDATION_ERROR.http_status,
+        status_code=ErrorCode.INVALID_INPUT.http_status,
         content=build_error_body(
-            ErrorCode.VALIDATION_ERROR.code,
-            ErrorCode.VALIDATION_ERROR.message,
+            ErrorCode.INVALID_INPUT.code,
+            ErrorCode.INVALID_INPUT.message,
             sanitized,
         ),
     )
