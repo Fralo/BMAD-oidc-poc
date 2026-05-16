@@ -140,7 +140,17 @@ async def test_check_alembic_at_head_passes_when_current_matches_head(
     engine,
 ) -> None:
     """With current==head, the probe returns success and an empty detail."""
+    from alembic.config import Config as AlembicConfig
+    from alembic.script import ScriptDirectory
     from sqlalchemy import text
+
+    # Resolve the actual head from the migration tree so this test
+    # survives future migrations (Story 2.1 advanced head from
+    # `0001_init` → `0002_add_books`; hard-coding would rot).
+    head_rev = ScriptDirectory.from_config(
+        AlembicConfig(str(health_module._ALEMBIC_INI))
+    ).get_current_head()
+    assert head_rev is not None
 
     async with engine.begin() as conn:
         await conn.execute(
@@ -152,7 +162,9 @@ async def test_check_alembic_at_head_passes_when_current_matches_head(
         )
         await conn.execute(text("DELETE FROM alembic_version"))
         await conn.execute(
-            text("INSERT INTO alembic_version (version_num) VALUES ('0001_init')")
+            text("INSERT INTO alembic_version (version_num) VALUES (:rev)").bindparams(
+                rev=head_rev
+            )
         )
 
     try:
