@@ -63,9 +63,9 @@ export class BookForm {
     pages: this.fb.control<number | null>(null, {
       validators: [Validators.required, Validators.min(1)],
     }),
-    status: this.fb.control<BookStatus>('to-read', {
-      validators: [Validators.required],
-    }),
+    // Status has a default valid value and the <select> exposes no empty
+    // option — Validators.required would be unreachable, so it is omitted.
+    status: this.fb.control<BookStatus>('to-read'),
   });
 
   readonly submitting = signal<boolean>(false);
@@ -126,7 +126,14 @@ export class BookForm {
     return BOOK_FORM_VALIDATION_MULTIPLE;
   }
 
-  /** Map an `AppError` thrown by `BooksService.create` to user-visible copy. */
+  /**
+   * Map an `AppError` thrown by `BooksService.create` to user-visible copy.
+   *
+   * The `default` branch is an exhaustiveness check: if a future `AppError`
+   * variant (e.g., Story 3.5's `resource_server_unavailable`) is added
+   * without updating this switch, TypeScript will fail to assign the new
+   * kind to `never` and the build breaks.
+   */
   private formatServerError(err: AppError): string {
     switch (err.kind) {
       case 'invalid_input':
@@ -142,6 +149,10 @@ export class BookForm {
       case 'auth_state_invalid':
       case 'unknown':
         return BOOK_FORM_SERVER_GENERIC;
+      default: {
+        const _exhaustive: never = err;
+        return _exhaustive;
+      }
     }
   }
 }

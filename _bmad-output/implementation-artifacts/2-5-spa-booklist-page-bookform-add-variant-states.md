@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 2-5-spa-booklist-page-bookform-add-variant-states
 created: 2026-05-16
 ---
@@ -599,7 +599,16 @@ Claude Opus 4.7 (1M context) — via `bmad-dev-story` workflow.
 - **`BookListPage` does NOT render `<app-top-chrome />`** — global app shell handles it (`app.html`). The "Settings link visible at `/books`" requirement is satisfied by `TopChrome.contextualLink` (covered by `top-chrome.spec.ts`; not retested here).
 - **`app.routes.ts` edited (one line)** — `/books` `loadComponent` now points at `BookListPage`; `books-page-placeholder.ts` deleted (zero remaining references in `spa/`).
 - **Task 6.4 (manual `npm run start` smoke)** not performed in this worktree: the worktree has no running BFF/Keycloak. Compose-level smoke is the integrator's pre-merge step.
-- **No deferred items raised during dev** — all ACs are wired green via the spec-driven path. Code review may surface defers.
+- **Code-review pass (post-dev):** zero must-fix; two should-fix applied in this story (S1 + S2 below); five nice-to-have defers logged in `deferred-work.md` as D57-D61.
+  - **S1 (applied)** — `BookForm.formatServerError` now has a `default: const _exhaustive: never = err;` branch so future `AppError` variants (e.g., Story 3.5's `resource_server_unavailable`) cause a compile-time error instead of returning `undefined`.
+  - **S2 (applied)** — Removed dead `Validators.required` on the `status` FormControl. The `<select>` has no empty option and the initial value (`'to-read'`) is always valid, so the validator was unreachable. Adds a comment documenting why.
+- **Deferred (not fixed in 2.5):**
+  - **D57** — `<input type="number">` for pages accepts decimals (`step` not set); server-side Pydantic catches.
+  - **D58** — `BookForm.onSubmit` has no synchronous double-submit guard beyond the disabled attribute; programmatic callers could race.
+  - **D59** — `BookList`'s loading state never shows during a re-fetch when `books` is already populated; explicit AC out-of-scope.
+  - **D60** — `BookListPage` does not guard against `load()` rejection; depends on Story 2.4's "load() never rejects" contract.
+  - **D61** — `BookForm` duplicates `LoginView`'s button styling rather than sharing a token / component.
+- **Re-ran tests + lint after S1 + S2 fixes:** 82/82 green, lint clean. Coverage unchanged at 91.4% statements for `book-form.ts` (S1 adds an unreachable `default` branch; S2 removes one branch — net neutral).
 
 ### File List
 
@@ -631,4 +640,5 @@ Claude Opus 4.7 (1M context) — via `bmad-dev-story` workflow.
 | Date | Note |
 | --- | --- |
 | 2026-05-16 | Dev pass complete: 17 new tests added (2 page, 5 list, 10 form); 82 total green; lint clean; coverage ≥70% on all new modules. Story moved to `review`. |
+| 2026-05-16 | Code-review pass complete: 0 must-fix; 2 should-fix applied (S1 exhaustive `never` check on `formatServerError`; S2 removed dead `Validators.required` on `status`). 5 nice-to-have defers logged (D57-D61). Tests re-run: 82/82 green; lint clean. Story moved to `done`. |
 
