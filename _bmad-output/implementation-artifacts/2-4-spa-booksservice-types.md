@@ -1,12 +1,12 @@
 ---
-status: ready-for-dev
+status: done
 story_key: 2-4-spa-booksservice-types
 created: 2026-05-16
 ---
 
 # Story 2.4: SPA — BooksService + types
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -218,36 +218,36 @@ For `setStatus` add at minimum:
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — `book.types.ts` (AC1)
-  - [ ] 1.1 Create `spa/src/app/books/book.types.ts` exporting `BookStatus`, `Book`, `BookCreate`, `BookUpdate`. Use `snake_case` for `created_at` / `updated_at` — do NOT add a `camelCase` alias.
-  - [ ] 1.2 Delete `spa/src/app/books/books-page-placeholder.ts` only if Story 2.5 has already routed `/books` to `BookListPage`. **For this story leave the placeholder alone** — `app.routes.ts` still loads it, and Story 2.5 will replace the route entry.
+- [x] Task 1 — `book.types.ts` (AC1)
+  - [x] 1.1 Create `spa/src/app/books/book.types.ts` exporting `BookStatus`, `Book`, `BookCreate`, `BookUpdate`. Use `snake_case` for `created_at` / `updated_at` — do NOT add a `camelCase` alias.
+  - [x] 1.2 Delete `spa/src/app/books/books-page-placeholder.ts` only if Story 2.5 has already routed `/books` to `BookListPage`. **For this story leave the placeholder alone** — `app.routes.ts` still loads it, and Story 2.5 will replace the route entry.
 
-- [ ] Task 2 — `AppError` + `ErrorService` (AC2, AC3, AC11)
-  - [ ] 2.1 Create folder `spa/src/app/shared/errors/`.
-  - [ ] 2.2 Create `spa/src/app/shared/errors/app-error.types.ts` with the discriminated union from AC2. **Do not** add `resource_server_unavailable` or `reading_speed_unset` — those variants land in Stories 3.5 and 4.3.
-  - [ ] 2.3 Create `spa/src/app/shared/errors/error-service.ts` with the `parse(err: unknown): AppError` mapping from AC3. Use `import { HttpErrorResponse } from '@angular/common/http'` to type-check the `instanceof` branch.
-  - [ ] 2.4 Create `spa/src/app/shared/errors/error-service.spec.ts` covering AC11.
+- [x] Task 2 — `AppError` + `ErrorService` (AC2, AC3, AC11)
+  - [x] 2.1 Create folder `spa/src/app/shared/errors/`.
+  - [x] 2.2 Create `spa/src/app/shared/errors/app-error.types.ts` with the discriminated union from AC2. **Do not** add `resource_server_unavailable` or `reading_speed_unset` — those variants land in Stories 3.5 and 4.3.
+  - [x] 2.3 Create `spa/src/app/shared/errors/error-service.ts` with the `parse(err: unknown): AppError` mapping from AC3. Use `import { HttpErrorResponse } from '@angular/common/http'` to type-check the `instanceof` branch.
+  - [x] 2.4 Create `spa/src/app/shared/errors/error-service.spec.ts` covering AC11.
 
-- [ ] Task 3 — `BooksService` skeleton + `load` / `create` / `delete` (AC4, AC5, AC6, AC9)
-  - [ ] 3.1 Create `spa/src/app/books/books-service.ts` with the class shell from AC4 — signals declared, dependencies injected via `inject(...)`, methods stubbed with `throw new Error('not implemented')`.
-  - [ ] 3.2 Implement `load()` per AC5. Use `firstValueFrom(this.http.get<Book[]>('/v1/books'))` (matches the pattern in `auth-service.ts`).
-  - [ ] 3.3 Implement `create(payload)` per AC6. `this.http.post<Book>('/v1/books', payload)`. On error, `throw this.errors.parse(err)`.
-  - [ ] 3.4 Implement `delete(id)` per AC9. `this.http.delete('/v1/books/{id}', { observe: 'response' })` is NOT needed — a successful `firstValueFrom(this.http.delete(...))` resolves on any 2xx; the 204 body is empty and Angular handles it. Just throw on error.
+- [x] Task 3 — `BooksService` skeleton + `load` / `create` / `delete` (AC4, AC5, AC6, AC9)
+  - [x] 3.1 Create `spa/src/app/books/books-service.ts` with the class shell from AC4 — signals declared, dependencies injected via `inject(...)`, methods stubbed with `throw new Error('not implemented')`.
+  - [x] 3.2 Implement `load()` per AC5. Use `firstValueFrom(this.http.get<Book[]>('/v1/books'))` (matches the pattern in `auth-service.ts`).
+  - [x] 3.3 Implement `create(payload)` per AC6. `this.http.post<Book>('/v1/books', payload)`. On error, `throw this.errors.parse(err)`.
+  - [x] 3.4 Implement `delete(id)` per AC9. `this.http.delete('/v1/books/{id}', { observe: 'response' })` is NOT needed — a successful `firstValueFrom(this.http.delete(...))` resolves on any 2xx; the 204 body is empty and Angular handles it. Just throw on error.
 
-- [ ] Task 4 — `update(id, payload)` and `setStatus(id, next)` (AC7, AC8)
-  - [ ] 4.1 Implement `update(id, payload)` per AC7. `this.http.patch<Book>('/v1/books/{id}', payload)`.
-  - [ ] 4.2 Implement `setStatus(id, next)` per AC8. Critical sequence: snapshot prior → optimistic update → fire PATCH → on success replace with server row → on failure revert + throw. Include the no-op skip (`prev === next`) and the unknown-id skip.
-  - [ ] 4.3 Cross-check: every `books.update(...)` callsite uses an immutable update (spread, map, filter — never `.push`, `.splice`, or `arr[i] = x`).
+- [x] Task 4 — `update(id, payload)` and `setStatus(id, next)` (AC7, AC8)
+  - [x] 4.1 Implement `update(id, payload)` per AC7. `this.http.patch<Book>('/v1/books/{id}', payload)`.
+  - [x] 4.2 Implement `setStatus(id, next)` per AC8. Critical sequence: snapshot prior → optimistic update → fire PATCH → on success replace with server row → on failure revert + throw. Include the no-op skip (`prev === next`) and the unknown-id skip.
+  - [x] 4.3 Cross-check: every `books.update(...)` callsite uses an immutable update (spread, map, filter — never `.push`, `.splice`, or `arr[i] = x`).
 
-- [ ] Task 5 — `books-service.spec.ts` (AC10)
-  - [ ] 5.1 Create `spa/src/app/books/books-service.spec.ts`. Use the test scaffold from `auth-service.spec.ts` as a template (TestBed setup, `httpTesting.verify()` in `afterEach`).
-  - [ ] 5.2 Add the seven test categories from AC10 (happy + error for each of the five methods, plus the four `setStatus`-specific cases).
-  - [ ] 5.3 Add the immutability assertions called for in AC10's final paragraph.
+- [x] Task 5 — `books-service.spec.ts` (AC10)
+  - [x] 5.1 Create `spa/src/app/books/books-service.spec.ts`. Use the test scaffold from `auth-service.spec.ts` as a template (TestBed setup, `httpTesting.verify()` in `afterEach`).
+  - [x] 5.2 Add the seven test categories from AC10 (happy + error for each of the five methods, plus the four `setStatus`-specific cases).
+  - [x] 5.3 Add the immutability assertions called for in AC10's final paragraph.
 
-- [ ] Task 6 — Coverage & lint verification (AC12)
-  - [ ] 6.1 `npm test -- --watch=false` — green; new test count ≥ 12.
-  - [ ] 6.2 `npm run lint` — clean.
-  - [ ] 6.3 Spot-check coverage: open `src/app/books/books-service.ts` and `src/app/shared/errors/error-service.ts` in the Vitest coverage report; both ≥70%.
+- [x] Task 6 — Coverage & lint verification (AC12)
+  - [x] 6.1 `npm test -- --watch=false` — green; new test count ≥ 12.
+  - [x] 6.2 `npm run lint` — clean.
+  - [x] 6.3 Spot-check coverage: open `src/app/books/books-service.ts` and `src/app/shared/errors/error-service.ts` in the Vitest coverage report; both ≥70%.
 
 ## Dev Notes
 
@@ -534,20 +534,69 @@ Epic 1 is closed. The only in-flight work is Story 2.1 (BFF book SQLModel) — a
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+Claude Opus 4.7 (1M context) — via `bmad-dev-story` workflow.
 
 ### Debug Log References
 
-<!-- filled by dev-story -->
+- `npm test -- --watch=false` (worktree, post-impl): 11 files / 65 tests passed (baseline was 32; +33 new tests, AC12 requirement was ≥12).
+- `npm run lint`: clean (1 finding fixed mid-implementation — `EnvelopeBody` switched from `type` alias to `interface` per `@typescript-eslint/consistent-type-definitions`).
+- `npm run test:coverage`: `app/books/books-service.ts` 100% stmts / 85% branches / 100% funcs / 100% lines; `app/shared/errors/error-service.ts` 25/25 statements covered (text reporter elides 100%-coverage files; confirmed via `coverage/spa/coverage-final.json`). Both well above the AC12 ≥70% gate.
 
 ### Completion Notes List
 
-<!-- filled by dev-story -->
+- All 12 ACs satisfied. `book.types.ts` exposes the four named exports with `snake_case` on `Book.created_at` / `Book.updated_at` per AR16. `AppError` discriminated union in `shared/errors/app-error.types.ts` deliberately omits `resource_server_unavailable` (3.5) and `reading_speed_unset` (4.3).
+- `ErrorService.parse()` is a pure, total mapping from `unknown` → `AppError`. Envelope-first branch (`isEnvelope` guard checks `typeof errorCode === 'string'`), then status fallback, then a catch-all `{ kind: 'unknown', status: 0 }` for non-`HttpErrorResponse` inputs.
+- `BooksService` uses `inject(...)` DI per AR4 / AR23, mirrors `auth-service.ts`. Signals are exposed as `WritableSignal<...>` directly (per epic AC literal — not `asReadonly()` — code review enforces "service methods are the only write paths").
+- `setStatus()` snapshot order is **strict**: `find row → guards (unknown id, prev===next) → optimistic update → fire PATCH → branch (success: replace with authoritative row; failure: revert + throw)`. Snapshot happens before any signal mutation so revert is correct.
+- All `books.update(...)` callsites use immutable updates (spread, `map`, `filter`) — no `.push`, `.splice`, or index assignment. Tests assert `service.books() !== before` after every write method.
+- `delete()` uses `firstValueFrom(http.delete(...))` and `await`s on the empty 204 body (Angular parses empty body as `null`; the resolve itself is success).
+- No changes to `app.routes.ts`, `books-page-placeholder.ts`, `app.config.ts`, or interceptors. Story 2.5 will replace the route entry.
 
 ### File List
 
-<!-- filled by dev-story -->
+New files:
+
+- `spa/src/app/books/book.types.ts`
+- `spa/src/app/books/books-service.ts`
+- `spa/src/app/books/books-service.spec.ts`
+- `spa/src/app/shared/errors/app-error.types.ts`
+- `spa/src/app/shared/errors/error-service.ts`
+- `spa/src/app/shared/errors/error-service.spec.ts`
+
+Modified files:
+
+- `_bmad-output/implementation-artifacts/2-4-spa-booksservice-types.md` (status + tasks + Dev Agent Record)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (`2-4-spa-booksservice-types: ready-for-dev → in-progress → review`)
 
 ### Change Log
 
-<!-- filled by dev-story -->
+- 2026-05-16 — Implemented Story 2.4 per ACs 1–12. SPA `BooksService` + types + baseline `AppError`/`ErrorService` (first consumer). 33 new tests, lint clean, coverage ≥70% on all four new modules. Status moved to `review`.
+- 2026-05-16 — Code review (Blind Hunter + Edge Case Hunter + Acceptance Auditor lenses): 1 patch applied (P1 — missing-id `update()` test now asserts reference change), 3 defers logged (D54/D55/D56 — concurrency + phantom-write hardening, all out of scope per story §142). Status moved to `done`.
+
+### Review Findings
+
+- [x] [Review][Patch] P1 — `update()` missing-id test (`spa/src/app/books/books-service.spec.ts:174`) named "books reference still changes from map() but row is not present" but did not assert the reference change. Added pre-seed + `expect(service.books()).not.toBe(before)` to actually exercise the immutable-map path on no-match. **Applied.**
+- [x] [Review][Defer] D54 — `setStatus()` concurrent-call snapshot races (`spa/src/app/books/books-service.ts:54-86`) — out of scope per story §142; logged in `deferred-work.md`.
+- [x] [Review][Defer] D55 — `load()` concurrent-call last-wins (`spa/src/app/books/books-service.ts:20-29`) — no AC requires de-dup; single entry-point in practice; logged.
+- [x] [Review][Defer] D56 — `update()` against unknown id triggers phantom signal write (`spa/src/app/books/books-service.ts:43-52`) — acceptable per story §152; future optimization; logged.
+
+### Senior Developer Review (AI)
+
+**Reviewer:** Claude Opus 4.7 (1M context) via `bmad-code-review` skill (Blind Hunter / Edge Case Hunter / Acceptance Auditor lenses).
+**Date:** 2026-05-16.
+**Outcome:** Approve with 1 patch applied, 3 defers logged.
+
+**Lenses run:**
+
+1. **Blind Hunter** (diff only) — surfaced 6 candidate findings, 5 dismissed as noise (story-acknowledged design choices, total-function guarantees, semantically-equivalent style). 1 actionable: P1 (test hygiene).
+2. **Edge Case Hunter** (diff + project) — surfaced 5 candidate findings. 2 dismissed as out-of-domain (BFF concerns, server-controlled ids). 3 are real but out-of-scope per story line 142 / line 152 — logged as D54 / D55 / D56.
+3. **Acceptance Auditor** (diff + spec + context) — all 12 ACs verified satisfied. No spec deviations.
+
+**Test gates re-verified after patch:** 65/65 tests pass; lint clean; `books-service.ts` + `error-service.ts` 100% statement coverage.
+
+**Action Items**
+
+- [x] P1 (low) — `update()` missing-id test reference-change assertion added. AC10 immutability-assertion coverage. File: `spa/src/app/books/books-service.spec.ts:174-189`.
+- [x] D54 (defer, low) — concurrent `setStatus` snapshot race. Out of scope per story §142. Logged in `deferred-work.md`.
+- [x] D55 (defer, low) — concurrent `load()` last-wins. Out of scope. Logged.
+- [x] D56 (defer, nit) — phantom signal write on unknown-id `update()`. Out of scope per story §152. Logged.
