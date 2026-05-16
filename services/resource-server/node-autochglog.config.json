@@ -1,0 +1,28 @@
+{
+    "outputFilepath": "RELEASE_NOTES.md",
+    "initialTag": "Upcoming release",
+    "targetBranch": "main",
+    "stripPRNumbers": true,
+    "allowedCategories": [
+      {
+        "key": "feat",
+        "label": "Features"
+      },
+      {
+        "key": "refactor",
+        "label": "Refactoring"
+      },
+      {
+        "key": "ci",
+        "label": "Integration"
+      },
+      {
+        "key": "fix",
+        "label": "Fixes"
+      },
+      {
+        "key": "docs",
+        "label": "Documentation"
+      }
+    ]
+  }

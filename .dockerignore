@@ -30,6 +30,16 @@ services/bff/docs/
 services/bff/.ruff_cache/
 services/bff/.githooks/
 
+# Resource Server-specific: tests, dev docs, archetype-emitted helpers
+# (mirrors services/resource-server/.dockerignore, which is unused with
+# the root build context — see Story 3.1 / D4). Keep build-context tight.
+services/resource-server/tests/
+services/resource-server/docs/
+services/resource-server/.ruff_cache/
+services/resource-server/.githooks/
+services/resource-server/compose/
+services/resource-server/scripts/
+
 # Local environment files (never bake secrets into images)
 **/.env
 **/.env.local

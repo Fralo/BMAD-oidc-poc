@@ -1,0 +1,119 @@
+services:
+
+  mariadb:
+    container_name: mariadb
+    image: mariadb:11
+    ports:
+      - "3306:3306"
+    environment:
+      - MARIADB_DATABASE=${DATABASE_NAME}
+      - MARIADB_USER=${DATASOURCE_USER}
+      - MARIADB_PASSWORD=${DATASOURCE_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DATASOURCE_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mariadb/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - resource-server-net
+
+  resource-server:
+    build:
+      context: ${APP_CONTEXT_PATH}
+      dockerfile: ${APP_DOCKERFILE_PATH}
+    container_name: resource-server
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    environment:
+      - DATABASE_URL=mysql+pymysql://${DATASOURCE_USER}:${DATASOURCE_PASSWORD}@mariadb:3306/${DATABASE_NAME}
+      - APP_NAME=${APP_NAME}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - OTEL_EXPORT_ENABLED=${OTEL_EXPORT_ENABLED}
+      - OTEL_EXPORTER_ENDPOINT=${OTEL_EXPORTER_ENDPOINT}
+      - AUTH_TYPE=${AUTH_TYPE}
+      - AUTH_EXTERNAL_ISSUER=${AUTH_EXTERNAL_ISSUER:-}
+      - AUTH_EXTERNAL_AUDIENCE=${AUTH_EXTERNAL_AUDIENCE:-}
+      - AUTH_EXTERNAL_DISCOVERY_URI=${AUTH_EXTERNAL_DISCOVERY_URI:-}
+      - AUTH_EXTERNAL_JWKS_URI=${AUTH_EXTERNAL_JWKS_URI:-}
+      - AUTH_EXTERNAL_TOKEN_URI=${AUTH_EXTERNAL_TOKEN_URI:-}
+      - AUTH_EXTERNAL_CLIENT_ID=${AUTH_EXTERNAL_CLIENT_ID:-}
+      - AUTH_EXTERNAL_CLIENT_SECRET=${AUTH_EXTERNAL_CLIENT_SECRET:-}
+    networks:
+      - resource-server-net
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana-oss
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      GF_SERVER_HTTP_PORT: 3001
+    networks:
+      - resource-server-net
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./observability/grafana/storage:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+  jaeger-all-in-one:
+    image: jaegertracing/all-in-one:latest
+    restart: always
+    networks:
+      - resource-server-net
+    ports:
+      - "16686:16686"
+      - "14268"
+      - "14250"
+
+  otel-collector:
+    image: ${OTELCOL_IMG}
+    restart: always
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "1888:1888"
+      - "8888:8888"
+      - "8889:8889"
+      - "13133:13133"
+      - "4317:4317"
+      - "4318:4318"
+      - "55679:55679"
+    networks:
+      - resource-server-net
+    depends_on:
+      - jaeger-all-in-one
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - resource-server-net
+
+networks:
+  resource-server-net:
+
+volumes:
+  mariadb-data:
