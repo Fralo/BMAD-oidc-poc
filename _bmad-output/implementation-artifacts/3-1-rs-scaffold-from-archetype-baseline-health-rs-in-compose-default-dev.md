@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev
 epic: 3
 prerequisites: epic-1 (done — BFF + Keycloak + SPA + Playwright harness merged); 1-3 (done — archetype-scaffold pattern established); 1-12/1-14 (done — `compose/app.e2e.yml` overlay pattern and BFF multi-stage Dockerfile in main)
@@ -9,7 +9,7 @@ specLoopIteration: 1
 
 # Story 3.1: RS scaffold from archetype + baseline health + RS in compose (default/dev)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -539,3 +539,54 @@ claude-opus-4-7 (Claude Code, bmad-dev-story workflow)
 - `_bmad-output/implementation-artifacts/3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev.md` — frontmatter `status: ready-for-dev` → `review`; story-block status header `ready-for-dev` → `review`; populated `Dev Agent Record` (this section); checked off all Tasks/Subtasks.
 
 **Untouched (verified):** `CLAUDE.md`, root `.env.example`, root `README.md`, `docker-compose.yml` `include:` block, `compose/infra.yml`, `compose/app.e2e.yml`, `keycloak/**`, `services/bff/**`, `spa/**`, `e2e/**`.
+
+## Review Findings
+
+Code review run on 2026-05-16 against `baseline_commit: be13571` (the 3 dev-story commits on `E3S1`: `2487ea6` scaffold + baseline `/health`, `24327d4` Dockerfile + compose wiring, `be13571` review-status flip). Three adversarial review layers ran inline (no parallel subagent harness available in this session): Blind Hunter (diff-only), Edge Case Hunter (diff + project read), Acceptance Auditor (diff + spec + project read). Findings normalized, deduped, and triaged. **Summary: 0 decision-needed, 1 patch, 5 deferred, 5 dismissed as noise.**
+
+### Decision-needed
+
+None — every finding was unambiguously a patch, defer, or dismiss.
+
+### Patch — applied 2026-05-16
+
+- [x] [Review][Patch] **CR1 — Add the 6 missing `_validate_oidc_required_fail_fast` tests** [`services/resource-server/tests/core/test_config.py`] — Spec Dev Notes line 394 explicitly required "Two tests per field (missing + whitespace-only)" for `OIDC_ISSUER_URL` / `OIDC_JWKS_URL` / `OIDC_AUDIENCE`. Dev-story shipped the validator (`core/config.py:114-139`) but no tests for it; the raise path (lines 133-138) was uncovered (visible in `pytest --cov` line-miss report). Six tests added: `test_oidc_issuer_url_required_{missing,whitespace}`, `test_oidc_jwks_url_required_{missing,whitespace}`, `test_oidc_audience_required_{missing,whitespace}`. Each `monkeypatch.delenv` or `setenv("   ")` for one var, asserts `ValidationError` matching the field-specific message. Test count 165 → 171; coverage 98.06% → **98.42%**; `core/config.py` raise path now covered. **APPLIED.**
+
+### Deferred
+
+See `_bmad-output/implementation-artifacts/deferred-work.md` "Deferred from: code review of 3-1-..." (D54–D58) for full text.
+
+- [x] [Review][Defer] **D54 — `/health` runs the three probes sequentially, not in parallel** [`services/resource-server/src/resource_server/api/health.py:160-164`] — Worst-case latency ~15-17s when JWKS is unreachable; `asyncio.gather` would cap at the slowest single probe. Spec explicitly endorses sequential ("for code symmetry / simpler debugging") and matches the BFF analog. Belongs to a future cross-service performance pass.
+- [x] [Review][Defer] **D55 — OTEL + Prometheus runtime deps still in `pyproject.toml`** [`services/resource-server/pyproject.toml:13-17`] — Archetype-mandated; `main.py` does not import them per the 2026-05-14 sprint-change cut. Image-size / supply-chain noise; same posture as BFF Story 1.3. Belongs to a coordinated archetype-upstream pass.
+- [x] [Review][Defer] **D56 — `tests/observability/test_otel.py` exercises dead code** [`services/resource-server/tests/observability/test_otel.py`] — `otel.setup_otel(settings)` is never invoked by `main.py`. Test passes but asserts on excised wiring. Drop or repurpose as a guardrail in a cleanup pass.
+- [x] [Review][Defer] **D57 — `_validate_external_auth_requirements` has dead `if/pass / else:` branch** [`services/resource-server/src/resource_server/core/config.py:142-144`] — Archetype-emitted style oddity, functionally identical to `if self.auth_type == "entra":`. Pre-existing on BFF too. Coordinated archetype-upstream pass.
+- [x] [Review][Defer] **D58 — `_check_jwks` does not allow `verify=False` for self-signed dev IdPs** [`services/resource-server/src/resource_server/api/health.py:135-138`] — Production correctness unaffected (Keycloak is HTTP-only in-cluster). Likely re-surfaces in Story 3.2 when `oidc_bearer` shares the JWKS URL with a synthetic IdP harness.
+
+### Dismissed (not actioned)
+
+- **`/v1` and `/v2` empty `APIRouter` mounts** [`services/resource-server/src/resource_server/main.py:67-69`] — Both routers have no routes; `app.include_router` with empty prefix-only routers is a no-op. AC #5's "HTTP surface in scope is `/health` only" speaks to handler routes, not router mounts. Verified via `app.routes` enumeration — only `/health` (+ FastAPI's built-in `/docs`, `/redoc`, `/openapi.json`) are exposed.
+- **`/docs`, `/redoc`, `/openapi.json` exposed by FastAPI default** — Archetype default, matches BFF posture. Not a "handler surface" per AC #5's intent; documentation endpoints, not domain endpoints.
+- **`auth/entra.py` carved out of coverage despite the archetype shipping real entra tests** [`services/resource-server/pyproject.toml:102`] — Spec line 38 explicitly endorses the carve-out; Story 3.2 will replace `entra.py` with `oidc_bearer.py` anyway.
+- **`_check_jwks` accepts `{"keys": []}` as success** — Spec AC #4.c + test case #9 explicitly endorse this (liveness probe, not key-rotation probe). Empty `keys` is normal during Keycloak key-cache warm-up.
+- **`tests/conftest.py` sets `OIDC_*` placeholders at module import** [`services/resource-server/tests/conftest.py:20-25`] — Required because `from resource_server.main import app` triggers the fail-fast validator. Intentional.
+
+### Acceptance Auditor verdict table
+
+| AC | Status | Note |
+|----|--------|------|
+| 1  | MET | Archetype clone exists at pinned SHA `04db49c` (verified via dev log); `tools/fastapi-archetype/` matches the existing `.gitignore` rule; no archetype files in `git status` |
+| 2  | MET | `services/resource-server/` tree matches the archetype's standard layout (modulo Story 1.3 empirical findings already documented); `main.py` is the entry; `--no-demo` dangling-import cleanup applied |
+| 3  | MET | After CR1 patch: `uv sync --frozen` exit 0; `ruff check` clean; `ruff format --check` clean; `ty check` clean; `pytest --cov` 171 passed at **98.42%** (>90% required) |
+| 4  | MET | `/health` returns 200 `{"status":"ok"}` when DB+Alembic+JWKS all pass; 503 + `SERVICE_UNAVAILABLE` envelope (sanitized labels) on failure; verbose detail logged WARNING server-side; unauthenticated; no `/metrics`; no OTEL exporter wiring; AR19 timeouts (5s/10s/0 retries); follows 3xx redirects |
+| 5  | MET | Only `/health` is mounted as a handler (verified via route enumeration); `/v1` and `/v2` routers have zero routes; no `/api/me`, no `/auth/*` |
+| 6  | MET | `SERVICE_UNAVAILABLE = ("service_unavailable", ..., 503)` in `core/errors.py`; no premature §C5 enum members |
+| 7  | MET | Multi-stage `python:3.14-slim` only (no Node stage); `uv` mounted from `ghcr.io/astral-sh/uv:0.10.7`; `/data` owned by `app:app`; stdlib HEALTHCHECK probes `/health`; `ENTRYPOINT ["/app/entrypoint.sh"]` runs `alembic upgrade head` → `exec uvicorn resource_server.main:app` |
+| 8  | MET | `rs_data` named volume declared in `compose/app.yml` `volumes:` block; RS service mounts it at `/data`; `RS_DATABASE_URL=sqlite+aiosqlite:////data/rs.db` |
+| 9  | MET | `resource-server` service block has root `build.context: ..`, `container_name`, `env_file`, volume mount, `depends_on: keycloak.service_healthy`, single-line CMD-list healthcheck, `profiles: [default, dev]`, `restart: unless-stopped`, **no `ports:`**, **no `e2e` profile** |
+| 10 | MET | BFF service block in `compose/app.yml` is byte-for-byte unchanged (`git diff` shows only RS service + `rs_data` volume added); BFF `depends_on` does NOT gain `resource-server` |
+| 11 | MET | `services/resource-server/.env.example` ships the RS-only AR29 subset; BFF-only vars (`OIDC_CLIENT_ID`, `BFF_*`) are absent; required-fail-fast validators on the three OIDC fields; CR1 patch added the missing tests |
+| 12 | MET | Root build context, root `.dockerignore` amended with RS-specific exclusions; `services/resource-server/.dockerignore` kept for documentation parity |
+| 13 | MET | `docker compose --profile default config` exits 0 after the three-file `.env` bootstrap; renders the `resource-server` service block, `rs_data` volume, and the unchanged `bff` + `keycloak` blocks (verified) |
+| 14 | MET | Files outside `services/resource-server/`, `compose/app.yml`, `.dockerignore`, and the BMAD bookkeeping files are bit-for-bit identical to the pre-story state; verified via `git diff epic-3..E3S1 --name-status` |
+
+**Verdict:** All 14 ACs **MET** after CR1 applied. Story moves `review` → `done`.
