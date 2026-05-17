@@ -26,9 +26,13 @@ class ErrorCode(enum.Enum):
     )
     AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
     CSRF_INVALID = ("csrf_invalid", "CSRF token missing or invalid", 403)
+    # CR8: message kept generic so Epic 4 Story 4.2's compute-estimate path
+    # can reuse the same envelope without claiming "reading-speed" on an
+    # estimate failure. The SPA renders its own UX-DR12 copy
+    # ("Service unavailable — try again shortly") regardless of this text.
     RESOURCE_SERVER_UNAVAILABLE = (
         "resource_server_unavailable",
-        "The reading-speed service is temporarily unavailable",
+        "The resource server is temporarily unavailable",
         503,
     )
 

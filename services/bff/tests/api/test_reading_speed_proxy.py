@@ -275,6 +275,49 @@ async def test_put_body_forwarded_verbatim_no_sub_no_query(
     assert "?" not in captured_url[0]
 
 
+# CR2: PUT body validates with `extra="forbid"` so a client cannot smuggle
+# unknown fields (e.g., `sub`) through to the RS.
+
+
+async def test_cr2_put_rejects_unknown_fields(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """A client attempting to inject `sub` (or any extra key) gets 422 at the
+    BFF — the RS is never called. The BFF currently emits the archetype
+    default ``VALIDATION_ERROR`` envelope (deferred D81 — BFF/RS wire-code
+    parity); what matters here is that the request is rejected at the proxy
+    boundary before any RS forwarding.
+    """
+    row = await _seed_session(session)
+    _set_session_cookie(client_with_csrf, row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.put(_RS_READING_SPEED_URL).mock(
+            return_value=httpx.Response(200, json={"pages_per_hour": 30})
+        )
+        response = await client_with_csrf.put(
+            "/v1/reading-speed",
+            json={"pages_per_hour": 30, "sub": "victim-attempt"},
+        )
+    assert response.status_code == 422
+    # RS was NEVER called — the BFF rejected the body at the proxy boundary.
+    assert rs_route.call_count == 0
+
+
+async def test_cr2_put_rejects_missing_required_field(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """Empty body (missing `pages_per_hour`) is rejected at the proxy."""
+    row = await _seed_session(session)
+    _set_session_cookie(client_with_csrf, row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.put(_RS_READING_SPEED_URL).mock(
+            return_value=httpx.Response(200, json={"pages_per_hour": 30})
+        )
+        response = await client_with_csrf.put("/v1/reading-speed", json={})
+    assert response.status_code == 422
+    assert rs_route.call_count == 0
+
+
 # ---------------------------------------------------------------------------
 # 503 / transport-error tests
 # ---------------------------------------------------------------------------
@@ -469,6 +512,13 @@ async def test_refresh_failure_clears_cookies_and_returns_401(
     assert "bff_session=" in joined
     assert "csrf_token=" in joined
     assert "max-age=0" in joined
+    # CR1: the clearing Set-Cookie MUST carry SameSite=Lax (and Secure when
+    # configured) so RFC 6265bis browsers actually replace the original
+    # cookies. The plain ``delete_cookie`` shape would omit these attrs and
+    # leave the cookies in place under production cookie hardening.
+    assert "samesite=lax" in joined
+    assert "path=/" in joined
+    assert "httponly" in joined  # session cookie carries HttpOnly
 
 
 async def test_refresh_succeeds_but_retry_still_401_no_cookie_clear(

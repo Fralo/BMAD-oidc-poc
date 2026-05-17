@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route
 epic: 3
 prerequisites: 3.3 (done — RS `ReadingSpeed` model + `/v1/reading-speed` GET/PUT, scope-gated `reading-speed:read` / `reading-speed:write`, project-specific `invalid_input`/`reading_speed_unset`/`forbidden_scope`/`session_expired` lower_snake wire codes); 3.4 (done — RS `POST /v1/test/reset`; conftest patterns for fresh-app test contexts); 1.5 (done — BFF `keycloak_cookie_session.py` exchange_code/revoke/end_session pattern; `OidcVerificationError`; httpx Timeout idiom); 1.6 (done — `CsrfMiddleware`; `csrf_token` cookie + `X-CSRF-Token` header double-submit); 1.9 (done — SPA `AuthService`, `withCredentialsInterceptor` (global 401 handler skipping `/api/me`), `csrfInterceptor`, functional guards `authGuard` / `redirectIfAuthedGuard`); 1.10 (done — SPA `TopChrome` contextual link, `ErrorMessage` shared component, `/settings` route loading `SettingsPagePlaceholder` via `authGuard`)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.5: BFF `ResourceServerClient` (refresh-and-replay) + `/v1/reading-speed` GET/PUT proxy + SPA `SettingsView` + `ReadingSpeedService` + `/settings` route
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -1470,3 +1470,39 @@ claude-opus-4-7
 - `spa/src/app/app.config.ts`, `app.html`, `app.ts`, `app.css`, `app.spec.ts` — unchanged.
 - `spa/src/app/shared/ui/error-message.{ts,html,css}` — consumed unchanged.
 - `spa/src/app/shared/chrome/top-chrome.spec.ts` — Story 1.10's `/settings → Books` test already covers AC20.
+
+## Review Findings
+
+- [x] [Review][Patch] CR1 [High] Cookie-clearing on refresh-failure 401 omitted `Secure`/`SameSite` attributes → cookies not actually replaced under `BFF_SESSION_COOKIE_SECURE=True` (production). Switched `reading_speed.py` to route through the existing `auth._clear_session_cookies` helper (Story 1.5 P3) which mirrors issuance attributes exactly. Added test pin: `samesite=lax` + `httponly` + `path=/` asserted on the clearing Set-Cookie headers. [services/bff/src/bff/api/reading_speed.py:84-117 + tests/api/test_reading_speed_proxy.py:514-520]
+- [x] [Review][Patch] CR2 [High] PUT proxy parsed body as `dict[str, Any]` so a client could smuggle extra keys (incl. `sub`) verbatim — the BFF's NFR6 guarantee was relying entirely on the RS to ignore them. Introduced `ReadingSpeedPutBody(BaseModel, extra="forbid")` and forward `payload.model_dump()`. Two new tests pin the rejection: unknown-key 422 + missing-required-field 422; RS is not called on either. [services/bff/src/bff/api/reading_speed.py:51-67,172-188 + tests/api/test_reading_speed_proxy.py:278-317]
+- [x] [Review][Patch] CR3 [High] Keycloak refresh response missing/non-numeric `expires_in` left `session_row.expires_at` at its pre-refresh value (almost always in the past) → the very next request invalidated the just-refreshed session. Added module-level `_is_valid_expires_in` helper rejecting None/string/bool/0/negative/NaN/inf/>10y; `_refresh_access_token` now treats the case as `_RefreshFailed("malformed_response")` so the cookie-clearing 401 path fires explicitly. Parametrized + happy-path tests pin both branches. [services/bff/src/bff/services/resource_server_client.py:125-148,352-365,368-380 + tests/services/test_resource_server_client.py:543-696]
+- [x] [Review][Patch] CR4 [Med] `int(expires_in)` could OverflowError on `timedelta(seconds=...)` for a hostile/malformed refresh response, bypassing FR-ERROR-01. Resolved together with CR3: `_is_valid_expires_in` rejects values above `_MAX_REASONABLE_EXPIRES_IN_SEC` (10 years), so the int() coercion in `_persist_refreshed_tokens` cannot overflow. [services/bff/src/bff/services/resource_server_client.py:130-148]
+- [x] [Review][Patch] CR5 [Med] `_validate_rs_base_url` accepted `http://` with no host (path-only URL). Added `urllib.parse.urlparse` netloc check so the BFF cannot silently target a host-less URL. [services/bff/src/bff/core/config.py:142-180]
+- [x] [Review][Patch] CR6 [Med] `setTimeout` for the `justSaved` ~1s pulse was not cancelled before scheduling a new one — two saves within 1s let the first timer's `set(false)` clobber the second save's pulse. Tracked the outstanding handle on the service; clear it before scheduling the next. [spa/src/app/settings/reading-speed-service.ts:35-39,71-89]
+- [x] [Review][Patch] CR7 [Med] `ErrorService.parse` required both status AND errorCode to match — a 503 from an ingress / LB / cloud edge without the project envelope fell through to `{ kind: 'unknown' }` and rendered generic copy. Reclassified 502/503/504 by status code alone so UX-DR12 copy is consistent regardless of which proxy in the chain emitted the failure. Existing "503 with different errorCode" test rewritten to assert the new contract; new test pins 502 and 504. [spa/src/app/shared/errors/error-service.ts:33-46 + spa/src/app/shared/errors/error-service.spec.ts:48-67]
+- [x] [Review][Patch] CR8 [Low] `RESOURCE_SERVER_UNAVAILABLE` message string ("The reading-speed service is temporarily unavailable") would have leaked the future-compute-estimate semantic into Epic 4 Story 4.2's reuse of the same envelope. Generalized to "The resource server is temporarily unavailable". [services/bff/src/bff/core/errors.py:29-37]
+- [x] [Review][Patch] CR9 [Med] `oidc_issuer_url` was not required-fail-fast in `AppSettings` despite the refresh-token call constructing the token endpoint from it. An empty value produced a relative URL and `httpx.UnsupportedProtocol` on every refresh → silent logout loop. Added `_validate_oidc_issuer_url` model_validator parallel to `_validate_oidc_authorize_url_browser`; conftest seeds the test stub. [services/bff/src/bff/core/config.py:120-145 + tests/conftest.py:22-26]
+- [x] [Review][Patch] CR10 [Med] RS 2xx with a non-dict body (list/scalar — contract regression) was forwarded as `(status, None)` → JSONResponse(content=None) → JSON literal `null` → SPA `response.pages_per_hour` threw `TypeError` and classified as `{kind:'unknown'}` (no error shown). Now raises `RsUnavailable("rs_malformed_body")` for 2xx non-dict bodies so FR-ERROR-01 / UX-DR12 fires; 4xx non-dict bodies still forward (status, None) since the 4xx itself is meaningful. Three new tests pin both paths. [services/bff/src/bff/services/resource_server_client.py:296-321 + tests/services/test_resource_server_client.py:697-758]
+- [x] [Review][Defer] D80 [Med] Refresh-token rotation race under concurrent BFF requests → Story 5.2 (cross-service concurrency hardening)
+- [x] [Review][Defer] D81 [Med] BFF `validation_exception_handler` emits `VALIDATION_ERROR` not project-standard `invalid_input` → Story 5.2 (wire-code parity)
+- [x] [Review][Defer] D82 [Med] Per-call `httpx.AsyncClient` defeats pooling → Story 5.x perf pass
+- [x] [Review][Defer] D83 [Low] `httpx.AsyncClient` runs with default `follow_redirects=False` → Story 5.2
+- [x] [Review][Defer] D84 [Med] `id[:8]` log collisions + `sub` in cleartext → Story 5.2 logging hygiene
+- [x] [Review][Defer] D85 [Low] Multi-bearer concat in Authorization header → Story 5.2
+- [x] [Review][Defer] D86 [Low] SPA in-flight requests not aborted on navigate → Story 5.x UX polish
+- [x] [Review][Defer] D87 [Low] `effect()` writes signal without `allowSignalWrites` flag → Story 5.x frontend polish
+- [x] [Review][Defer] D88 [Low] `_userEdited` flag is sticky across `load()` calls → Story 5.x UX polish
+- [x] [Review][Defer] D89 [Low] Unknown-error `load()` wipes `pagesPerHour` mid-session → Story 5.x UX polish
+- [x] [Review][Defer] D90 [Low] 401-swallow tests are vacuous (no interceptor wire assertion) → test-quality cleanup
+- [x] [Review][Defer] D91 [Low] NFR6 not asserted on refresh-replay retry path → test-quality cleanup
+- [x] [Review][Defer] D92 [Low] JSONResponse(content=None) emits literal `null` body → polish pass
+- [x] [Review][Defer] D93 [Low] Naive-vs-aware datetime drift → cross-DB-portability pass
+- [x] [Review][Defer] D94 [Low] `ReadingSpeedOut` doesn't model 412 unset response → type-quality polish
+- [x] [Review][Defer] D95 [Low] Multiple `<app-error-message>` can stack → UX polish
+- [x] [Review][Defer] D96 [Low] Router has no `response_model`, OpenAPI schema empty → API-surface polish
+- [x] [Review][Defer] D97 [Med] Scope-drift after refresh produces infinite redirect loop risk → Story 5.2
+- [x] [Review][Defer] D98 [Low] `pages_per_hour` JS safe-integer overflow → UX polish
+- [x] [Review][Defer] D99 [Low] Leading-zero numeric input rejected → UX polish
+- [x] [Review][Defer] D100 [Low] `refresh_token`-absent response rejected too strictly → IdP-config defensive pass
+- [x] [Review][Defer] D101 [Low] `id[:8]` "..." literal suffix → logging-hygiene polish
+- [x] [Review][Defer] D102 [Low] `setTimeout` pulse may fire after navigate → UX polish

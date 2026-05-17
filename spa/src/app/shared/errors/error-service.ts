@@ -32,7 +32,15 @@ export class ErrorService {
     }
     const body = (err.error ?? {}) as ErrorEnvelope;
     const code = body.errorCode;
-    if (err.status === 503 && code === 'resource_server_unavailable') {
+    // CR7: classify by status code alone for 503 — a 503 response from an
+    // ingress / load balancer / cloud edge will NOT carry the project's
+    // ``{errorCode: "resource_server_unavailable"}`` envelope (it's likely
+    // HTML or a vendor-specific JSON shape). Falling through to
+    // ``{ kind: 'unknown' }`` would render the generic "Couldn't ..." copy
+    // for what is genuinely a service-unavailable condition. Map any 503
+    // (or 502 / 504) to the named state so UX-DR12 copy is consistent
+    // regardless of which proxy in the chain emitted the failure.
+    if (err.status === 503 || err.status === 502 || err.status === 504) {
       return { kind: 'resource_server_unavailable' };
     }
     if (err.status === 412 && code === 'reading_speed_unset') {

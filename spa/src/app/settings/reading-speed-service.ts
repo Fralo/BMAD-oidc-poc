@@ -36,6 +36,11 @@ export class ReadingSpeedService {
   private readonly _saveError = signal<AppError | null>(null);
   private readonly _justSaved = signal<boolean>(false);
 
+  // CR6: outstanding `_justSaved` pulse timer. Cancelled before scheduling
+  // a new one so two saves within 1s don't overlap (the first timer's
+  // `set(false)` would otherwise clobber the second save's pulse).
+  private _justSavedTimer: ReturnType<typeof setTimeout> | null = null;
+
   readonly pagesPerHour: Signal<number | null> = this._pagesPerHour.asReadonly();
   readonly loading: Signal<boolean> = this._loading.asReadonly();
   readonly loadError: Signal<AppError | null> = this._loadError.asReadonly();
@@ -78,7 +83,13 @@ export class ReadingSpeedService {
       );
       this._pagesPerHour.set(response.pages_per_hour);
       this._justSaved.set(true);
-      setTimeout(() => this._justSaved.set(false), JUST_SAVED_PULSE_MS);
+      if (this._justSavedTimer !== null) {
+        clearTimeout(this._justSavedTimer);
+      }
+      this._justSavedTimer = setTimeout(() => {
+        this._justSaved.set(false);
+        this._justSavedTimer = null;
+      }, JUST_SAVED_PULSE_MS);
     } catch (err) {
       if (err instanceof HttpErrorResponse && err.status === 401) {
         return;

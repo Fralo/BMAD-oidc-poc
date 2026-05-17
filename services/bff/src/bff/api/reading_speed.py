@@ -29,10 +29,11 @@ References
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bff.core.config import AppSettings, settings
@@ -49,6 +50,24 @@ from bff.services.session_service import SessionService
 router = APIRouter(tags=["reading-speed"])
 
 _session_service = SessionService()
+
+
+class ReadingSpeedPutBody(BaseModel):
+    """Strict request body for ``PUT /v1/reading-speed``.
+
+    CR2: ``extra="forbid"`` rejects unknown fields with 422 ``invalid_input``
+    before the BFF forwards the body to the RS. Without this guard, a client
+    could send ``{"pages_per_hour": 30, "sub": "victim"}`` and the proxy
+    would forward ``sub`` verbatim — relying entirely on the RS to ignore it
+    (it does, per architecture line 1141, but the BFF should not delegate
+    NFR6 enforcement). ``pages_per_hour`` shape itself is validated by the
+    RS (Story 3.3's ``ReadingSpeedUpsert`` enforces ``ge=1``); the BFF
+    forwards a typed integer through and trusts the RS for value
+    validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    pages_per_hour: int = Field(...)
 
 
 def _settings_dep() -> AppSettings:
@@ -93,6 +112,14 @@ def _session_terminated_response(
     is the refresh-worked-but-retry-still-401 path (AC4 case 5): the
     session stays in place; the SPA's redirect to ``/login`` will produce
     a fresh login.
+
+    CR1: routes through ``auth._clear_session_cookies`` (Story 1.5 Review
+    P3) instead of ``response.delete_cookie`` — the latter omits
+    ``secure``/``samesite`` attributes, which RFC 6265bis browsers require
+    for the deletion ``Set-Cookie`` to actually replace the existing
+    cookie under ``BFF_SESSION_COOKIE_SECURE=True`` (production). The
+    standalone ``delete_cookie`` would leave the cookies in place in
+    prod, contradicting AC4 case 4.
     """
     response = JSONResponse(
         status_code=ErrorCode.SESSION_EXPIRED.http_status,
@@ -103,8 +130,11 @@ def _session_terminated_response(
         },
     )
     if clear_cookies:
-        response.delete_cookie(cfg.bff_session_cookie_name, path="/")
-        response.delete_cookie(cfg.bff_csrf_cookie_name, path="/")
+        # Import lazily to avoid a circular import between api.auth and
+        # api.reading_speed (both are pulled in by api/v1/__init__.py).
+        from bff.api.auth import _clear_session_cookies
+
+        _clear_session_cookies(response, cfg)
     return response
 
 
@@ -141,14 +171,14 @@ async def get_reading_speed(
 @router.put("/reading-speed")
 async def put_reading_speed(
     request: Request,
-    payload: dict[str, Any],
+    payload: ReadingSpeedPutBody,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
 ) -> JSONResponse:
     session_row = await _require_session(request, db, cfg)
     try:
         status, body = await resource_server_client.put_reading_speed(
-            db, session_row, payload
+            db, session_row, payload.model_dump()
         )
     except RsSessionTerminated as exc:
         return _session_terminated_response(cfg, clear_cookies=exc.clear_cookies)

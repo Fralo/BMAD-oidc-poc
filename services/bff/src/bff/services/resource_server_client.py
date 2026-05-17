@@ -122,6 +122,32 @@ class _RefreshFailed(Exception):  # noqa: N818 -- internal classifier
         super().__init__(cause)
 
 
+# CR3 / CR4: Reasonable upper bound on ``expires_in`` so a malformed /
+# malicious refresh response cannot OverflowError on ``timedelta(seconds=...)``
+# or produce a session that "expires" past year 9999. 10 years in seconds —
+# any legitimate Keycloak refresh-grant response is several orders of
+# magnitude under this.
+_MAX_REASONABLE_EXPIRES_IN_SEC: int = 10 * 365 * 24 * 60 * 60
+
+
+def _is_valid_expires_in(value: object) -> bool:
+    """True when ``value`` is a bounded positive numeric usable for timedelta.
+
+    Rejects None, strings, bool (``True is 1`` would otherwise pass),
+    negative / zero, NaN / inf, and absurdly large values. The caller
+    surfaces a False result as ``_RefreshFailed("malformed_response")`` so
+    the cookie-clearing 401 path fires explicitly rather than silently
+    leaving ``expires_at`` stale.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if value != value or value in (float("inf"), float("-inf")):  # NaN / inf
+        return False
+    if value <= 0:
+        return False
+    return value <= _MAX_REASONABLE_EXPIRES_IN_SEC
+
+
 def _classify_transport_error(exc: httpx.HTTPError) -> str:
     """Map an httpx exception to the WARN-log classifier string."""
     if isinstance(exc, httpx.ConnectTimeout):
@@ -265,10 +291,24 @@ class ResourceServerClient:
         except ValueError:
             parsed = None
         if not isinstance(parsed, dict) and parsed is not None:
-            # The RS contract emits dicts; a list or scalar would be a
-            # contract regression. Surface it as a parse failure (None body
-            # forwarded with the original status) rather than crash the
-            # proxy router.
+            # CR10: The RS contract emits dicts; a list or scalar 2xx body
+            # is a contract regression. Previously we forwarded
+            # ``(status, None)`` which surfaced to the SPA as a 200 with the
+            # JSON literal ``null`` — calling ``.pages_per_hour`` on null
+            # threw a ``TypeError`` that classified as ``{kind: 'unknown'}``
+            # and rendered no error message. Treat a malformed 2xx body the
+            # same as a 5xx — honest FR-ERROR-01 failure so UX-DR12 copy
+            # fires.
+            if response.status_code < 400:
+                logger.warning(
+                    "resource_server_unavailable cause=rs_malformed_body "
+                    "http_status=%s parsed_type=%s",
+                    response.status_code,
+                    type(parsed).__name__,
+                )
+                raise RsUnavailable(
+                    "rs_malformed_body", http_status=response.status_code
+                )
             parsed = None
         return response.status_code, parsed
 
@@ -313,6 +353,16 @@ class ResourceServerClient:
             raise _RefreshFailed("malformed_response")
         if "access_token" not in payload or "refresh_token" not in payload:
             raise _RefreshFailed("malformed_response")
+        # CR3 / CR4: ``expires_in`` MUST be present and convertible to a
+        # bounded integer. If absent (some IdP edge configs) or invalid,
+        # ``_persist_refreshed_tokens`` would leave the stored ``expires_at``
+        # at its pre-refresh value — almost certainly already in the past —
+        # so the very next request's ``_require_session`` check would tear
+        # the just-refreshed session down. Treat the case as a refresh
+        # failure so the cookie-clearing 401 path fires explicitly instead
+        # of producing a silent boot-the-user-out-on-next-request.
+        if not _is_valid_expires_in(payload.get("expires_in")):
+            raise _RefreshFailed("malformed_response")
         return payload
 
     async def _persist_refreshed_tokens(
@@ -324,11 +374,12 @@ class ResourceServerClient:
         """Update the sessions row with the rotated tokens + expires_at."""
         session_row.access_token = tokens["access_token"]
         session_row.refresh_token = tokens["refresh_token"]
-        expires_in = tokens.get("expires_in")
-        if isinstance(expires_in, (int, float)):
-            session_row.expires_at = datetime.now(UTC) + timedelta(
-                seconds=int(expires_in)
-            )
+        # _is_valid_expires_in (called in _refresh_access_token) has already
+        # confirmed the value is a bounded int/float; the int() coercion
+        # here cannot OverflowError.
+        session_row.expires_at = datetime.now(UTC) + timedelta(
+            seconds=int(tokens["expires_in"])
+        )
         db.add(session_row)
         await db.commit()
         await db.refresh(session_row)

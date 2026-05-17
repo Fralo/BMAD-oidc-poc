@@ -45,18 +45,23 @@ describe('ErrorService.parse', () => {
     expect(service.parse(err)).toEqual({ kind: 'forbidden_scope' });
   });
 
-  it('falls through to unknown when 503 carries a different errorCode', () => {
+  // CR7: any 502/503/504 maps to resource_server_unavailable regardless of
+  // the envelope errorCode — so an ingress / load balancer / cloud edge that
+  // emits a plain 503 (no JSON body, or a vendor-specific body) still shows
+  // UX-DR12 copy. The discriminator is the HTTP status, not the wire code.
+  it('classifies 503 as resource_server_unavailable regardless of errorCode', () => {
     const err = new HttpErrorResponse({
       status: 503,
       error: { errorCode: 'service_unavailable', message: 'other', detail: null },
     });
-    const result = service.parse(err);
-    expect(result.kind).toBe('unknown');
-    if (result.kind === 'unknown') {
-      expect(result.status).toBe(503);
-      expect(result.errorCode).toBe('service_unavailable');
-      expect(result.message).toBe('other');
-    }
+    expect(service.parse(err)).toEqual({ kind: 'resource_server_unavailable' });
+  });
+
+  it('classifies 502 / 504 as resource_server_unavailable too', () => {
+    const err502 = new HttpErrorResponse({ status: 502, error: null });
+    expect(service.parse(err502)).toEqual({ kind: 'resource_server_unavailable' });
+    const err504 = new HttpErrorResponse({ status: 504, error: null });
+    expect(service.parse(err504)).toEqual({ kind: 'resource_server_unavailable' });
   });
 
   it('falls through to unknown when 412 carries a different errorCode', () => {
