@@ -1,14 +1,15 @@
 ---
-status: ready-for-dev
+status: in-progress
 story_key: 3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers
 epic: 3
 prerequisites: 3.1 (done — RS scaffold + `/health` + compose `default`/`dev` profiles); 3.2 (done — RS `oidc_bearer` + scope enforcement + synthetic-IdP harness); 3.3 (done — RS `ReadingSpeed` model + `/v1/reading-speed` GET/PUT, scope-gated); 3.4 (done — RS `POST /v1/test/reset`); 3.5 (done — BFF `ResourceServerClient` w/ refresh-and-replay + `/v1/reading-speed` proxy + SPA `SettingsPage` + `/settings` route); 1.11 (done — Playwright project + fixtures); 1.12 (done — `compose/app.e2e.yml` overlay + `${TEST_RESET_TOKEN:?...}` pattern); 1.13 (done — J1 + J5 specs; `requireEnv` pattern)
 created: 2026-05-17
+baseline_commit: fc041da
 ---
 
 # Story 3.6: E2E spec — J4 adjust reading speed + compose `e2e` profile updates + `killRs`/`startRs`/`resetState` helpers
 
-Status: ready-for-dev
+Status: in-progress
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -474,75 +475,75 @@ Capture all transcripts in the Dev Agent Record's Debug Log References.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Add `e2e` to `compose/app.yml` `resource-server` profiles list** (AC: #1)
-  - [ ] 1.1 Open `compose/app.yml`; locate the `resource-server` service block (starts at line 60). Find the `profiles: [default, dev]` line (line 98). Change to `profiles: [default, dev, e2e]`.
-  - [ ] 1.2 Update the comment block at lines 64–67 — replace "Profiles are `default` + `dev` only; the `e2e` profile addition lands in Story 3.6 paired with the `ENABLE_TEST_RESET=true` overlay and the `killRs`/`startRs`/`resetState` helper extensions." with present-tense prose describing the now-active wiring (e2e overlay in `compose/app.e2e.yml` activates `ENABLE_TEST_RESET=true` + `AUTH_TYPE=oidc_bearer`; `killRs`/`startRs` real impl lives in `e2e/fixtures/services.ts`).
-  - [ ] 1.3 `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config --services` — confirm exit 0 and `resource-server` is in the list.
+- [x] **Task 1 — Add `e2e` to `compose/app.yml` `resource-server` profiles list** (AC: #1)
+  - [x] 1.1 Open `compose/app.yml`; locate the `resource-server` service block (starts at line 60). Find the `profiles: [default, dev]` line (line 98). Change to `profiles: [default, dev, e2e]`.
+  - [x] 1.2 Update the comment block at lines 64–67 — replace "Profiles are `default` + `dev` only; the `e2e` profile addition lands in Story 3.6 paired with the `ENABLE_TEST_RESET=true` overlay and the `killRs`/`startRs`/`resetState` helper extensions." with present-tense prose describing the now-active wiring (e2e overlay in `compose/app.e2e.yml` activates `ENABLE_TEST_RESET=true` + `AUTH_TYPE=oidc_bearer`; `killRs`/`startRs` real impl lives in `e2e/fixtures/services.ts`).
+  - [x] 1.3 `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config --services` — confirm exit 0 and `resource-server` is in the list.
 
-- [ ] **Task 2 — Extend `compose/app.e2e.yml` with the `resource-server` block** (AC: #2)
-  - [ ] 2.1 Open `compose/app.e2e.yml` (currently 33 lines, BFF-only per Story 1.12).
-  - [ ] 2.2 Append a `resource-server:` block under `services:` with `ENABLE_TEST_RESET=true`, `TEST_RESET_TOKEN: "${TEST_RESET_TOKEN:?...}"`, and `AUTH_TYPE=oidc_bearer` per AC2. Keep the existing `bff:` block exactly as-is.
-  - [ ] 2.3 Update the file's header docstring to mention the RS extension in addition to the BFF one. Preserve the `include:`-vs-`-f` rationale paragraph verbatim (the Story-1.12 decision is still load-bearing).
-  - [ ] 2.4 Confirm `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` exits 0 and the `resource-server` service in the config dump shows all three env vars.
+- [x] **Task 2 — Extend `compose/app.e2e.yml` with the `resource-server` block** (AC: #2)
+  - [x] 2.1 Open `compose/app.e2e.yml` (currently 33 lines, BFF-only per Story 1.12).
+  - [x] 2.2 Append a `resource-server:` block under `services:` with `ENABLE_TEST_RESET=true`, `TEST_RESET_TOKEN: "${TEST_RESET_TOKEN:?...}"`, and `AUTH_TYPE=oidc_bearer` per AC2. Keep the existing `bff:` block exactly as-is.
+  - [x] 2.3 Update the file's header docstring to mention the RS extension in addition to the BFF one. Preserve the `include:`-vs-`-f` rationale paragraph verbatim (the Story-1.12 decision is still load-bearing).
+  - [x] 2.4 Confirm `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` exits 0 and the `resource-server` service in the config dump shows all three env vars.
 
-- [ ] **Task 3 — Modify `compose/app.yml` `playwright` service** (AC: #3, #4)
-  - [ ] 3.1 Open `compose/app.yml`; locate the `playwright:` block starting at line 101.
-  - [ ] 3.2 In `depends_on:` (current contents at lines 116-120 — bff + keycloak), add the `resource-server: { condition: service_healthy }` entry. Keep alphabetical order: bff → keycloak → resource-server.
-  - [ ] 3.3 In `volumes:` (currently a single `../e2e/test-results:/e2e/test-results` at line 142), add `- /var/run/docker.sock:/var/run/docker.sock` with a single-line comment: `# Docker-socket bind: enables killRs/startRs via host daemon. Trusted local-only; production hardening is Story 5.2 territory.`
-  - [ ] 3.4 In `environment:` (currently ends at line 139 with `KEYCLOAK_INTERNAL_URL: http://keycloak:8080`), add `RS_BASE_URL: http://resource-server:8000` and `COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-bmad-books}`. The default-fallback `:-` is correct (a wrong project name would loud-fail when `docker compose stop` finds nothing; no silent corruption).
-  - [ ] 3.5 Confirm `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` exits 0 and the `playwright` service shows all four additions.
+- [x] **Task 3 — Modify `compose/app.yml` `playwright` service** (AC: #3, #4)
+  - [x] 3.1 Open `compose/app.yml`; locate the `playwright:` block starting at line 101.
+  - [x] 3.2 In `depends_on:` (current contents at lines 116-120 — bff + keycloak), add the `resource-server: { condition: service_healthy }` entry. Keep alphabetical order: bff → keycloak → resource-server.
+  - [x] 3.3 In `volumes:` (currently a single `../e2e/test-results:/e2e/test-results` at line 142), add `- /var/run/docker.sock:/var/run/docker.sock` with a single-line comment: `# Docker-socket bind: enables killRs/startRs via host daemon. Trusted local-only; production hardening is Story 5.2 territory.`
+  - [x] 3.4 In `environment:` (currently ends at line 139 with `KEYCLOAK_INTERNAL_URL: http://keycloak:8080`), add `RS_BASE_URL: http://resource-server:8000` and `COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-bmad-books}`. The default-fallback `:-` is correct (a wrong project name would loud-fail when `docker compose stop` finds nothing; no silent corruption).
+  - [x] 3.5 Confirm `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` exits 0 and the `playwright` service shows all four additions.
 
-- [ ] **Task 4 — Extend `e2e/Dockerfile` with the Docker CLI** (AC: #5)
-  - [ ] 4.1 Open `e2e/Dockerfile` (current state: 26 lines per Story 1.11; `node:20-bookworm-slim` base; `WORKDIR /e2e`; `npm ci`; `npx playwright install --with-deps chromium`; `COPY . .`; `CMD ["npx", "playwright", "test", "--pass-with-no-tests"]`).
-  - [ ] 4.2 Insert the docker-ce-cli + docker-compose-plugin RUN layer AFTER `WORKDIR /e2e` (currently line 10) and BEFORE `COPY package.json package-lock.json ./` (line 13). The placement matters for layer caching — apt deps change less often than npm/spec churn.
-  - [ ] 4.3 Build the image: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e build playwright`. Confirm exit 0.
-  - [ ] 4.4 Smoke the CLI from a temporary container: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm playwright sh -c 'docker compose version'`. Capture the v2.x version string in the Dev Agent Record.
-  - [ ] 4.5 Leave `--pass-with-no-tests` in the `CMD` and in `e2e/package.json:7` `test` script. Once 3.6's J4 spec lands, the flag is a no-op (tests/ is non-empty), but it matches Story 1.11's documented stance.
+- [x] **Task 4 — Extend `e2e/Dockerfile` with the Docker CLI** (AC: #5)
+  - [x] 4.1 Open `e2e/Dockerfile` (current state: 26 lines per Story 1.11; `node:20-bookworm-slim` base; `WORKDIR /e2e`; `npm ci`; `npx playwright install --with-deps chromium`; `COPY . .`; `CMD ["npx", "playwright", "test", "--pass-with-no-tests"]`).
+  - [x] 4.2 Insert the docker-ce-cli + docker-compose-plugin RUN layer AFTER `WORKDIR /e2e` (currently line 10) and BEFORE `COPY package.json package-lock.json ./` (line 13). The placement matters for layer caching — apt deps change less often than npm/spec churn.
+  - [x] 4.3 Build the image: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e build playwright`. Confirm exit 0.
+  - [x] 4.4 Smoke the CLI from a temporary container: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm playwright sh -c 'docker compose version'`. Capture the v2.x version string in the Dev Agent Record.
+  - [x] 4.5 Leave `--pass-with-no-tests` in the `CMD` and in `e2e/package.json:7` `test` script. Once 3.6's J4 spec lands, the flag is a no-op (tests/ is non-empty), but it matches Story 1.11's documented stance.
 
-- [ ] **Task 5 — Create `e2e/fixtures/services.ts`** (AC: #6)
-  - [ ] 5.1 Create the file with the four exports from AC6. Use `util.promisify(child_process.execFile)`.
-  - [ ] 5.2 `isRsRunning`: parse `docker compose ps --format json resource-server`. Handle BOTH the NDJSON-per-line shape (v2.20+) and the single-array shape (older v2.x) — wrap in `try { JSON.parse(stdout) }` first; if that fails, split by `\n`, filter non-empty lines, `JSON.parse` each. Return `state === 'running'`.
-  - [ ] 5.3 `waitForRsHealthy`: poll `docker inspect --format '{{.State.Health.Status}}' resource-server` every 500ms with a 30s default timeout. Trim the output; only `healthy` returns. On timeout throw `Error('RS did not become healthy within 30000ms; last status: ${last}')`.
-  - [ ] 5.4 `stopRs`, `startRs`: `execFile('docker', ['compose', 'stop'|'start', 'resource-server'])`. Capture stdout + stderr; on rejection re-throw with both streams in the message.
-  - [ ] 5.5 Note in a module-level docstring: this module exists to keep `helpers.ts` a thin facade. Splitting the host-process plumbing out makes the harness easier to mock if anyone later writes a meta-spec for it.
+- [x] **Task 5 — Create `e2e/fixtures/services.ts`** (AC: #6)
+  - [x] 5.1 Create the file with the four exports from AC6. Use `util.promisify(child_process.execFile)`.
+  - [x] 5.2 `isRsRunning`: parse `docker compose ps --format json resource-server`. Handle BOTH the NDJSON-per-line shape (v2.20+) and the single-array shape (older v2.x) — wrap in `try { JSON.parse(stdout) }` first; if that fails, split by `\n`, filter non-empty lines, `JSON.parse` each. Return `state === 'running'`.
+  - [x] 5.3 `waitForRsHealthy`: poll `docker inspect --format '{{.State.Health.Status}}' resource-server` every 500ms with a 30s default timeout. Trim the output; only `healthy` returns. On timeout throw `Error('RS did not become healthy within 30000ms; last status: ${last}')`.
+  - [x] 5.4 `stopRs`, `startRs`: `execFile('docker', ['compose', 'stop'|'start', 'resource-server'])`. Capture stdout + stderr; on rejection re-throw with both streams in the message.
+  - [x] 5.5 Note in a module-level docstring: this module exists to keep `helpers.ts` a thin facade. Splitting the host-process plumbing out makes the harness easier to mock if anyone later writes a meta-spec for it.
 
-- [ ] **Task 6 — Extend `e2e/fixtures/helpers.ts`** (AC: #7, #8)
-  - [ ] 6.1 Open `e2e/fixtures/helpers.ts`; current `killRs` `: never` stub at line 50; `startRs` `: never` stub at line 57.
-  - [ ] 6.2 Add `import { isRsRunning, startRs as startRsService, stopRs, waitForRsHealthy } from './services';` to the import block at the top.
-  - [ ] 6.3 Replace both stubs with the `Promise<void>` implementations from AC7.
-  - [ ] 6.4 Modify the existing `resetState` at line 31 per AC8: keep the BFF POST; add the RS POST with `process.env.RS_BASE_URL ?? 'http://resource-server:8000'`; throw with distinct messages per step.
-  - [ ] 6.5 Run `cd e2e && npx tsc --noEmit`. Expect exit 0. No current callers depend on the `: never` shape — `grep -rn "killRs\|startRs" e2e/` to confirm zero existing usage before modifying.
+- [x] **Task 6 — Extend `e2e/fixtures/helpers.ts`** (AC: #7, #8)
+  - [x] 6.1 Open `e2e/fixtures/helpers.ts`; current `killRs` `: never` stub at line 50; `startRs` `: never` stub at line 57.
+  - [x] 6.2 Add `import { isRsRunning, startRs as startRsService, stopRs, waitForRsHealthy } from './services';` to the import block at the top.
+  - [x] 6.3 Replace both stubs with the `Promise<void>` implementations from AC7.
+  - [x] 6.4 Modify the existing `resetState` at line 31 per AC8: keep the BFF POST; add the RS POST with `process.env.RS_BASE_URL ?? 'http://resource-server:8000'`; throw with distinct messages per step.
+  - [x] 6.5 Run `cd e2e && npx tsc --noEmit`. Expect exit 0. No current callers depend on the `: never` shape — `grep -rn "killRs\|startRs" e2e/` to confirm zero existing usage before modifying.
 
-- [ ] **Task 7 — Create `e2e/tests/j4-adjust-speed.spec.ts`** (AC: #9, #10, #11, #12, #13, #14)
-  - [ ] 7.1 Create the file with the describe + `requireEnv` + `beforeEach` / `afterEach` from AC9.
-  - [ ] 7.2 Add the five `test(...)` blocks for AC10–AC14 in that order. Test names verbatim from the AC headers.
-  - [ ] 7.3 Use `page.locator('button.settings-save')` for the save button in AC11 / AC12 / AC13 — the accessible-name approach `getByRole('button', {name: 'Save'})` does NOT survive the label transition (see AC11's CRITICAL note). The `.settings-save` class is stable per `settings-page.html:26`.
-  - [ ] 7.4 For AC10's no-error assertion, use `page.locator('app-error-message')` — the single Angular component selector (no `data-testid` fallback needed; the component exists in the epic-3 worktree at `spa/src/app/shared/ui/error-message.ts:4`).
-  - [ ] 7.5 For AC13's 503 assertion, use `.first()` on the text locator because the load-error AND save-error paths produce the same UX-DR12 copy, so two `<app-error-message>` elements may both contain the string momentarily (load completed → loadError set → user clicks Save → saveError ALSO becomes set → both elements render).
+- [x] **Task 7 — Create `e2e/tests/j4-adjust-speed.spec.ts`** (AC: #9, #10, #11, #12, #13, #14)
+  - [x] 7.1 Create the file with the describe + `requireEnv` + `beforeEach` / `afterEach` from AC9.
+  - [x] 7.2 Add the five `test(...)` blocks for AC10–AC14 in that order. Test names verbatim from the AC headers.
+  - [x] 7.3 Use `page.locator('button.settings-save')` for the save button in AC11 / AC12 / AC13 — the accessible-name approach `getByRole('button', {name: 'Save'})` does NOT survive the label transition (see AC11's CRITICAL note). The `.settings-save` class is stable per `settings-page.html:26`.
+  - [x] 7.4 For AC10's no-error assertion, use `page.locator('app-error-message')` — the single Angular component selector (no `data-testid` fallback needed; the component exists in the epic-3 worktree at `spa/src/app/shared/ui/error-message.ts:4`).
+  - [x] 7.5 For AC13's 503 assertion, use `.first()` on the text locator because the load-error AND save-error paths produce the same UX-DR12 copy, so two `<app-error-message>` elements may both contain the string momentarily (load completed → loadError set → user clicks Save → saveError ALSO becomes set → both elements render).
 
-- [ ] **Task 8 — Update `e2e/README.md`** (AC supporting #4, #7, #8, #16)
-  - [ ] 8.1 In "Environment variables", add entries for `RS_BASE_URL` (default `http://resource-server:8000` for the compose runner; host-side workflow can't easily reach the RS — see below) and `COMPOSE_PROJECT_NAME` (default `bmad-books`).
-  - [ ] 8.2 Add a new subsection "RS killswitch (J4 + J6)" under "Running locally" documenting:
+- [x] **Task 8 — Update `e2e/README.md`** (AC supporting #4, #7, #8, #16)
+  - [x] 8.1 In "Environment variables", add entries for `RS_BASE_URL` (default `http://resource-server:8000` for the compose runner; host-side workflow can't easily reach the RS — see below) and `COMPOSE_PROJECT_NAME` (default `bmad-books`).
+  - [x] 8.2 Add a new subsection "RS killswitch (J4 + J6)" under "Running locally" documenting:
     - The runner now shells out to `docker compose stop|start resource-server` via the bound socket; `npm test` from `e2e/` on the HOST also shells out — to the same daemon if running Docker Desktop, so it works locally on macOS/Linux without changes.
     - The host-side workflow does NOT have RS published to a localhost port (architecture §F3 says only the BFF exposes a user-facing port); `resetState`'s RS POST therefore can't reach the RS from the host. Workarounds: (a) run the e2e suite via `just e2e-up` instead of host-side `npm test`, OR (b) add a temporary `ports: ["8001:8000"]` to the `resource-server` block in your local `compose/app.yml` (do NOT commit) and set `RS_BASE_URL=http://localhost:8001`. Document option (a) as canonical; (b) as ad-hoc developer workflow.
-  - [ ] 8.3 Add a "Specs in this directory" entry for `tests/j4-adjust-speed.spec.ts (Story 3.6) — J4: adjust reading speed, including freshuser unset state, Saved pulse, validation, and RS-unavailable error variants.`
-  - [ ] 8.4 Update the existing "RS test-reset extension" section: move from forward-pointer ("Story 3.6 will replace the stubs") to present-tense ("Story 3.6 replaced the stubs and extended `resetState` to also POST to the RS").
-  - [ ] 8.5 Do NOT document accessibility / responsive considerations — out of scope per project memory.
+  - [x] 8.3 Add a "Specs in this directory" entry for `tests/j4-adjust-speed.spec.ts (Story 3.6) — J4: adjust reading speed, including freshuser unset state, Saved pulse, validation, and RS-unavailable error variants.`
+  - [x] 8.4 Update the existing "RS test-reset extension" section: move from forward-pointer ("Story 3.6 will replace the stubs") to present-tense ("Story 3.6 replaced the stubs and extended `resetState` to also POST to the RS").
+  - [x] 8.5 Do NOT document accessibility / responsive considerations — out of scope per project memory.
 
-- [ ] **Task 9 — Live-stack verification** (AC: #16)
-  - [ ] 9.1 From the repo root, run `just e2e-up` (or the explicit `-f` form).
-  - [ ] 9.2 Confirm: Keycloak healthy → BFF + RS start (RS now in e2e profile per Task 1) → all three services healthy → playwright runner starts → specs run → runner exits 0 → compose tears down → final shell exit 0.
-  - [ ] 9.3 Capture the runner's `npx playwright test` summary line (specs passed / failed / duration) in the Dev Agent Record's Debug Log References.
-  - [ ] 9.4 If ANY spec fails: move to triage. Don't close based on static gates — retro P2.
+- [x] **Task 9 — Live-stack verification** (AC: #16)
+  - [x] 9.1 From the repo root, run `just e2e-up` (or the explicit `-f` form).
+  - [x] 9.2 Confirm: Keycloak healthy → BFF + RS start (RS now in e2e profile per Task 1) → all three services healthy → playwright runner starts → specs run → runner exits 0 → compose tears down → final shell exit 0.
+  - [x] 9.3 Capture the runner's `npx playwright test` summary line (specs passed / failed / duration) in the Dev Agent Record's Debug Log References.
+  - [x] 9.4 If ANY spec fails: move to triage. Don't close based on static gates — retro P2.
 
-- [ ] **Task 10 — Static gates + regression checks** (AC: #17)
-  - [ ] 10.1 `cd e2e && npx tsc --noEmit` — exit 0; capture transcript.
-  - [ ] 10.2 `cd e2e && npx playwright test --list` — exit 0; capture the list.
-  - [ ] 10.3 `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` — exit 0; capture the `playwright` and `resource-server` service blocks from the config dump.
-  - [ ] 10.4 `docker compose --profile dev config --services` and `docker compose --profile default config --services` — emit `keycloak`, `bff`, `resource-server` (NO `playwright`); capture both.
-  - [ ] 10.5 `cd services/bff && uv run pytest -q` — exit 0. No BFF code changed in 3.6, but the live `just e2e-up` exercises BFF code paths.
-  - [ ] 10.6 `cd services/resource-server && uv run pytest -q` — exit 0. Same rationale.
-  - [ ] 10.7 `cd spa && npm run lint && npm test -- --watch=false && npm run build` — exit 0 across all three.
+- [x] **Task 10 — Static gates + regression checks** (AC: #17)
+  - [x] 10.1 `cd e2e && npx tsc --noEmit` — exit 0; capture transcript.
+  - [x] 10.2 `cd e2e && npx playwright test --list` — exit 0; capture the list.
+  - [x] 10.3 `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` — exit 0; capture the `playwright` and `resource-server` service blocks from the config dump.
+  - [x] 10.4 `docker compose --profile dev config --services` and `docker compose --profile default config --services` — emit `keycloak`, `bff`, `resource-server` (NO `playwright`); capture both.
+  - [x] 10.5 `cd services/bff && uv run pytest -q` — exit 0. No BFF code changed in 3.6, but the live `just e2e-up` exercises BFF code paths.
+  - [x] 10.6 `cd services/resource-server && uv run pytest -q` — exit 0. Same rationale.
+  - [x] 10.7 `cd spa && npm run lint && npm test -- --watch=false && npm run build` — exit 0 across all three.
 
 ## Dev Notes
 
@@ -805,22 +806,95 @@ b92925c chore(3.4): code review — CR1–CR3 applied, mark done, log D74–D79
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+claude-opus-4-7 (1M context window), interactive dev session driven by `/bmad-quick-dev` workflow. Tasks 1–8 produced by a general-purpose implementer sub-agent; Tasks 9 and 10 + all the harness-defect fixes (DEF-1…DEF-6 below) executed in the parent session after the sub-agent's first live `just e2e-up` returned 9 failures.
 
 ### Debug Log References
 
-<!-- filled by dev-story -->
+**Final live run** (Story 3.6 close gate, AC16):
+
+```
+✓   1 J1: unauthenticated → /login                                (143ms)
+✓   2 J1: clicking Log in completes the OAuth round-trip          (685ms)
+✓   3 J1: protected route → return_to → after-login redirect      (395ms)
+✓   4 J4: freshuser sees the unset state on first /settings visit (643ms)
+✓   5 J4: setting a value shows the Saved pulse + persists reload (531ms)
+✓   6 J4: validation rejects pages_per_hour=0, preserves typed    (472ms)
+✓   7 J4: save while RS is down renders the named 503             (7.0s)
+✓   8 J4: load while RS is down renders the named 503             (6.9s)
+✓   9 J5: clicking Log out terminates session + re-protects       (461ms)
+✓  10 J5: refresh token revoked at Keycloak after logout          (420ms)
+10 passed (23.6s)
+EXIT_CODE=0
+```
+
+**Task 10 static gates:**
+
+- 10.1 `npx tsc --noEmit` → `TSC_OK`
+- 10.2 `npx playwright test --list` → `Total: 10 tests in 3 files`
+- 10.3 `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` → exit 0; `playwright` service shows resolver-rules-style env, the docker-socket bind, RS_BASE_URL, COMPOSE_PROJECT_NAME, BFF_BASE_URL; `resource-server` shows ENABLE_TEST_RESET=true, TEST_RESET_TOKEN, AUTH_TYPE=oidc_bearer.
+- 10.4 `docker compose --profile dev config --services` → `bff, keycloak, resource-server`; `--profile default` → same. Both exclude `playwright`. ✓
+- 10.5 `services/bff && uv run pytest -q` → **423 passed, 77 warnings in 8.98s**.
+- 10.6 `services/resource-server && uv run pytest -q` → **281 passed, 1 warning in 5.89s**.
+- 10.7 `spa && npm run lint && npm test -- --watch=false && npm run build` → lint clean, 72/72 tests pass, build emits `dist/spa/browser` clean.
 
 ### Completion Notes List
 
-<!-- filled by dev-story -->
+The story's spec-prescribed Tasks 1–8 landed as drafted. Live AC16 surfaced six previously-untested harness defects that the parent session resolved before the run could go green. None of these are 3.6-introduced regressions — they are latent gaps in Stories 1.11/1.13/3.2/3.3 that only become observable when AUTH_TYPE=oidc_bearer is flipped on AND a real OAuth round-trip runs inside the playwright container against a real Keycloak. Documented inline so future stories don't relitigate them.
+
+**DEF-1 — Chromium can't reach Keycloak (`localhost:8080`) from inside the playwright container.**
+Symptom: J1/J5 timeouts at `page.waitForURL(/realms\/bmad-books\/protocol\/openid-connect\/auth/)`. Cause: KC_HOSTNAME=localhost means the BFF's `/auth/login` 302 points the browser at `http://localhost:8080/...`; inside the runner, `localhost` is the container's own loopback and Chromium hardcodes `localhost → 127.0.0.1` (ignores `/etc/hosts`/`extra_hosts`).
+Fix: `e2e/playwright.config.ts` adds `--host-resolver-rules=MAP localhost:8080 keycloak:8080, MAP localhost:8000 bff:8000` to the chromium launchOptions, routing via compose DNS without changing OIDC_AUTHORIZE_URL_BROWSER (which would break the BFF's iss check).
+
+**DEF-2 — OAuth callback fails state-cookie validation when browser-side and Node-side base URLs diverge.**
+Symptom: After the resolver-rules fix, login form submission produced `GET /auth/callback?... HTTP/1.1 400 Bad Request` with `WARNING bff.api.auth auth_callback_state_cookie_invalid`. Cause: the playwright `E2E_BASE_URL=http://bff:8000` originally set in Story 1.13 put the SPA on `bff:8000` (which set the state cookie on the `bff` domain); after Keycloak's redirect to the registered `localhost:8000/auth/callback`, the browser sent the request to `localhost` and didn't include the `bff`-scoped state cookie.
+Fix: `compose/app.yml` playwright env now `E2E_BASE_URL=http://localhost:8000` (cookie symmetry with the BFF's registered redirect_uri); the chromium resolver-rules then route `localhost:8000` → `bff:8000` at DNS time.
+
+**DEF-3 — Playwright `request` fixture uses Node networking, not Chromium.**
+Symptom: After DEF-1/DEF-2, `resetState` POST returned `ECONNREFUSED ::1:8000` (IPv6 loopback) because the request was sent from Node, which doesn't honor chromium's resolver-rules. Same defect later struck the J5 spec's `page.request.get('/v1/test/session-debug')`.
+Fix: `e2e/fixtures/helpers.ts` `resetState` now prepends `process.env.BFF_BASE_URL ?? ''` (defaults to relative path for host-side `npm test`; compose sets `BFF_BASE_URL=http://bff:8000`). J5 spec's session-debug call was rewritten to `page.evaluate(async (t) => fetch('/v1/test/session-debug', ...))` so the fetch runs inside chromium (honors resolver-rules + auto-attaches same-origin cookies).
+
+**DEF-4 — Keycloak 26 access tokens omit `sub` from `bmad-books-bff` client by default (lightweight access tokens).**
+Symptom: After DEF-1–DEF-3, RS logs showed `WARNING resource_server.auth.oidc_bearer *** failed: MissingRequiredClaimError` on every `/v1/reading-speed` call. Decoding the actual access token confirmed `sub` was missing despite `iss`, `aud`, `exp` being present; `sid` was the substitute claim.
+Fix: `keycloak/realm-bmad-books.json` adds an explicit `sub` protocolMapper to the `bmad-books-bff` client (`oidc-usermodel-property-mapper` with `user.attribute=id`, `claim.name=sub`, `access.token.claim=true`) AND sets `client.use.lightweight.access.token.enabled: "false"` on the client attributes (belt-and-suspenders).
+
+**DEF-5 — RS `OIDC_ISSUER_URL` mismatched the iss claim Keycloak emits.**
+Symptom: After DEF-4, RS now received tokens with `sub` but rejected them with `WARNING resource_server.auth.oidc_bearer *** failed: InvalidIssuerError`. Cause: RS env had `OIDC_ISSUER_URL=http://keycloak:8080/realms/bmad-books` (compose DNS) but tokens carry `iss=http://localhost:8080/realms/bmad-books` (KC_HOSTNAME). Same browser-vs-server split the BFF already encodes via `OIDC_AUTHORIZE_URL_BROWSER`; the RS hadn't been wired for it.
+Fix: `services/resource-server/.env` (+ `.env.example`) — `OIDC_ISSUER_URL=http://localhost:8080/realms/bmad-books` (matches token iss); `OIDC_JWKS_URL` stays at compose DNS (server-side fetch). Commented inline with the pattern rationale.
+
+**DEF-6 — `docker compose up --abort-on-container-exit` is incompatible with `killRs()`-style tests.**
+Symptom: J4 AC13/AC14 calls `killRs()` (= `docker compose stop resource-server`) which makes RS exit with code 0; compose's `--abort-on-container-exit` interprets that as service crash, SIGTERMs the playwright runner mid-test, masks results.
+Fix: `Justfile` `e2e-up` recipe is now two-phase: `up -d --wait keycloak bff resource-server` → `run --rm playwright` → `down`. The runner runs synchronously, infra services are detached, and an intentional `stop resource-server` doesn't tear the runner down.
+
+**DEF-7 — J5 spec strict-mode locator collision (out-of-scope fix from Story 1.13).**
+Symptom: `getByText('Reading Time Estimator')` matched both the top-chrome brand AND the login page's "Sign in to Reading Time Estimator" headline (strict-mode violation in modern Playwright). The login page wasn't shipping that headline at Story 1.13 close time.
+Fix: `e2e/tests/j5-logout.spec.ts:51` now uses `getByText('Reading Time Estimator', { exact: true })`.
+
+**Spec-prescribed deviations:** none. All seven files the spec listed as touched in §"Files this story creates / modifies" are touched as drafted. Additional files touched (NOT in the original §): `e2e/playwright.config.ts` (DEF-1), `keycloak/realm-bmad-books.json` (DEF-4), `services/resource-server/.env` + `.env.example` (DEF-5), `Justfile` (DEF-6), `e2e/tests/j5-logout.spec.ts` (DEF-3+DEF-7). Each is justified above and tied to a specific live-AC blocker.
 
 ### File List
 
-<!-- filled by dev-story -->
+Created:
+- `e2e/fixtures/services.ts`
+- `e2e/tests/j4-adjust-speed.spec.ts`
+
+Modified (spec-prescribed):
+- `compose/app.yml` (RS profiles → `[default, dev, e2e]`; playwright service: depends_on RS healthy, docker-socket bind, RS_BASE_URL, COMPOSE_PROJECT_NAME, BFF_BASE_URL, E2E_BASE_URL=`http://localhost:8000`)
+- `compose/app.e2e.yml` (RS overlay block: ENABLE_TEST_RESET, TEST_RESET_TOKEN, AUTH_TYPE=oidc_bearer)
+- `e2e/Dockerfile` (docker-ce-cli + docker-compose-plugin apt layer)
+- `e2e/fixtures/helpers.ts` (killRs/startRs real impl; resetState extended to BFF+RS; BFF_BASE_URL plumbing per DEF-3)
+- `e2e/README.md` (RS killswitch section, RS_BASE_URL / COMPOSE_PROJECT_NAME / BFF_BASE_URL env vars, J4 entry, RS reset-extension present-tense)
+
+Modified (defect-driven, outside original §"Files this story creates / modifies"):
+- `e2e/playwright.config.ts` (DEF-1 — chromium launchOptions with `--host-resolver-rules`)
+- `e2e/tests/j5-logout.spec.ts` (DEF-3 / DEF-7 — `page.evaluate(fetch)` + exact-text locator)
+- `keycloak/realm-bmad-books.json` (DEF-4 — `sub` mapper + `client.use.lightweight.access.token.enabled: false`)
+- `services/resource-server/.env` + `.env.example` (DEF-5 — `OIDC_ISSUER_URL=http://localhost:8080/...`)
+- `Justfile` (DEF-6 — two-phase `e2e-up` recipe)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (status transitions for 3.6)
 
 ### Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-05-17 | 0.1 | Story file created. Prerequisite stories 3.1–3.5 all `done` on the `epic-3` branch (HEAD `630ee6d`). Live `just e2e-up` (AC16) is the load-bearing close gate per retro P2. | claude-opus-4-7 |
+| 2026-05-17 | 1.0 | Tasks 1–10 complete. AC16 green: 10/10 e2e specs pass live in 23.6s. Six latent harness defects (DEF-1…DEF-6) surfaced by the first live run, all fixed inline with rationale in Completion Notes. Spec deviations enumerated under File List "defect-driven" section. | claude-opus-4-7 |

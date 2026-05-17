@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 3.6 created — J4 E2E spec + compose `e2e` profile updates (RS joins profile, e2e overlay adds RS env block w/ AUTH_TYPE=oidc_bearer) + killRs/startRs real impl via docker-socket bind + resetState extended to RS; status backlog → ready-for-dev; AC16 (live `just e2e-up`) is the load-bearing close gate per retro P2)
+last_updated: 2026-05-17 (story 3.6 implementation started — baseline `fc041da`; status ready-for-dev → in-progress; epic-3 lifted backlog → in-progress; AC16 (live `just e2e-up`) is the load-bearing close gate per retro P2)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -78,7 +78,7 @@ development_status:
   3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: done
   3-4-rs-post-v1-test-reset-endpoint: done
   3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: done
-  3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: ready-for-dev
+  3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: in-progress
   epic-3-retrospective: optional
 
   # Epic 4: Reading-Time Estimate & Honest Failure (J3, J6)

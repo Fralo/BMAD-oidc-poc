@@ -61,10 +61,14 @@ services:
     # Story 3.1: Resource Server. Internal-only — the BFF reaches it at
     # http://resource-server:8000 via Docker DNS. NO `ports:` block is
     # published to the host (architecture §F3 + §I6: only the BFF container
-    # exposes a user-facing port). Profiles are `default` + `dev` only;
-    # the `e2e` profile addition lands in Story 3.6 paired with the
-    # `ENABLE_TEST_RESET=true` overlay and the `killRs`/`startRs`
-    # /`resetState` helper extensions.
+    # exposes a user-facing port). Story 3.6 widened the profiles list to
+    # `[default, dev, e2e]`; under the e2e profile the `compose/app.e2e.yml`
+    # overlay activates `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` (for
+    # `POST /v1/test/reset`, Story 3.4) and flips `AUTH_TYPE=oidc_bearer`
+    # (Story 3.2 plugin). The real `killRs`/`startRs` helper implementations
+    # live in `e2e/fixtures/services.ts` and shell out to `docker compose
+    # stop|start resource-server` via the host docker socket bound into the
+    # playwright runner.
     #
     # The BFF's existing `depends_on` is intentionally NOT modified — per
     # FR-ERROR-01 / J6, when the RS is down the BFF must surface
@@ -95,7 +99,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    profiles: [default, dev]
+    profiles: [default, dev, e2e]
     restart: unless-stopped
 
   playwright:
@@ -118,11 +122,25 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      resource-server:
+        condition: service_healthy
     environment:
-      # Override the helpers' default of http://localhost:8000 so the runner
-      # reaches the BFF via the compose network (where `localhost` would be
-      # the runner container itself).
-      E2E_BASE_URL: http://bff:8000
+      # Keep the BFF reachable from the browser under its registered hostname
+      # `localhost:8000` (the value baked into the BFF's `BFF_BASE_URL` /
+      # OIDC redirect_uri and Keycloak's client config). Cookies are domain-
+      # scoped, so the state cookie set on the SPA load must be sent on the
+      # OAuth callback — both must hit the same hostname. The chromium
+      # `--host-resolver-rules` (e2e/playwright.config.ts) remap
+      # `localhost:8000` → `bff:8000` at DNS time, so this URL works from
+      # inside the playwright container without changing the BFF's
+      # registered redirect URI or breaking cookie-domain symmetry.
+      E2E_BASE_URL: http://localhost:8000
+      # Playwright's `request` fixture uses Node networking, NOT Chromium —
+      # so it does not honor `--host-resolver-rules`. Override the BFF reset
+      # URL to compose-DNS for the helper's Node-side POST (see
+      # `e2e/fixtures/helpers.ts` `resetState`). Browser-side requests
+      # continue to use E2E_BASE_URL (above).
+      BFF_BASE_URL: http://bff:8000
       # Forwarded from the root `.env`; used by `resetState` helper. Story
       # 1.12 will register the BFF-side /v1/test/reset endpoint that this
       # token authenticates against.
@@ -137,9 +155,22 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-bmad-books-bff}
       BFF_CLIENT_SECRET: ${BFF_CLIENT_SECRET:?BFF_CLIENT_SECRET is required when the e2e profile is up}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      # Story 3.6: `resetState`'s RS-side POST targets the Resource Server
+      # on the compose network. Helper defaults to this same value when
+      # the env var is unset (host-side workflow has its own constraints —
+      # see e2e/README.md "RS killswitch (J4 + J6)").
+      RS_BASE_URL: http://resource-server:8000
+      # Story 3.6: pin Compose v2's project-name prefix so `docker compose
+      # stop|start resource-server` (issued from inside the runner via the
+      # bound docker socket) targets the right container. Without this, the
+      # runner's working directory `/e2e` would yield project name `e2e` and
+      # the lookup would resolve to nothing.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-bmad-books}
     volumes:
       # Persist trace/screenshot/video artifacts to the host after a run.
       - ../e2e/test-results:/e2e/test-results
+      # Docker-socket bind: enables killRs/startRs via host daemon. Trusted local-only; production hardening is Story 5.2 territory.
+      - /var/run/docker.sock:/var/run/docker.sock
     profiles: [e2e]
     restart: "no"
 

@@ -77,7 +77,8 @@
       "fullScopeAllowed": false,
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:8000/*"
+        "post.logout.redirect.uris": "http://localhost:8000/*",
+        "client.use.lightweight.access.token.enabled": "false"
       },
       "redirectUris": [
         "http://localhost:8000/auth/callback"
@@ -96,6 +97,20 @@
             "id.token.claim": "false",
             "access.token.claim": "true",
             "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "false",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "user.attribute": "id",
+            "claim.name": "sub",
+            "jsonType.label": "String"
           }
         }
       ],

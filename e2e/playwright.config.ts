@@ -20,6 +20,27 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          // KC_HOSTNAME=localhost + BFF's registered redirect_uri
+          // (http://localhost:8000/auth/callback) mean both the OIDC
+          // authorize redirect AND the post-auth callback point at
+          // `localhost`. Inside the playwright container, `localhost` is
+          // the runner's own loopback (Chromium hardcodes localhost →
+          // 127.0.0.1 and ignores /etc/hosts). Remap both endpoints to
+          // their compose-DNS names so the browser reaches them via the
+          // compose network without changing OIDC_AUTHORIZE_URL_BROWSER
+          // (which would break the BFF's iss check against KC_HOSTNAME)
+          // or the BFF's registered redirect_uri (which would invalidate
+          // Keycloak's redirect_uri validation).
+          args: [
+            '--host-resolver-rules=MAP localhost:8080 keycloak:8080, MAP localhost:8000 bff:8000',
+          ],
+        },
+      },
+    },
   ],
 });
