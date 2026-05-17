@@ -549,6 +549,20 @@ Option (a) is the smallest correct fix; (b)/(c) are documented for completeness 
 **Severity:** medium (deferred — the local-dev workflow is fully verified-green for J2; the compose-runner path is the canonical-CI path and is broken, but no production behavior depends on it).
 **Blocks:** Story 1.13 AC6 (originally "deferred to reviewer"), Story 1.14 AC8 ("skipped"), Story 2.7 AC13 (compose-runner half), Story 5.4 final smoke (almost certainly).
 
+**Resolution (2026-05-17, retroactive — closed-by Story 3.6):** Closed. The post-mortem above misdiagnosed the constraint: Chromium *does* honor `--host-resolver-rules` for `localhost` (it's a Chromium-level DNS override, distinct from `/etc/hosts` / `extra_hosts` which Chromium ignores for localhost). The `host.docker.internal` six-step rewiring was therefore never needed. Story 3.6 (commit `3b1af3a`, same day as this entry) shipped the actual fix as part of DEF-1 through DEF-7 — a single-line Chromium launch arg plus five coordinated supporting changes:
+
+- **DEF-1:** `e2e/playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP localhost:8080 keycloak:8080, MAP localhost:8000 bff:8000`. Both browser-facing URLs are remapped to compose-DNS at the browser's resolver level, leaving Keycloak's registered `redirectUris` / `webOrigins` (still `http://localhost:8000`) and the BFF's `OIDC_AUTHORIZE_URL_BROWSER` (still `http://localhost:8080/...`) untouched — preserving cookie-domain symmetry and the iss claim.
+- **DEF-2:** `E2E_BASE_URL=http://localhost:8000` in `compose/app.yml` playwright env (cookie symmetry with BFF's registered redirect_uri).
+- **DEF-3:** `BFF_BASE_URL=http://bff:8000` for the Node-side `request` fixture in `helpers.ts` `resetState` + `page.evaluate(fetch)` in j5 spec (Node networking does NOT honor Chromium `--host-resolver-rules`).
+- **DEF-4:** Explicit `sub` protocol mapper + `client.use.lightweight.access.token.enabled: false` on `bmad-books-bff` client (Keycloak 26 lightweight access tokens omit `sub`).
+- **DEF-5:** RS `OIDC_ISSUER_URL=http://localhost:8080/realms/bmad-books` (matches KC_HOSTNAME=localhost iss claim; compose-DNS stays for JWKS fetch).
+- **DEF-6:** `Justfile` `e2e-up` two-phase split (`up -d --wait` + `run --rm playwright` + trap-driven `down`) so J4's mid-test `killRs()` doesn't trip `--abort-on-container-exit`.
+- **DEF-7:** J5 spec `getByText('Reading Time Estimator', { exact: true })` strict-mode fix.
+
+Verification (2026-05-17, retroactive on branch `fix/w9-compose-runner-host-gateway`): `COMPOSE_PROJECT_NAME=bmad-w9-verify` + the `just e2e-up` recipe inline → **18/18 passed in 27.6s** (J1×3, J2×8, J4×5, J5×2). The compose runner path is canonical-CI ready; Story 5.4 final smoke inherits a working baseline.
+
+The "Recommended next attempt" prescription above is preserved as a record of the misdiagnosis path — do NOT apply it.
+
 ## Deferred from: code review of 3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev (2026-05-16)
 
 - **D54 — RS `/health` runs the three probes sequentially, not in parallel** — `services/resource-server/src/resource_server/api/health.py:160-164`. Worst-case latency is `DB + Alembic + JWKS_connect_timeout (5s) + JWKS_read_timeout (10s)` ≈ 15-17s when JWKS is genuinely unreachable. `asyncio.gather` over the three probes would cap latency at the slowest single probe. Story 3.1 spec explicitly endorses sequential ("for code symmetry / simpler debugging") and the BFF analog is also sequential, so this is intentional drift-free design — but the latency profile is worth revisiting when the platform sees real outage traffic against `/health`. **Belongs to:** Story 5.x performance pass, or a coordinated BFF+RS update. **Severity:** nit (probe-timing only; correctness unaffected).
