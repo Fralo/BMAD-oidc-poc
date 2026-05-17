@@ -2,10 +2,10 @@
 
 Looks up the caller's ``reading_speeds`` row via the existing
 ``reading_speed_service.get_for_user`` (Story 3.3 — reused, NOT duplicated),
-computes the integer minute count deterministically via
-``math.ceil(pages * 60 / pages_per_hour)``, and returns the ``EstimateOut``
-DTO with both ``minutes`` and the UX-DR18 ``formatted`` string the SPA
-emits verbatim.
+computes the integer minute count deterministically via ceiling integer
+division ``(pages * 60 + pages_per_hour - 1) // pages_per_hour``, and
+returns the ``EstimateOut`` DTO with both ``minutes`` and the UX-DR18
+``formatted`` string the SPA emits verbatim.
 
 The service returns the DTO directly (not the underlying entity) — a
 deliberate asymmetry vs. ``reading_speed_service`` because the formatted
@@ -14,10 +14,11 @@ string is a presentation concern best colocated with the
 see Story 4.1 Dev Notes "Why the service returns the DTO instead of the
 entity" for the rationale.
 
-Rounding rule: ``math.ceil`` (ceiling) so partial-minute reads round up
-to 1, not 0. Python's ``math.ceil`` on a float is stable for the ``(p, n)``
-ranges this story serves; see
-https://docs.python.org/3/library/math.html#math.ceil.
+Rounding rule: ceiling so partial-minute reads round up to 1, not 0.
+Computed via the integer-math identity ``ceil(a / b) == (a + b - 1) // b``
+for non-negative integers. Pure-int arithmetic (no float coercion) so the
+result is exact for arbitrary-size Python integers — no float-precision
+loss at the 2^53 mantissa boundary (Story 4.1 code-review P1).
 
 Identity discipline (NFR6 / architecture §C3 line 388): the service accepts
 ``sub`` as a parameter, and the only caller (``api/estimate.py``) passes
@@ -28,8 +29,6 @@ service is reached.
 """
 
 from __future__ import annotations
-
-import math
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,5 +57,8 @@ async def compute_for_user(session: AsyncSession, sub: str, pages: int) -> Estim
             ``reading_speed_unset`` envelope.
     """
     row = await reading_speed_service.get_for_user(session, sub)
-    minutes = int(math.ceil(pages * 60 / row.pages_per_hour))
+    # Ceiling integer division — exact for arbitrary-size Python integers.
+    # Equivalent to ``math.ceil(pages * 60 / row.pages_per_hour)`` for
+    # positive operands, without the float-coercion precision loss.
+    minutes = (pages * 60 + row.pages_per_hour - 1) // row.pages_per_hour
     return EstimateOut(minutes=minutes, formatted=format_duration(minutes))

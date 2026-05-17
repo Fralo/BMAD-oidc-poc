@@ -40,7 +40,14 @@ class EstimateOut(BaseModel):
     Two fields side by side per architecture §"Format Patterns" line 696:
     ``minutes`` (integer, for tests + numeric assertions) and ``formatted``
     (UX-DR18 string the SPA renders verbatim).
+
+    ``minutes`` carries ``ge=0`` (code-review P5) so a future formula
+    regression that produces a negative value fails as a contract violation
+    on the response side, not a 500 inside ``format_duration``. The legal
+    range for v1 is ``minutes >= 1`` (``pages >= 1`` + ``pages_per_hour >= 1``
+    + ceiling rounding); ``ge=0`` keeps the defensive ``format_duration(0)``
+    branch reachable without widening the contract.
     """
 
-    minutes: int
+    minutes: int = Field(ge=0)
     formatted: str

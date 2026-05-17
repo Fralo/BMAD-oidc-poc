@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 4.1 dev-story done — RS POST /v1/estimate + estimate_service + format_duration helper; all 12 ACs green; 100% per-file coverage; full RS suite 324/324; ruff/ruff-format/ty clean; status → review.)
+last_updated: 2026-05-17 (story 4.1 code review pass: 6 patches applied (P1 integer-math ceiling, P2 fix tautological float-coercion assertion, P3 _PREFIX escape, P4 input-sanitization across 422 family, P5 EstimateOut.minutes ge=0, P6 403 full-envelope assertion); 6 defers logged D113-D118; status → done.)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -83,7 +83,7 @@ development_status:
 
   # Epic 4: Reading-Time Estimate & Honest Failure (J3, J6)
   epic-4: in-progress
-  4-1-rs-post-v1-estimate-endpoint-estimate-service-format-duration-helper: review
+  4-1-rs-post-v1-estimate-endpoint-estimate-service-format-duration-helper: done
   4-2-bff-post-v1-books-id-estimate-resourceserverclient-compute-estimate: backlog
   4-3-spa-estimatecell-real-component-apperror-extensions-bookrow-integration: backlog
   4-4-e2e-specs-j3-estimate-j6-rs-unavailable: backlog

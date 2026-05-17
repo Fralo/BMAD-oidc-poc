@@ -21,11 +21,12 @@ domain colocated with ``estimate_service`` that consumes it.
 
 from __future__ import annotations
 
-# U+2248 ALMOST EQUAL TO. Defined as a constant so a grep for the symbol
-# lands in one place and a look-alike substitution (``≃`` U+2243 / ``~``
-# U+007E / ``∼`` U+223C) trips the boundary tests, not silently emits the
-# wrong glyph. Story 4.1 AC2.
-_PREFIX = "≈"
+# U+2248 ALMOST EQUAL TO. Defined as a constant via explicit Unicode escape
+# so a look-alike substitution (``≃`` U+2243 / ``~`` U+007E / ``∼`` U+223C)
+# via a misconfigured text-filter (smart-quotes / BOM transcoder) cannot
+# silently swap the glyph at the source level — the escape is unambiguous
+# in any encoding. Story 4.1 AC2 + code-review P3.
+_PREFIX = "\u2248"
 
 _MINUTES_PER_HOUR = 60
 _MINUTES_PER_DAY = 24 * _MINUTES_PER_HOUR

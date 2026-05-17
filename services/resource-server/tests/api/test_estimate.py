@@ -119,14 +119,23 @@ async def test_post_estimate_412_when_reading_speed_unset(
 async def test_post_estimate_403_when_only_write_scope(
     synthetic_rs_idp: SyntheticRsIdp, client: AsyncClient
 ) -> None:
-    """AC5: ``reading-speed:write`` alone is rejected by the read-scope gate."""
+    """AC5: ``reading-speed:write`` alone is rejected by the read-scope gate.
+
+    Full envelope asserted (code-review P6) — 403 is the first-of-kind
+    ``forbidden_scope`` response shape on ``/v1/estimate``, so a regression
+    that drops ``message`` or ``detail`` fails here.
+    """
     token = _make_token(synthetic_rs_idp, scope="openid reading-speed:write")
     response = await client.post(
         "/v1/estimate", json={"pages": 600}, headers=_auth_header(token)
     )
 
     assert response.status_code == 403
-    assert response.json()["errorCode"] == "forbidden_scope"
+    assert response.json() == {
+        "errorCode": "forbidden_scope",
+        "message": "Required scope is missing",
+        "detail": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +173,11 @@ async def test_post_estimate_422_when_pages_missing(
     response = await client.post("/v1/estimate", json={}, headers=_auth_header(token))
 
     assert response.status_code == 422
-    assert response.json()["errorCode"] == "invalid_input"
+    body = response.json()
+    assert body["errorCode"] == "invalid_input"
+    # Sanitization mirror (P4): no ``input`` field leaks into 422 responses.
+    for entry in body["detail"]:
+        assert "input" not in entry, f"input leaked: {entry}"
 
 
 async def test_post_estimate_422_when_pages_wrong_type(
@@ -177,7 +190,11 @@ async def test_post_estimate_422_when_pages_wrong_type(
     )
 
     assert response.status_code == 422
-    assert response.json()["errorCode"] == "invalid_input"
+    body = response.json()
+    assert body["errorCode"] == "invalid_input"
+    # Sanitization mirror (P4): no ``input`` field leaks into 422 responses.
+    for entry in body["detail"]:
+        assert "input" not in entry, f"input leaked: {entry}"
 
 
 @pytest.mark.parametrize("bad_float", [1.5, 30.5, 0.5])
@@ -194,7 +211,11 @@ async def test_post_estimate_422_rejects_non_integer_float_pages(
     )
 
     assert response.status_code == 422
-    assert response.json()["errorCode"] == "invalid_input"
+    body = response.json()
+    assert body["errorCode"] == "invalid_input"
+    # Sanitization mirror (P4): no ``input`` field leaks into 422 responses.
+    for entry in body["detail"]:
+        assert "input" not in entry, f"input leaked: {entry}"
 
 
 @pytest.mark.parametrize("bad_body", [[], "hello", 42])
@@ -210,7 +231,11 @@ async def test_post_estimate_422_when_body_not_object(
     )
 
     assert response.status_code == 422
-    assert response.json()["errorCode"] == "invalid_input"
+    body = response.json()
+    assert body["errorCode"] == "invalid_input"
+    # Sanitization mirror (P4): no ``input`` field leaks into 422 responses.
+    for entry in body["detail"]:
+        assert "input" not in entry, f"input leaked: {entry}"
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +312,11 @@ async def test_post_estimate_422_rejects_unknown_field_sub_injection(
     assert any(entry.get("type") == "extra_forbidden" for entry in body["detail"]), (
         f"expected an extra_forbidden entry in detail; got {body['detail']}"
     )
+    # Sanitization mirror (P4): no ``input`` field leaks even on the
+    # extra_forbidden path (the value the client tried to inject — e.g.,
+    # ``"victim-sub"`` — must not be echoed back).
+    for entry in body["detail"]:
+        assert "input" not in entry, f"input leaked: {entry}"
 
 
 # ---------------------------------------------------------------------------
@@ -356,20 +386,35 @@ async def test_speed_change_yields_different_estimate(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("whole_float", [600.0, 1.0, 60.0])
+@pytest.mark.parametrize(
+    ("whole_float", "expected_minutes"),
+    [
+        # pages_per_hour=30 below, so minutes = ceil(pages * 60 / 30) = pages * 2.
+        (600.0, 1200),
+        (1.0, 2),
+        (60.0, 120),
+    ],
+)
 async def test_post_estimate_accepts_whole_number_floats_as_int(
     synthetic_rs_idp: SyntheticRsIdp,
     client: AsyncClient,
     whole_float: float,
+    expected_minutes: int,
 ) -> None:
     """AC12 / Story 3.3 CR2 mirror: JSON ``600.0`` is a float at the wire
     level; Pydantic v2's ``int`` field accepts whole-number floats via
     lax coercion (``600.0`` → ``600``). Pin the behavior so a future
     tightening to ``Field(strict=True)`` surfaces as a contract change
     rather than silently breaking SPA clients that send ``Number`` values
-    (JS has no native int)."""
+    (JS has no native int).
+
+    Each row asserts a literal expected ``minutes`` — derived independently
+    from the ``ceil(pages * 60 / pages_per_hour)`` rule with
+    ``pages_per_hour=30`` — so the test would catch a regression where the
+    RS returned ``payload.pages`` verbatim (P2 code-review fix).
+    """
     await _seed_reading_speed(
-        synthetic_rs_idp, client, sub="user-floats", pages_per_hour=60
+        synthetic_rs_idp, client, sub="user-floats", pages_per_hour=30
     )
 
     token = _make_token(synthetic_rs_idp, sub="user-floats")
@@ -378,4 +423,4 @@ async def test_post_estimate_accepts_whole_number_floats_as_int(
     )
 
     assert response.status_code == 200
-    assert response.json()["minutes"] == int(whole_float * 60 / 60)
+    assert response.json()["minutes"] == expected_minutes
