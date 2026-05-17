@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded, `/health` + readiness probes, RS in compose default/dev, `ErrorCode.SERVICE_UNAVAILABLE`, required-fail-fast OIDC config, Alembic env.py reads `RS_DATABASE_URL`); 3.2 (done — `oidc_bearer` plugin, `get_authenticated_principal`, `require_scope(scope)`, `Principal.scopes: frozenset[str]`, `ErrorCode.{SESSION_EXPIRED, FORBIDDEN_SCOPE}`, synthetic-IdP harness)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.3: RS — `ReadingSpeed` model + migration + `/v1/reading-speed` GET/PUT (scope-gated)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -486,6 +486,67 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
   - [x] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated` `ready-for-dev` → `in-progress` at start, → `review` at end.
   - [x] If new defers surface during code review, append them under `## Deferred from: code review of 3-3-...` in `deferred-work.md`. Continue from D65 (the current ceiling from Story 3.2 review).
   - [x] Verify untouched-files list per AC #15.
+
+### Review Findings
+
+Code review run on 2026-05-17 against `baseline_commit: 119a25a` (the 2 dev-story commits on `worktree-story-3.3`: `f23cb3e` story creation + `7cf79ea` implementation). Three adversarial review layers ran in parallel via the Agent tool: Blind Hunter (diff-only), Edge Case Hunter (diff + project read), Acceptance Auditor (diff + spec + project read). Findings normalized, deduped (1 → race-condition was caught by both Blind + Edge), and triaged.
+
+**Summary: 0 decision-needed, 3 patches applied, 5 deferred (D66–D70), 12 dismissed as noise.**
+
+#### Patches — applied 2026-05-17
+
+- [x] [Review][Patch] **CR1 — `ReadingSpeedUpsert` admits unknown fields silently** [`services/resource-server/src/resource_server/api/schemas/reading_speed.py`] — Blind Hunter MED. Pydantic v2 defaults to `extra="ignore"`, so a client posting `{"pages_per_hour": 30, "sub": "victim-sub", "id": 999}` is silently accepted (extras dropped). Not a privilege escalation vector today (the router pulls `sub` from `principal.subject`, never from the body), but it masks client bugs and weakens the API contract. Added `model_config = ConfigDict(extra="forbid")`. **APPLIED.** Added one test pinning that `{"pages_per_hour": 30, "sub": "victim"}` is rejected as 422 `invalid_input`.
+
+- [x] [Review][Patch] **CR2 — Float-shape `pages_per_hour` not pinned by tests** [`services/resource-server/tests/api/test_reading_speed.py`] — Edge Case Hunter MED. Tests cover `0`, `-1`, `-100`, `"thirty"`, missing-field — but not floats. Pydantic v2's strict-int default rejects `1.5` (`int_from_float` error) and the JSON deserializer handles `30.0` as float→int coercion (which Pydantic strict-int also rejects in `strict` mode but accepts in lax). Added two tests pinning the current behavior: `1.5` is rejected as 422, `30.0` is rejected as 422 (Pydantic v2's `int` is strict by default for JSON-source). **APPLIED.**
+
+- [x] [Review][Patch] **CR3 — `created_at == updated_at` after INSERT not pinned** [`services/resource-server/tests/services/test_reading_speed_service.py`] — Edge Case Hunter LOW. The existing tests verify `updated_at` bumps on UPDATE and `created_at` is stable on UPDATE, but no test verifies that immediately after INSERT, `row.created_at == row.updated_at` (within a tiny tolerance). A future change to `default_factory` (e.g., decoupling the two timestamps) could silently introduce a skew. Added one test asserting `(updated_at - created_at).total_seconds() < 0.01` after a fresh `upsert(...)` insert. **APPLIED.**
+
+#### Deferred
+
+See `_bmad-output/implementation-artifacts/deferred-work.md` "Deferred from: code review of 3-3-..." (D66–D70) for full text.
+
+- [x] [Review][Defer] **D66 — No upper bound on `pages_per_hour`** [`services/resource-server/src/resource_server/api/schemas/reading_speed.py`] — Blind Hunter MED. `Field(ge=1)` allows arbitrary positives up to int64. A malicious client posting `pages_per_hour=999999999999` is persisted and later read back; downstream Story 4.1 estimate math (`pages / pages_per_hour * 60`) would yield a tiny "minutes" value (~0). Belongs to Story 4.1 (where estimate's behavior under degenerate inputs is the load-bearing concern), or a security-review pass. Real fix: `Field(ge=1, le=10000)` — 10000 pages/hour is well above any plausible human reading speed (~600 pages/hour is the elite-skim ceiling). **Severity:** medium (no current consumer; first real-world exposure is Story 4.1).
+- [x] [Review][Defer] **D67 — Empty `sub` (RFC-permitted) yields 412 not 401** [`services/resource-server/src/resource_server/auth/oidc_bearer.py:89-90` + `services/resource-server/src/resource_server/api/reading_speed.py:27`] — Edge Case Hunter LOW. Story 3.2's defensive `claims.get("sub", "")` means a JWT with `sub: ""` (RFC 7519 permits but Keycloak doesn't emit) passes `_validate_access_token`'s `require=["sub"]` check (which validates presence not non-emptiness), then `get_for_user(session, "")` returns 412 `reading_speed_unset`. Architecturally an empty `sub` should fail authentication (401). Real fix: reject empty `sub` in `_principal_from_claims` and emit `SESSION_EXPIRED`. Not user-facing because Keycloak doesn't issue empty subs; belongs to a security-review pass (Story 5.2). **Severity:** low (theoretical attack surface; no real-world hit).
+- [x] [Review][Defer] **D68 — `validation_exception_handler` defensiveness gaps** [`services/resource-server/src/resource_server/core/errors.py:77-97`] — Edge Case Hunter LOW (two related items). (a) Only one direct-handler test (`tests/core/test_errors.py::test_validation_error_via_http`) covers the registration; a future story that registers a different `RequestValidationError` handler later in app setup would silently replace this one without test failure. (b) Sanitization uses a denylist (`if k != "input"`) — a future Pydantic version adding a sensitive field (e.g., `ctx` already exists and can echo input fragments) would leak through. Real fix: assert handler registration in `tests/core/test_errors.py`, and switch to an allowlist of safe keys (`{"loc", "msg", "type", "url"}`). Belongs to a test-quality + security-review pass. **Severity:** low (defensive coding; current Pydantic version is sanitized correctly).
+- [x] [Review][Defer] **D69 — `sa.DateTime()` not `timezone=True` + ORM-only `onupdate` callable** [`services/resource-server/alembic/versions/0001_init_init_reading_speeds.py:14-15` + `services/resource-server/src/resource_server/models/entities/reading_speed.py:30-33`] — Blind Hunter LOW (two related items). (a) Migration uses `sa.DateTime()` without `timezone=True` — model stores `datetime.now(UTC)` (tz-aware), SQLite stores ISO string and naïvely round-trips, but a future PostgreSQL/MariaDB deployment would mis-convert (TIMESTAMPTZ vs TIMESTAMP). (b) `sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)}` only fires when SQLAlchemy issues an UPDATE through the ORM — raw `session.execute(update(...))` or future Alembic data migrations would NOT bump `updated_at`. Real fix: `sa.DateTime(timezone=True)` + `server_default=func.now(), onupdate=func.now()`. Belongs to a cross-database-portability pass. **Severity:** low (SQLite is fine today; this story's surface is ORM-only via SQLModel).
+- [x] [Review][Defer] **D70 — Upsert race condition is documented but not behaviorally tested** [`services/resource-server/src/resource_server/services/reading_speed_service.py:23-46`] — Blind Hunter HIGH + Edge Case Hunter MED (deduped). The SELECT-then-INSERT pattern is not atomic; two concurrent PUTs for the same `sub` can both pass the SELECT, both attempt INSERT, the second raises `IntegrityError` → 500. The service docstring explicitly endorses this ("500 is preferable to silent data loss") per the spec's design choice. No test exercises the path. A future refactor (e.g., upgrading to PostgreSQL and adopting `ON CONFLICT(sub) DO UPDATE`) would need to verify behavior at the boundary. Real fix: add a test that triggers `IntegrityError` (`session.add` two rows with same `sub` directly) and asserts the surfaced 500 envelope, OR switch to `INSERT … ON CONFLICT(sub) DO UPDATE` (dialect-aware via SQLAlchemy's `dialect.insert()`). Belongs to a test-quality / hardening pass. **Severity:** medium (real race exists; current SPA single-click pattern makes it rare).
+
+#### Dismissed (12)
+
+- **`_build_error_body` accepts `list[dict]` as detail** — Blind Hunter [QUESTION]. Verified: the signature is `detail: Any = None` (line 49 of `core/errors.py`); JSON serialization handles list[dict] natively. The BFF's equivalent handler does the same; pattern is well-established.
+- **`unique=True` flag test brittleness** — Blind Hunter [QUESTION]. The metadata test passes; SQLModel's `Field(index=True, unique=True)` does set `column.unique` on the underlying `Column` object in current SQLModel (verified by test passing).
+- **Tests rely on `session` fixture not in diff** — Blind Hunter MED. The `session` fixture exists in `tests/conftest.py` from Story 3.1 (drops + recreates `SQLModel.metadata` after each test, line 96–98 — verified by reading conftest). Per-test isolation is correct.
+- **Data leakage across tests via shared `sub` values** — Blind Hunter MED. Same as above: the `session` fixture drops + recreates the schema per test, so cross-test contamination via reused `sub` values cannot happen.
+- **`detail`-list type change is a wire contract change** — Acceptance Auditor CONCERN. Intentional per the spec; only consumer is the test suite + future BFF Story 3.5's `ResourceServerClient` which is built against the new shape.
+- **`VALIDATION_ERROR` dead enum member** — Blind Hunter LOW. Removing it would break the `tests/core/test_errors.py::test_error_code_validation_error` test which still references the archetype-emitted code; keeping it preserves backward-compatible enum surface for any archetype-internal consumer.
+- **`ReadingSpeedUnsetError.__init__` accepts unused `detail` parameter** — Blind Hunter NIT. Consistent with `AppException`'s signature; allows future callers to pass a sanitized detail string if needed.
+- **Re-construct `ReadingSpeedOut` despite `response_model` auto-coercion** — Blind Hunter NIT. Intentional explicit construction guards against future SQLModel field additions leaking via duck-typing.
+- **`from_attributes=True` not set on `ReadingSpeedOut`** — Blind Hunter NIT. Router constructs explicitly via kwarg, never coerces from an attribute-bearing object.
+- **`session.add(row)` on UPDATE path is redundant** — Edge Case Hunter NIT. SQLAlchemy auto-tracks loaded objects' attribute changes; the explicit `add` is harmless and signals intent.
+- **`scalar_one_or_none()` vs `scalars().first()`** — Edge Case Hunter NIT. Stylistic; UNIQUE index guarantees at-most-one-row, so `.first()` is correct. The BFF uses the same pattern.
+- **Filename `0001_init_init_reading_speeds.py` carries redundant `init_init`** — Edge Case Hunter NIT. Alembic autogen-message + revision-id collision artifact; matches BFF Story 1.4's `0001_init_init_sessions_and_auth_states.py` convention.
+
+#### Acceptance Auditor verdict table
+
+| AC | Status | Note |
+|----|--------|------|
+| 1  | MET | `ReadingSpeed` SQLModel exists with all required columns + UNIQUE index on `sub`; registered in `models/entities/__init__.py::__all__`. |
+| 2  | MET | `ReadingSpeedOut(pages_per_hour: int)` + `ReadingSpeedUpsert(pages_per_hour: int = Field(ge=1))` at `api/schemas/reading_speed.py`; CR1 adds `extra="forbid"`. |
+| 3  | MET | Migration at `alembic/versions/0001_init_init_reading_speeds.py` with `revision = "0001_init"`, `down_revision = None`, `create_table` + `create_index unique=True`, `import sqlmodel` restored (the autogen gotcha). Smoke-tested upgrade/downgrade. |
+| 4  | MET | `core/exceptions.py` is NEW; `ReadingSpeedUnsetError(AppException)`. |
+| 5  | MET | `ErrorCode.READING_SPEED_UNSET` (412) + `ErrorCode.INVALID_INPUT` (422); `validation_exception_handler` flipped to emit `invalid_input` with per-error `input`-field sanitization. |
+| 6  | MET | `services/reading_speed_service.py` with `get_for_user` raising `ReadingSpeedUnsetError` and `upsert` doing SELECT-then-INSERT-or-UPDATE. Async pattern is `await session.execute(select(...)).scalars().first()` (BFF parity; spec's `session.exec(...)` was sync-only). |
+| 7  | MET | `api/reading_speed.py` with scope-gated GET + PUT handlers; identity from `principal.subject`. |
+| 8  | MET | `get_session` reused from Story 3.1. |
+| 9  | MET | 412 returned for row-absent; test pins envelope `{"errorCode": "reading_speed_unset", "message": "...", "detail": None}`. |
+| 10 | MET | `sub` is read from JWT only; verified by cross-user-isolation test + handler signatures. |
+| 11 | MET | 5+5+15 tests = 25 (above spec's 23 minimum); per-file coverage 100% for both `api.reading_speed` and `services.reading_speed_service` (>> 90% gate). CR1/CR2/CR3 add 4 more tests; total 29. |
+| 12 | MET | `main.py` not modified; v1 wrapper at `api/v1/__init__.py` is the single integration point. |
+| 13 | MET | All 209 Story-3.1+3.2 tests continue green; only `tests/core/test_errors.py::test_validation_error_via_http` was updated for the wire-value flip. |
+| 14 | MET | After CR1–CR3 applied: ruff/format/ty clean; pytest 238 passed; coverage 98.07% (oidc_bearer.py + api.reading_speed.py + services.reading_speed_service.py: 100% each). Alembic round-trip verified. |
+| 15 | MET | No prohibited paths touched (CLAUDE.md, root files, compose, keycloak, services/bff, spa, e2e, RS Dockerfile/entrypoint/main.py/auth/observability/etc. all bit-for-bit identical). |
+
+**Verdict:** All 15 ACs **MET** after CR1–CR3 applied. Story moves `review` → `done`.
 
 ## Dev Notes
 

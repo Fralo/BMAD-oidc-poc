@@ -64,3 +64,24 @@ async def test_upsert_cross_user_isolation(session: AsyncSession) -> None:
     assert a.pages_per_hour == 30
     assert b.pages_per_hour == 50
     assert a.id != b.id  # truly two rows
+
+
+async def test_upsert_insert_path_sets_created_at_equal_to_updated_at(
+    session: AsyncSession,
+) -> None:
+    """CR3 — Immediately after INSERT, ``created_at`` and ``updated_at``
+    should be effectively equal (within μs tolerance). The bump-on-UPDATE
+    test verifies the UPDATE path; this test pins the INSERT-path invariant
+    so a future change to ``default_factory`` (e.g., decoupling the two
+    timestamps) cannot silently introduce a skew."""
+    row = await reading_speed_service.upsert(
+        session, sub="fresh-insert-user", pages_per_hour=30
+    )
+    skew_seconds = (row.updated_at - row.created_at).total_seconds()
+    # ``default_factory`` for the two fields fires at slightly different
+    # times during ``ReadingSpeed.__init__``, but the gap should be
+    # sub-millisecond on any reasonable host.
+    assert abs(skew_seconds) < 0.01, (
+        f"INSERT path produced created_at/updated_at skew of "
+        f"{skew_seconds}s (expected ~0)"
+    )

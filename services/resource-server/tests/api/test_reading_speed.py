@@ -257,3 +257,75 @@ async def test_cross_user_isolation_put_then_get(
 
     assert ga.json() == {"pages_per_hour": 30}
     assert gb.json() == {"pages_per_hour": 50}
+
+
+# ---------------------------------------------------------------------------
+# CR1–CR3 — patches applied during 2026-05-17 code review
+# ---------------------------------------------------------------------------
+
+
+async def test_put_rejects_unknown_fields_as_invalid_input(
+    synthetic_rs_idp: SyntheticRsIdp, client: AsyncClient
+) -> None:
+    """CR1 — `ReadingSpeedUpsert` carries `extra="forbid"` so unknown fields
+    are rejected as 422 `invalid_input`. Defends against client typos and
+    privilege-escalation attempts (e.g., a body trying to set `sub` directly
+    — identity must always come from the JWT)."""
+    token = _make_token(synthetic_rs_idp, scope="openid reading-speed:write")
+    response = await client.put(
+        "/v1/reading-speed",
+        json={"pages_per_hour": 30, "sub": "victim-sub"},
+        headers=_auth_header(token),
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["errorCode"] == "invalid_input"
+    # The Pydantic error specifically calls out the `extra_forbidden` rule.
+    assert any(entry.get("type") == "extra_forbidden" for entry in body["detail"]), (
+        f"expected an extra_forbidden entry in detail; got {body['detail']}"
+    )
+
+
+@pytest.mark.parametrize("bad_float", [1.5, 30.5, 0.5])
+async def test_put_rejects_non_integer_float_pages_per_hour(
+    synthetic_rs_idp: SyntheticRsIdp,
+    client: AsyncClient,
+    bad_float: float,
+) -> None:
+    """CR2 — Pydantic v2's strict-int default rejects JSON floats with a
+    non-zero fractional part (`int_from_float` error). Pin this so a future
+    `strict_mode=False` regression is caught."""
+    token = _make_token(synthetic_rs_idp, scope="openid reading-speed:write")
+    response = await client.put(
+        "/v1/reading-speed",
+        json={"pages_per_hour": bad_float},
+        headers=_auth_header(token),
+    )
+    assert response.status_code == 422
+    assert response.json()["errorCode"] == "invalid_input"
+
+
+@pytest.mark.parametrize("whole_float", [30.0, 1.0, 60.0])
+async def test_put_accepts_whole_number_floats_as_int(
+    synthetic_rs_idp: SyntheticRsIdp,
+    client: AsyncClient,
+    whole_float: float,
+) -> None:
+    """CR2 — Pin Pydantic v2's actual behavior for whole-number floats.
+
+    JSON `30.0` is a float at the wire level. Pydantic v2's `int` field
+    accepts whole-number floats via lax coercion (`30.0` → `30`) but
+    rejects fractional ones (`30.5` → 422 — covered by
+    ``test_put_rejects_non_integer_float_pages_per_hour``). Pin behavior
+    so a future tightening to `Field(strict=True)` is caught as a contract
+    change rather than silently breaking SPA clients that send `Number`
+    values (JS has no native int).
+    """
+    token = _make_token(synthetic_rs_idp, scope="openid reading-speed:write")
+    response = await client.put(
+        "/v1/reading-speed",
+        json={"pages_per_hour": whole_float},
+        headers=_auth_header(token),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"pages_per_hour": int(whole_float)}
