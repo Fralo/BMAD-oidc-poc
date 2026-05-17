@@ -1,3 +1,37 @@
-<button class="estimate-cell-button" type="button" disabled title="Available in Epic 4">
-  Estimate
-</button>
+@if (loading()) {
+  <button
+    type="button"
+    class="estimate-cell-button estimate-cell-button--primary"
+    disabled
+  >
+    Estimating…
+  </button>
+} @else if (result(); as r) {
+  <span class="estimate-cell-result">{{ r.formatted }}</span>
+  <button
+    type="button"
+    class="estimate-cell-reestimate"
+    (click)="onEstimateClick()"
+  >
+    Re-estimate
+  </button>
+} @else {
+  @if (error(); as e) {
+    @if (e.kind === 'reading_speed_unset') {
+      <p class="estimate-cell-error">
+        Set your reading speed in
+        <a routerLink="/settings" class="estimate-cell-error-link">Settings</a>
+        to enable estimates
+      </p>
+    } @else {
+      <app-error-message [message]="errorCopy()" />
+    }
+  }
+  <button
+    type="button"
+    class="estimate-cell-button estimate-cell-button--primary"
+    (click)="onEstimateClick()"
+  >
+    Estimate
+  </button>
+}

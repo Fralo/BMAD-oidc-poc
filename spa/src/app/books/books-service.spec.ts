@@ -327,4 +327,82 @@ describe('BooksService', () => {
       expect(service.books()).toBe(before);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // requestEstimate() — Story 4.3
+  // -----------------------------------------------------------------------
+  describe('requestEstimate()', () => {
+    it('happy path: POSTs {} to /v1/books/{id}/estimate, resolves with the body, does NOT mutate books signal', async () => {
+      // Pre-seed the books signal so we can assert it's untouched.
+      const existing = mkBook({ id: 1 });
+      service.books.set([existing]);
+      const before = service.books();
+
+      const pending = service.requestEstimate(1);
+      const req = httpTesting.expectOne({
+        method: 'POST',
+        url: '/v1/books/1/estimate',
+      });
+      // POST body MUST be the empty object — BFF reads pages from the local books row.
+      expect(req.request.body).toEqual({});
+      req.flush({ minutes: 260, formatted: '≈ 4 h 20 m' });
+
+      const result = await pending;
+      expect(result).toEqual({ minutes: 260, formatted: '≈ 4 h 20 m' });
+      // Books signal untouched (same reference).
+      expect(service.books()).toBe(before);
+      expect(service.loadError()).toBeNull();
+    });
+
+    it('412 reading_speed_unset: rejects with the named AppError variant', async () => {
+      const pending = service.requestEstimate(1);
+      httpTesting.expectOne('/v1/books/1/estimate').flush(
+        { errorCode: 'reading_speed_unset', message: 'unset', detail: null },
+        { status: 412, statusText: 'Precondition Failed' },
+      );
+      await expect(pending).rejects.toEqual({ kind: 'reading_speed_unset' });
+    });
+
+    it('503: rejects with resource_server_unavailable (J6 marquee failure)', async () => {
+      const pending = service.requestEstimate(7);
+      httpTesting.expectOne('/v1/books/7/estimate').flush(
+        { errorCode: 'resource_server_unavailable', message: 'down' },
+        { status: 503, statusText: 'Service Unavailable' },
+      );
+      await expect(pending).rejects.toEqual({ kind: 'resource_server_unavailable' });
+    });
+
+    it('404 book_not_found: rejects with the named AppError variant', async () => {
+      const pending = service.requestEstimate(42);
+      httpTesting.expectOne('/v1/books/42/estimate').flush(
+        { errorCode: 'book_not_found', message: 'gone' },
+        { status: 404, statusText: 'Not Found' },
+      );
+      await expect(pending).rejects.toEqual({ kind: 'book_not_found' });
+    });
+
+    it('500 unknown: rejects with kind=unknown carrying status / errorCode / message', async () => {
+      const pending = service.requestEstimate(3);
+      httpTesting.expectOne('/v1/books/3/estimate').flush(
+        { errorCode: 'unknown', message: 'boom' },
+        { status: 500, statusText: 'Server Error' },
+      );
+      await expect(pending).rejects.toEqual({
+        kind: 'unknown',
+        status: 500,
+        errorCode: 'unknown',
+        message: 'boom',
+      });
+    });
+
+    it('401 status-only fallback: rejects with session_expired', async () => {
+      const pending = service.requestEstimate(9);
+      // Non-envelope body — exercises the status-only fallback in ErrorService.
+      httpTesting.expectOne('/v1/books/9/estimate').flush(
+        null,
+        { status: 401, statusText: 'Unauthorized' },
+      );
+      await expect(pending).rejects.toEqual({ kind: 'session_expired' });
+    });
+  });
 });

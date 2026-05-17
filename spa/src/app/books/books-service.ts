@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { AppError } from '../shared/errors/app-error.types';
 import { ErrorService } from '../shared/errors/error-service';
 import { Book, BookCreate, BookStatus, BookUpdate } from './book.types';
+import { EstimateOut } from './estimate.types';
 
 @Injectable({ providedIn: 'root' })
 export class BooksService {
@@ -91,5 +92,27 @@ export class BooksService {
       throw this.errors.parse(err);
     }
     this.books.update((rows) => rows.filter((b) => b.id !== id));
+  }
+
+  /**
+   * Request a reading-time estimate for the book with the given id.
+   *
+   * The POST body is the empty object `{}` — the BFF reads `pages` from the
+   * local books row server-side (Story 4.2 contract). Result is a read-only
+   * side computation: the books signal is NOT touched, and no estimate state
+   * is stored on the service (the calling component owns it).
+   *
+   * Resolves with the parsed `{ minutes, formatted }` body on 2xx. Rejects
+   * with a parsed `AppError` on any HTTP failure — same pattern as
+   * `create` / `update` / `setStatus` / `delete`.
+   */
+  async requestEstimate(id: number): Promise<EstimateOut> {
+    try {
+      return await firstValueFrom(
+        this.http.post<EstimateOut>(`/v1/books/${id}/estimate`, {}),
+      );
+    } catch (err) {
+      throw this.errors.parse(err);
+    }
   }
 }
