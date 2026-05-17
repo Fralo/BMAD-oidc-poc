@@ -7,7 +7,7 @@
 } @else {
   <ul class="book-list-rows">
     @for (book of books(); track book.id) {
-      <li><app-book-row-placeholder [book]="book" /></li>
+      <li><app-book-row [book]="book" /></li>
     }
   </ul>
 }

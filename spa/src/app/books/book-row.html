@@ -1,0 +1,26 @@
+@if (editing()) {
+  <app-book-form
+    variant="edit"
+    [book]="book()"
+    (bookSaved)="onEditSave()"
+    (editCancelled)="onEditCancel()"
+  />
+} @else {
+  <div class="book-row" [class.has-error]="rowError() !== null">
+    <span class="book-row-title">{{ book().title }}</span>
+    <span class="book-row-pages">{{ book().pages }} pages</span>
+    <app-status-control
+      [bookId]="book().id"
+      [status]="book().status"
+      (statusChangeFailed)="onStatusChangeFailed($event)"
+    />
+    <app-estimate-cell [bookId]="book().id" [pages]="book().pages" />
+    <div class="book-row-actions">
+      <button class="book-row-action" type="button" (click)="onEditClick()">Edit</button>
+      <button class="book-row-action" type="button" (click)="onDeleteClick()">Delete</button>
+    </div>
+  </div>
+  @if (rowError(); as msg) {
+    <app-error-message [message]="msg" />
+  }
+}

@@ -9,8 +9,15 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import {
   BOOK_FORM_ADD_BUTTON_IDLE,
   BOOK_FORM_ADD_BUTTON_SUBMITTING,
+  BOOK_FORM_EDIT_BUTTON_IDLE,
+  BOOK_FORM_EDIT_BUTTON_SUBMITTING,
+  BOOK_FORM_EDIT_CANCEL_LABEL,
   BOOK_FORM_SERVER_CSRF_INVALID,
+  BOOK_FORM_SERVER_GENERIC,
   BOOK_FORM_SERVER_INVALID_INPUT,
+  BOOK_FORM_SERVER_NETWORK,
+  BOOK_FORM_SERVER_SESSION_EXPIRED,
+  BOOK_FORM_VALIDATION_MULTIPLE,
   BOOK_FORM_VALIDATION_PAGES_POSITIVE,
   BOOK_FORM_VALIDATION_PAGES_REQUIRED,
   BOOK_FORM_VALIDATION_TITLE_REQUIRED,
@@ -385,5 +392,275 @@ describe('BookForm [variant=add]', () => {
       expect(getInput(r.fixture, 'title').value).toBe('Dune');
       expect(getInput(r.fixture, 'pages').value).toBe('688');
     });
+  });
+});
+
+async function renderEditForm(book: Book): Promise<{
+  fixture: ComponentFixture<BookForm>;
+  httpTesting: HttpTestingController;
+  booksService: BooksService;
+}> {
+  await TestBed.configureTestingModule({
+    imports: [BookForm],
+    providers: [
+      provideZonelessChangeDetection(),
+      provideHttpClient(withFetch()),
+      provideHttpClientTesting(),
+    ],
+  }).compileComponents();
+
+  const fixture = TestBed.createComponent(BookForm);
+  fixture.componentRef.setInput('variant', 'edit');
+  fixture.componentRef.setInput('book', book);
+  fixture.detectChanges();
+  await fixture.whenStable();
+
+  const httpTesting = TestBed.inject(HttpTestingController);
+  const booksService = TestBed.inject(BooksService);
+  return { fixture, httpTesting, booksService };
+}
+
+function getCancelButton(fixture: ComponentFixture<BookForm>): HTMLButtonElement | null {
+  return getEl(fixture).querySelector('button.book-form-cancel') as HTMLButtonElement | null;
+}
+
+describe('BookForm [variant=edit]', () => {
+  let httpTesting: HttpTestingController;
+
+  afterEach(() => {
+    httpTesting?.verify();
+  });
+
+  it('renders pre-filled inputs, a Save primary button, and a Cancel secondary button', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'reading' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    expect(getInput(r.fixture, 'title').value).toBe('Dune');
+    expect(getInput(r.fixture, 'pages').value).toBe('688');
+    expect(getSelect(r.fixture, 'status').value).toBe('reading');
+
+    const submit = getSubmitButton(r.fixture);
+    expect(submit.textContent?.trim()).toBe(BOOK_FORM_EDIT_BUTTON_IDLE);
+    expect(submit.disabled).toBe(false);
+
+    const cancel = getCancelButton(r.fixture);
+    expect(cancel).not.toBeNull();
+    expect(cancel?.textContent?.trim()).toBe(BOOK_FORM_EDIT_CANCEL_LABEL);
+    expect(cancel?.getAttribute('type')).toBe('button');
+    expect(cancel?.disabled).toBe(false);
+  });
+
+  it('submitting state: disables both buttons and relabels Save to "Saving…"; emits save on success', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const saveSpy = vi.fn();
+    const cancelSpy = vi.fn();
+    r.fixture.componentInstance.bookSaved.subscribe(saveSpy);
+    r.fixture.componentInstance.editCancelled.subscribe(cancelSpy);
+
+    // Modify a field
+    fillInput(getInput(r.fixture, 'title'), 'Dune (revised)');
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const pending = r.fixture.componentInstance.onSubmit();
+    r.fixture.detectChanges();
+
+    const submit = getSubmitButton(r.fixture);
+    const cancel = getCancelButton(r.fixture);
+    expect(submit.disabled).toBe(true);
+    expect(submit.textContent?.trim()).toBe(BOOK_FORM_EDIT_BUTTON_SUBMITTING);
+    expect(cancel?.disabled).toBe(true);
+
+    const req = httpTesting.expectOne({ method: 'PATCH', url: '/v1/books/42' });
+    expect(req.request.body).toEqual({
+      title: 'Dune (revised)',
+      pages: 688,
+      status: 'to-read',
+    });
+    req.flush(mkBook({ id: 42, title: 'Dune (revised)', pages: 688, status: 'to-read' }));
+    await pending;
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(cancelSpy).not.toHaveBeenCalled();
+  });
+
+  it('Cancel emits cancel output and dispatches NO HTTP request', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const saveSpy = vi.fn();
+    const cancelSpy = vi.fn();
+    r.fixture.componentInstance.bookSaved.subscribe(saveSpy);
+    r.fixture.componentInstance.editCancelled.subscribe(cancelSpy);
+
+    // Modify a field then cancel
+    fillInput(getInput(r.fixture, 'title'), 'Changed');
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const cancelBtn = getCancelButton(r.fixture);
+    cancelBtn?.click();
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    httpTesting.expectNone('/v1/books/42');
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it('validation error: renders inline copy, dispatches NO HTTP request, preserves entered values, emits nothing', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const saveSpy = vi.fn();
+    const cancelSpy = vi.fn();
+    r.fixture.componentInstance.bookSaved.subscribe(saveSpy);
+    r.fixture.componentInstance.editCancelled.subscribe(cancelSpy);
+
+    // Clear the title -> invalid
+    fillInput(getInput(r.fixture, 'title'), '');
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const form = getEl(r.fixture).querySelector('form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit'));
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_VALIDATION_TITLE_REQUIRED);
+
+    httpTesting.expectNone('/v1/books/42');
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(cancelSpy).not.toHaveBeenCalled();
+    expect(getInput(r.fixture, 'title').value).toBe('');
+  });
+
+  it('validation error with multiple invalid fields: renders the multi-field copy', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    fillInput(getInput(r.fixture, 'title'), '');
+    fillInput(getInput(r.fixture, 'pages'), '0');
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const form = getEl(r.fixture).querySelector('form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit'));
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_VALIDATION_MULTIPLE);
+    httpTesting.expectNone('/v1/books/42');
+  });
+
+  it('server-error: 401 session_expired and network errors map through the exhaustive switch', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const pending = r.fixture.componentInstance.onSubmit();
+    r.fixture.detectChanges();
+    const req = httpTesting.expectOne('/v1/books/42');
+    req.flush(
+      { errorCode: 'session_expired', message: 'no session' },
+      { status: 401, statusText: 'Unauthorized' },
+    );
+    await pending;
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_SERVER_SESSION_EXPIRED);
+  });
+
+  it('server-error: network error renders the network-mapped inline copy', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const pending = r.fixture.componentInstance.onSubmit();
+    r.fixture.detectChanges();
+    const req = httpTesting.expectOne('/v1/books/42');
+    req.error(new ProgressEvent('error'), { status: 0, statusText: '' });
+    await pending;
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_SERVER_NETWORK);
+  });
+
+  it('server-error: book_not_found maps to the generic copy (the row may have been deleted in another tab)', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const pending = r.fixture.componentInstance.onSubmit();
+    r.fixture.detectChanges();
+    const req = httpTesting.expectOne('/v1/books/42');
+    req.flush(
+      { errorCode: 'book_not_found', message: 'gone' },
+      { status: 404, statusText: 'Not Found' },
+    );
+    await pending;
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_SERVER_GENERIC);
+  });
+
+  it('server-error: 422 invalid_input renders inline copy, preserves values, restores button, emits nothing', async () => {
+    const book = mkBook({ id: 42, title: 'Dune', pages: 688, status: 'to-read' });
+    const r = await renderEditForm(book);
+    httpTesting = r.httpTesting;
+
+    const saveSpy = vi.fn();
+    const cancelSpy = vi.fn();
+    r.fixture.componentInstance.bookSaved.subscribe(saveSpy);
+    r.fixture.componentInstance.editCancelled.subscribe(cancelSpy);
+
+    fillInput(getInput(r.fixture, 'title'), 'Dune (typo)');
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const pending = r.fixture.componentInstance.onSubmit();
+    r.fixture.detectChanges();
+
+    const req = httpTesting.expectOne('/v1/books/42');
+    req.flush(
+      { errorCode: 'invalid_input', message: 'bad' },
+      { status: 422, statusText: 'Unprocessable Entity' },
+    );
+    await pending;
+    r.fixture.detectChanges();
+    await r.fixture.whenStable();
+
+    const errEl = getEl(r.fixture).querySelector('app-error-message p');
+    expect(errEl?.textContent?.trim()).toBe(BOOK_FORM_SERVER_INVALID_INPUT);
+
+    // Inputs preserved
+    expect(getInput(r.fixture, 'title').value).toBe('Dune (typo)');
+    expect(getInput(r.fixture, 'pages').value).toBe('688');
+    expect(getSelect(r.fixture, 'status').value).toBe('to-read');
+
+    // Button restored
+    const submit = getSubmitButton(r.fixture);
+    expect(submit.disabled).toBe(false);
+    expect(submit.textContent?.trim()).toBe(BOOK_FORM_EDIT_BUTTON_IDLE);
+
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(cancelSpy).not.toHaveBeenCalled();
   });
 });

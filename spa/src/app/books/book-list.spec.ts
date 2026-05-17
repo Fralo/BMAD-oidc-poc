@@ -95,7 +95,7 @@ describe('BookList', () => {
     const items = el.querySelectorAll('.book-list-rows > li');
     expect(items.length).toBe(2);
 
-    const titles = Array.from(el.querySelectorAll('app-book-row-placeholder')).map(
+    const titles = Array.from(el.querySelectorAll('app-book-row .book-row-title')).map(
       (n) => n.textContent?.trim(),
     );
     expect(titles).toEqual(['Dune', 'Foundation']);

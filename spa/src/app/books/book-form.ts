@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  effect,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
 import {
   AbstractControl,
   NonNullableFormBuilder,
@@ -10,11 +18,15 @@ import {
 
 import { AppError } from '../shared/errors/app-error.types';
 import { ErrorMessage } from '../shared/ui/error-message';
-import { BookCreate, BookStatus } from './book.types';
+import { Book, BookCreate, BookStatus } from './book.types';
 import { BooksService } from './books-service';
 
 export const BOOK_FORM_ADD_BUTTON_IDLE = 'Add book';
 export const BOOK_FORM_ADD_BUTTON_SUBMITTING = 'Adding…';
+
+export const BOOK_FORM_EDIT_BUTTON_IDLE = 'Save';
+export const BOOK_FORM_EDIT_BUTTON_SUBMITTING = 'Saving…';
+export const BOOK_FORM_EDIT_CANCEL_LABEL = 'Cancel';
 
 export const BOOK_FORM_VALIDATION_TITLE_REQUIRED = 'Title is required.';
 export const BOOK_FORM_VALIDATION_PAGES_REQUIRED = 'Page count is required.';
@@ -53,6 +65,17 @@ export const nonWhitespaceValidator: ValidatorFn = (
 export class BookForm {
   readonly variant = input.required<'add' | 'edit'>();
 
+  /**
+   * The book being edited. Required only when `variant === 'edit'` — enforced
+   * at runtime by the constructor effect below. Angular's `input.required<T>()`
+   * cannot be conditionally required, so we use an optional input and validate
+   * via effect (the same pattern guards Story 4.3's component as well).
+   */
+  readonly book = input<Book | undefined>(undefined);
+
+  readonly bookSaved = output<void>();
+  readonly editCancelled = output<void>();
+
   private readonly booksService = inject(BooksService);
   private readonly fb = inject(NonNullableFormBuilder);
 
@@ -73,6 +96,30 @@ export class BookForm {
 
   readonly idleButtonLabel = BOOK_FORM_ADD_BUTTON_IDLE;
   readonly submittingButtonLabel = BOOK_FORM_ADD_BUTTON_SUBMITTING;
+  readonly editIdleButtonLabel = BOOK_FORM_EDIT_BUTTON_IDLE;
+  readonly editSubmittingButtonLabel = BOOK_FORM_EDIT_BUTTON_SUBMITTING;
+  readonly editCancelLabel = BOOK_FORM_EDIT_CANCEL_LABEL;
+
+  constructor() {
+    // Runtime safety net: `variant=edit` requires a non-undefined `book` input.
+    // Fails fast in dev/test if the consumer forgets to pass it.
+    effect(() => {
+      if (this.variant() === 'edit' && this.book() === undefined) {
+        throw new Error("BookForm[variant=edit] requires a 'book' input.");
+      }
+    });
+
+    // Pre-fill the form when in edit mode. The book signal is the source of
+    // truth and re-runs are idempotent — in practice the form re-mounts on
+    // each Edit click, so this runs once per mount.
+    effect(() => {
+      const v = this.variant();
+      const b = this.book();
+      if (v === 'edit' && b !== undefined) {
+        this.form.setValue({ title: b.title, pages: b.pages, status: b.status });
+      }
+    });
+  }
 
   async onSubmit(): Promise<void> {
     if (this.form.invalid) {
@@ -90,15 +137,31 @@ export class BookForm {
     };
 
     try {
-      await this.booksService.create(payload);
-      // Success — reset to defaults; the books signal in BooksService has already prepended.
-      this.form.reset({ title: '', pages: null, status: 'to-read' });
+      if (this.variant() === 'add') {
+        await this.booksService.create(payload);
+        // Success — reset to defaults; the books signal in BooksService has already prepended.
+        this.form.reset({ title: '', pages: null, status: 'to-read' });
+      } else {
+        // variant === 'edit' — book() is non-undefined per the constructor effect.
+        const current = this.book();
+        if (current === undefined) {
+          // Defensive — the effect should have thrown already.
+          throw new Error("BookForm[variant=edit] requires a 'book' input.");
+        }
+        await this.booksService.update(current.id, payload);
+        this.bookSaved.emit();
+        // No form.reset here — the parent BookRow unmounts the form on save.
+      }
     } catch (err) {
       this.errorMessage.set(this.formatServerError(err as AppError));
       // Inputs preserve values on failure — we only reset on success.
     } finally {
       this.submitting.set(false);
     }
+  }
+
+  onCancel(): void {
+    this.editCancelled.emit();
   }
 
   /** Build inline copy for client-side validation failures. */
@@ -127,7 +190,8 @@ export class BookForm {
   }
 
   /**
-   * Map an `AppError` thrown by `BooksService.create` to user-visible copy.
+   * Map an `AppError` thrown by `BooksService.create` or `BooksService.update`
+   * to user-visible copy.
    *
    * The `default` branch is an exhaustiveness check: if a future `AppError`
    * variant (e.g., Story 3.5's `resource_server_unavailable`) is added

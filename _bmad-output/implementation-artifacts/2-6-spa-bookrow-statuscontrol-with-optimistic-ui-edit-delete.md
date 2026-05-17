@@ -1,12 +1,12 @@
 ---
-status: ready-for-dev
+status: done
 story_key: 2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete
 created: 2026-05-17
 ---
 
 # Story 2.6: SPA — BookRow + StatusControl with optimistic UI + Edit/Delete
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -533,58 +533,51 @@ For listening to outputs in tests, use the runtime `OutputRef.subscribe` pattern
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — `EstimateCell` stub (AC5)
-  - [ ] 1.1 Create `spa/src/app/books/estimate-cell.ts` with the class shell from AC5 (two required signal inputs, OnPush, empty imports).
-  - [ ] 1.2 Create `spa/src/app/books/estimate-cell.html` with the disabled `<button>Estimate</button>` + the `title="Available in Epic 4"` attribute (verbatim).
-  - [ ] 1.3 Create `spa/src/app/books/estimate-cell.css` with secondary-button styling (text-button per UX-DR14; `color: var(--color-text-muted)` to signal inert).
-  - [ ] 1.4 Create `spa/src/app/books/estimate-cell.spec.ts` with the single test from AC14.
+- [x] Task 1 — `EstimateCell` stub (AC5)
+  - [x] 1.1 Create `spa/src/app/books/estimate-cell.ts` with the class shell from AC5 (two required signal inputs, OnPush, empty imports).
+  - [x] 1.2 Create `spa/src/app/books/estimate-cell.html` with the disabled `<button>Estimate</button>` + the `title="Available in Epic 4"` attribute (verbatim).
+  - [x] 1.3 Create `spa/src/app/books/estimate-cell.css` with secondary-button styling (text-button per UX-DR14; `color: var(--color-text-muted)` to signal inert).
+  - [x] 1.4 Create `spa/src/app/books/estimate-cell.spec.ts` with the single test from AC14.
 
-- [ ] Task 2 — `StatusControl` (AC3, AC4, AC10)
-  - [ ] 2.1 Create `spa/src/app/books/status-control.ts` with the class shell from AC3. `inject(BooksService)`; declare `STATUS_CONTROL_FAILURE_COPY` constant; declare the `output<string>()` for `statusChangeFailed`.
-  - [ ] 2.2 Implement `onChange(next: BookStatus)` per AC3, using `BooksService.setStatus(id, next)` (Story 2.4 — `books-service.ts:53-85`). NO new optimistic logic.
-  - [ ] 2.3 Implement `formatStatusError(err: AppError)` per AC10 with the exhaustive `switch + never` pattern (mirrors `book-form.ts:137-157`).
-  - [ ] 2.4 Create `spa/src/app/books/status-control.html` with the native `<select>` from AC4 (or the segmented-button alternative — pick one).
-  - [ ] 2.5 Create `spa/src/app/books/status-control.css` with input-shaped styling (`padding`, `border`, `border-radius`, `font: var(--text-body)`) consistent with `book-form.css:18-23`. Disabled state: `opacity: 0.5; cursor: not-allowed` (UX-DR14).
-  - [ ] 2.6 Create `spa/src/app/books/status-control.spec.ts` with the five tests from AC14. Use a real `BooksService` against `HttpTestingController`.
+- [x] Task 2 — `StatusControl` (AC3, AC4, AC10)
+  - [x] 2.1 Create `spa/src/app/books/status-control.ts` with the class shell from AC3. `inject(BooksService)`; declare `STATUS_CONTROL_FAILURE_COPY` constant; declare the `output<string>()` for `statusChangeFailed`.
+  - [x] 2.2 Implement `onChange(next: BookStatus)` per AC3, using `BooksService.setStatus(id, next)` (Story 2.4 — `books-service.ts:53-85`). NO new optimistic logic.
+  - [x] 2.3 Implement `formatStatusError(err: AppError)` per AC10 with the exhaustive `switch + never` pattern (mirrors `book-form.ts:137-157`).
+  - [x] 2.4 Create `spa/src/app/books/status-control.html` with the native `<select>` from AC4 (or the segmented-button alternative — pick one).
+  - [x] 2.5 Create `spa/src/app/books/status-control.css` with input-shaped styling (`padding`, `border`, `border-radius`, `font: var(--text-body)`) consistent with `book-form.css:18-23`. Disabled state: `opacity: 0.5; cursor: not-allowed` (UX-DR14).
+  - [x] 2.6 Create `spa/src/app/books/status-control.spec.ts` with the five tests from AC14. Use a real `BooksService` against `HttpTestingController`.
 
-- [ ] Task 3 — `BookForm[variant=edit]` (AC6, AC7, AC8)
-  - [ ] 3.1 In `spa/src/app/books/book-form.ts`: add `import { effect, output } from '@angular/core';` (the existing import already pulls `Component`, `inject`, `input`, `signal` — verify line 1).
-  - [ ] 3.2 Add the `book` optional input (`input<Book | undefined>(undefined)`) and the two outputs (`save`, `cancel`).
-  - [ ] 3.3 Add the runtime-required `effect` in the `constructor()` enforcing `variant() === 'edit' ⇒ book() !== undefined`. Add the second `effect` pre-filling the form with `book()`'s values via `form.setValue(...)`.
-  - [ ] 3.4 Add the three new copy constants (`BOOK_FORM_EDIT_BUTTON_IDLE`, `BOOK_FORM_EDIT_BUTTON_SUBMITTING`, `BOOK_FORM_EDIT_CANCEL_LABEL`).
-  - [ ] 3.5 Update `onSubmit()` to dispatch on `variant()`: `add` ⇒ `create(...)` + `form.reset(...)`; `edit` ⇒ `update(book().id, ...)` + `save.emit()`. Preserve the existing validation + error-formatting + submitting-signal flow.
-  - [ ] 3.6 Add `onCancel(): void { this.cancel.emit(); }`.
-  - [ ] 3.7 Update `spa/src/app/books/book-form.html` to render the variant-conditional button labels and the `@if (variant() === 'edit') { <Cancel button> }` block (AC7).
-  - [ ] 3.8 Update `spa/src/app/books/book-form.css` with `.book-form-cancel` styling (text-button per UX-DR14: `background: transparent; border: none; color: var(--color-text); cursor: pointer;` + underlined-on-hover; disabled 50% opacity).
-  - [ ] 3.9 Extend `spa/src/app/books/book-form.spec.ts` with the five new edit-variant tests from AC14. Add a helper `renderEditForm(book: Book)` mirroring the existing `renderForm()` at lines 34-56.
+- [x] Task 3 — `BookForm[variant=edit]` (AC6, AC7, AC8)
+  - [x] 3.1 In `spa/src/app/books/book-form.ts`: add `import { effect, output } from '@angular/core';` (the existing import already pulls `Component`, `inject`, `input`, `signal` — verify line 1).
+  - [x] 3.2 Add the `book` optional input (`input<Book | undefined>(undefined)`) and the two outputs (`bookSaved`, `editCancelled` — renamed from `save`/`cancel` to satisfy `@angular-eslint/no-output-native`; both `save` and `cancel` are native DOM event names).
+  - [x] 3.3 Add the runtime-required `effect` in the `constructor()` enforcing `variant() === 'edit' ⇒ book() !== undefined`. Add the second `effect` pre-filling the form with `book()`'s values via `form.setValue(...)`.
+  - [x] 3.4 Add the three new copy constants (`BOOK_FORM_EDIT_BUTTON_IDLE`, `BOOK_FORM_EDIT_BUTTON_SUBMITTING`, `BOOK_FORM_EDIT_CANCEL_LABEL`).
+  - [x] 3.5 Update `onSubmit()` to dispatch on `variant()`: `add` ⇒ `create(...)` + `form.reset(...)`; `edit` ⇒ `update(book().id, ...)` + `bookSaved.emit()`. Preserve the existing validation + error-formatting + submitting-signal flow.
+  - [x] 3.6 Add `onCancel(): void { this.editCancelled.emit(); }`.
+  - [x] 3.7 Update `spa/src/app/books/book-form.html` to render the variant-conditional button labels and the `@if (variant() === 'edit') { <Cancel button> }` block (AC7).
+  - [x] 3.8 Update `spa/src/app/books/book-form.css` with `.book-form-cancel` styling (text-button per UX-DR14: `background: transparent; border: none; color: var(--color-text); cursor: pointer;` + underlined-on-hover; disabled 50% opacity).
+  - [x] 3.9 Extend `spa/src/app/books/book-form.spec.ts` with the five new edit-variant tests from AC14 plus four coverage-protecting tests (multi-field validation, session_expired, network, book_not_found mappings). Added a helper `renderEditForm(book: Book)` mirroring the existing `renderForm()`.
 
-- [ ] Task 4 — `BookRow` (AC1, AC2, AC9, AC11, AC12)
-  - [ ] 4.1 Create `spa/src/app/books/book-row.ts` with the class shell from AC1: `input.required<Book>('book')`, `inject(BooksService)`, local `editing` and `rowError` signals, all five handler methods (`onEditClick`, `onEditSave`, `onEditCancel`, `onStatusChangeFailed`, `onDeleteClick`).
-  - [ ] 4.2 Implement `onDeleteClick()` per AC11 using `window.confirm('Delete this book?')` and `BooksService.delete(book.id)`. Use the exhaustive `formatDeleteError` switch (mirror `book-form.ts:137-157`).
-  - [ ] 4.3 Implement `onEditClick`, `onEditSave`, `onEditCancel`, and `onStatusChangeFailed(msg: string)` per AC9 + AC12. Clear `rowError` on each user-initiated action.
-  - [ ] 4.4 Create `spa/src/app/books/book-row.html` with the template from AC2: `@if (editing()) { <BookForm variant=edit> } @else { <display row> }` + the conditional inline error.
-  - [ ] 4.5 Create `spa/src/app/books/book-row.css`:
-    - `.book-row { display: flex; align-items: center; gap: var(--spacing-3); padding: var(--spacing-3) 0; }` (note: `book-list.css:14` already gives each `li` vertical padding — verify this doesn't double up; if it does, drop the `padding` here.)
-    - `.book-row:hover { background: var(--color-surface-muted); }` (UX-DR6 hover state).
-    - `.book-row-title { color: var(--color-text); font: var(--text-body); flex: 1; }` (the title flexes to fill the row's leftmost slot).
-    - `.book-row-pages { color: var(--color-text-muted); font: var(--text-body); }`.
-    - `.book-row-actions { display: flex; gap: var(--spacing-2); }`.
-    - `.book-row-action { background: transparent; border: none; color: var(--color-text); cursor: pointer; padding: 0; }` and `.book-row-action:hover { text-decoration: underline; }` (UX-DR14 text-buttons).
-    - **No red on `Delete`** — verify the `.book-row-action` color is `--color-text` (UX-DR14: "destructive actions are NOT red").
-  - [ ] 4.6 Create `spa/src/app/books/book-row.spec.ts` with the eight tests from AC14. Use a real `BooksService` + `HttpTestingController`; spy on `window.confirm` via `vi.spyOn(window, 'confirm').mockReturnValue(...)` per test.
+- [x] Task 4 — `BookRow` (AC1, AC2, AC9, AC11, AC12)
+  - [x] 4.1 Create `spa/src/app/books/book-row.ts` with the class shell from AC1: `input.required<Book>('book')`, `inject(BooksService)`, local `editing` and `rowError` signals, all five handler methods (`onEditClick`, `onEditSave`, `onEditCancel`, `onStatusChangeFailed`, `onDeleteClick`).
+  - [x] 4.2 Implement `onDeleteClick()` per AC11 using `window.confirm('Delete this book?')` and `BooksService.delete(book.id)`. Use the exhaustive `formatDeleteError` switch (mirror `book-form.ts:137-157`).
+  - [x] 4.3 Implement `onEditClick`, `onEditSave`, `onEditCancel`, and `onStatusChangeFailed(msg: string)` per AC9 + AC12. Clear `rowError` on `onEditClick` and `onDeleteClick`.
+  - [x] 4.4 Create `spa/src/app/books/book-row.html` with the template from AC2: `@if (editing()) { <BookForm variant=edit> } @else { <display row> }` + the conditional inline error.
+  - [x] 4.5 Create `spa/src/app/books/book-row.css` — flex layout, hover, text-button actions, muted page count. Dropped explicit `padding` on `.book-row` because `book-list.css:14` already gives each `li` vertical padding.
+  - [x] 4.6 Create `spa/src/app/books/book-row.spec.ts` with the eight tests from AC14. Use a real `BooksService` + `HttpTestingController`; spy on `window.confirm` via `vi.spyOn(window, 'confirm').mockReturnValue(...)` per test.
 
-- [ ] Task 5 — `BookList` swap + `BookRowPlaceholder` delete (AC13)
-  - [ ] 5.1 Edit `spa/src/app/books/book-list.ts`: replace the `BookRowPlaceholder` import with `BookRow`; replace it in the `imports:` array.
-  - [ ] 5.2 Edit `spa/src/app/books/book-list.html` line 10: `<app-book-row-placeholder ... />` → `<app-book-row ... />`.
-  - [ ] 5.3 Edit `spa/src/app/books/book-list.spec.ts` line 98 per AC14: change the selector to `app-book-row .book-row-title` and assert against the title text.
-  - [ ] 5.4 Delete the three files: `book-row-placeholder.ts`, `book-row-placeholder.html`, `book-row-placeholder.css`.
-  - [ ] 5.5 Verify zero remaining references: `grep -rn "book-row-placeholder\|BookRowPlaceholder" spa/` returns no matches.
+- [x] Task 5 — `BookList` swap + `BookRowPlaceholder` delete (AC13)
+  - [x] 5.1 Edit `spa/src/app/books/book-list.ts`: replace the `BookRowPlaceholder` import with `BookRow`; replace it in the `imports:` array.
+  - [x] 5.2 Edit `spa/src/app/books/book-list.html` line 10: `<app-book-row-placeholder ... />` → `<app-book-row ... />`.
+  - [x] 5.3 Edit `spa/src/app/books/book-list.spec.ts` line 98 per AC14: change the selector to `app-book-row .book-row-title` and assert against the title text.
+  - [x] 5.4 Delete the three files: `book-row-placeholder.ts`, `book-row-placeholder.html`, `book-row-placeholder.css`.
+  - [x] 5.5 Verify zero remaining references: `grep -rn "book-row-placeholder\|BookRowPlaceholder" spa/src` returns no matches (build cache under `spa/.angular/cache/` is excluded — it clears on next clean build).
 
-- [ ] Task 6 — Lint, coverage, and suite verification (AC15)
-  - [ ] 6.1 `npm test -- --watch=false` from `spa/` — green; new test count ≥ 19 above the 82-test baseline.
-  - [ ] 6.2 `npm run lint` from `spa/` — clean.
-  - [ ] 6.3 `npm run test:coverage` — verify `book-row.ts`, `status-control.ts`, `estimate-cell.ts`, and `book-form.ts` are all ≥70% per AR34. Spot-check `book-form.ts` to confirm no regression below Story 2.5's baseline (91.37% / 80% branches).
-  - [ ] 6.4 Manual smoke test under `npm run start` against a running BFF: navigate to `/books`, add a book, change its status (verify the `<select>` updates synchronously before the network round-trip), edit the title (verify the row swaps to a form and back), delete it (verify the native browser confirm appears). **Deferred — requires running stack; integrator's pre-merge step**, same as Story 2.5 Task 6.4.
+- [x] Task 6 — Lint, coverage, and suite verification (AC15)
+  - [x] 6.1 `npm test -- --watch=false` from `spa/` — green; 105 tests passing (23 above the 82-test baseline — 4 above the AC's 19 minimum).
+  - [x] 6.2 `npm run lint` from `spa/` — clean (after renaming `save`/`cancel` outputs to `bookSaved`/`editCancelled`).
+  - [x] 6.3 `npm run test:coverage` — `book-row.ts` 92.3%/91.66%; `status-control.ts` 90.9%/96.15%; `estimate-cell.ts` is template-only (no instrumented lines); `book-form.ts` 94.04%/90.74% (above Story 2.5's 91.37%/80% baseline).
+  - [ ] 6.4 Manual smoke test under `npm run start` against a running BFF: **Deferred — requires running stack; integrator's pre-merge step**, same as Story 2.5 Task 6.4.
 
 ## Dev Notes
 
@@ -849,22 +842,71 @@ Epic 2 is in-progress: 2.1, 2.2, 2.3, 2.4, 2.5 all closed. This story (2.6) is t
 
 ### Agent Model Used
 
-(to be filled by dev agent)
+Claude Opus 4.7 (1M context) — `bmad-dev-story` skill.
 
 ### Debug Log References
 
-(to be filled by dev agent)
+- Pre-implementation baseline: `npm test -- --watch=false` → 82 tests passing (Story 2.5 close-state).
+- Post-implementation: `npm test -- --watch=false` → 105 tests passing (+23 above baseline).
+- Coverage final: All-files 96.4% stmts / 93.12% branches.
+- Lint: clean after one rename — see Completion Notes.
 
 ### Completion Notes List
 
-(to be filled by dev agent)
+- **Naming deviation from the story spec (lint enforcement):** The story called for `output<void>()` named `save` and `cancel`. Both names are blocked by `@angular-eslint/no-output-native` (they collide with native DOM events `save` on Window and `cancel` on HTMLDialogElement). Renamed to `bookSaved` and `editCancelled`; updated the BookRow template bindings (`(bookSaved)="onEditSave()"`, `(editCancelled)="onEditCancel()"`) and tests accordingly. Behaviour is unchanged.
+- **Native `<select>` chosen over segmented buttons** for `StatusControl` (the spec's recommended path; smaller surface, fewer tests).
+- **`input<Book | undefined>(undefined)` plus constructor `effect`** for `BookForm.book` (the spec's documented design call; runtime safety net throws when `variant=edit` is passed without a `book`).
+- **Coverage hardening:** added four extra `BookForm` edit-variant tests (multi-field validation, session_expired, network, book_not_found mappings) to keep `book-form.ts` above Story 2.5's 91.37%/80% baseline. Final 94.04%/90.74%.
+- **AC13 placeholder deletion confirmed:** `grep -rn "book-row-placeholder\|BookRowPlaceholder" spa/src` returns no matches. The only hits in `spa/` are inside `spa/.angular/cache/.../tsbuildinfo` (TypeScript incremental-compilation cache, regenerated on next clean build — not source).
+- **Task 6.4 deferred:** manual stack smoke is an integrator's pre-merge step, same posture as Story 2.5's Task 6.4.
+- **All 15 ACs validated** against implementation: AC1-AC2 (BookRow class + template), AC3-AC4 (StatusControl + native `<select>`), AC5 (EstimateCell stub with `title="Available in Epic 4"`), AC6-AC8 (BookForm edit variant — input, outputs, pre-fill effect, runtime guard effect, variant-dispatching submit, Cancel), AC9 (statusChangeFailed → rowError), AC10 (formatStatusError exhaustive switch), AC11 (native confirm + delete + error path), AC12 (BookRow edit integration), AC13 (BookList swap + placeholder deletion), AC14 (8 BookRow tests + 5 StatusControl tests + 1 EstimateCell test + 5 base edit-variant + 4 coverage tests + 1 BookList selector update), AC15 (lint clean, coverage ≥70% all new files, suite +23 above baseline).
 
 ### File List
 
-(to be filled by dev agent)
+New files:
+- `spa/src/app/books/book-row.ts`
+- `spa/src/app/books/book-row.html`
+- `spa/src/app/books/book-row.css`
+- `spa/src/app/books/book-row.spec.ts`
+- `spa/src/app/books/status-control.ts`
+- `spa/src/app/books/status-control.html`
+- `spa/src/app/books/status-control.css`
+- `spa/src/app/books/status-control.spec.ts`
+- `spa/src/app/books/estimate-cell.ts`
+- `spa/src/app/books/estimate-cell.html`
+- `spa/src/app/books/estimate-cell.css`
+- `spa/src/app/books/estimate-cell.spec.ts`
+
+Modified files:
+- `spa/src/app/books/book-form.ts` — added `book` input, `bookSaved`/`editCancelled` outputs, two effects, variant-dispatching `onSubmit`, `onCancel`, three edit-copy constants.
+- `spa/src/app/books/book-form.html` — variant-conditional button labels + conditional Cancel button.
+- `spa/src/app/books/book-form.css` — added `.book-form-cancel` text-button styling.
+- `spa/src/app/books/book-form.spec.ts` — added `renderEditForm()` helper + 9 edit-variant tests.
+- `spa/src/app/books/book-list.ts` — swapped `BookRowPlaceholder` import for `BookRow`.
+- `spa/src/app/books/book-list.html` — swapped `<app-book-row-placeholder>` for `<app-book-row>`.
+- `spa/src/app/books/book-list.spec.ts` — updated populated-state assertion to query `app-book-row .book-row-title`.
+
+Deleted files:
+- `spa/src/app/books/book-row-placeholder.ts`
+- `spa/src/app/books/book-row-placeholder.html`
+- `spa/src/app/books/book-row-placeholder.css`
+
+Coordination files:
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 2-6 status → in-progress → review; `last_updated` bumped.
 
 ### Change Log
 
 | Date | Note |
 | --- | --- |
 | 2026-05-17 | Story created from epic AC + Story 2.5 implementation files. Status: ready-for-dev. |
+| 2026-05-17 | Dev complete. 12 new files, 7 modified, 3 deleted. 105 tests passing (+23 above 82 baseline). Lint clean. Coverage book-form 94.04%/90.74%, book-row 92.3%/91.66%, status-control 90.9%/96.15%. Status: review. |
+| 2026-05-17 | Code review: no must-fix, no should-fix. 2 defers (D62 concurrent-delete double-click, D63 BookList test stub hardening). 4 dismissed (intentional spec choices + lint-driven rename + cosmetic). Status: done. |
+
+### Review Findings
+
+- [x] [Review][Defer] Concurrent delete double-click can dispatch two DELETE requests → phantom 404 on the second [spa/src/app/books/book-row.ts:69-82] — deferred as D62 (same class as Story 2.5 D58 double-submit; Dev Notes explicitly mark out-of-scope).
+- [x] [Review][Defer] `book-list.spec.ts` populated-state stub lacks `delete`/`update`/`setStatus` methods; future tests that click child controls would crash on missing-method [spa/src/app/books/book-list.spec.ts:32-38] — deferred as D63 (current test never clicks; hardening, not bug).
+- [x] [Review][Dismiss] Stale `rowError` persists after a successful status-change retry — intentional per AC9 ("a successful status change does NOT clear via BookRow"). Spec-mandated behavior.
+- [x] [Review][Dismiss] `<select>` value bound via `[value]="status()"` is unconventional vs `[selected]` on `<option>` — Angular property-binds `select.value`; jsdom + 5/5 unit tests confirm the binding works in both directions.
+- [x] [Review][Dismiss] Defensive `if (current === undefined)` in `BookForm.onSubmit` is unreachable given the constructor effect — intentional belt-and-suspenders; no harm.
+- [x] [Review][Dismiss] `BookForm` outputs were renamed `save`/`cancel` → `bookSaved`/`editCancelled` to satisfy `@angular-eslint/no-output-native` (both names collide with native DOM events). Documented in Completion Notes; behaviour unchanged.
