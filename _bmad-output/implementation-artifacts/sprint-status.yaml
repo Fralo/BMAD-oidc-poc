@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (story 2.5 created — SPA BookList page + BookForm add-variant + states; ready-for-dev. Stories 2.3 + 2.5 now both ready-for-dev; 2.6/2.7 remain backlog)
+last_updated: 2026-05-17 (story 2.3 done in parallel worktree — BFF /v1/test/reset truncates books, 423 tests, 97.57% cov, +1 scenario 14b, 2 defers W7/W8; story 2.5 created earlier and is ready-for-dev. Epic-2 now: 2.1/2.2/2.3/2.4 done, 2.5 ready-for-dev, 2.6/2.7 backlog)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -64,7 +64,7 @@ development_status:
   epic-2: in-progress
   2-1-bff-book-sqlmodel-migration-pydantic-boundary-models: done
   2-2-bff-full-books-crud-v1-books-v1-books-id: done
-  2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev
+  2-3-bff-extend-v1-test-reset-to-truncate-books: done
   2-4-spa-booksservice-types: done
   2-5-spa-booklist-page-bookform-add-variant-states: ready-for-dev
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: backlog

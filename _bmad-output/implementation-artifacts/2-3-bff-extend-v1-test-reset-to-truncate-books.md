@@ -1,12 +1,12 @@
 ---
-status: ready-for-dev
+status: done
 story_key: 2-3-bff-extend-v1-test-reset-to-truncate-books
 created: 2026-05-16
 ---
 
 # Story 2.3: BFF — extend `/v1/test/reset` to truncate `books`
 
-Status: ready-for-dev
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -190,14 +190,14 @@ The new test scenario plus the extended assertions add `~30 LOC` of test code; t
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Verify Story 2.1 has landed (precondition check, AC10)**
-  - [ ] Run `uv run python -c "from bff.models import entities; entities.Book"` from `services/bff/`. If this `ImportError`s, **STOP**: Story 2.1 has not landed yet and this story cannot pass tests. Coordinate with the maintainer.
-  - [ ] Run `uv run alembic heads`. The head MUST be `0002_add_books` (Story 2.1's migration). If the head is `0001_init`, run `uv run alembic upgrade head` first.
-  - [ ] Skim `services/bff/src/bff/models/entities/__init__.py` to confirm `Book` is in the imports and in `__all__`. (If 2.1 was implemented per its spec, both will be present.)
+- [x] **Task 1 — Verify Story 2.1 has landed (precondition check, AC10)**
+  - [x] Run `uv run python -c "from bff.models import entities; entities.Book"` from `services/bff/`. If this `ImportError`s, **STOP**: Story 2.1 has not landed yet and this story cannot pass tests. Coordinate with the maintainer.
+  - [x] Run `uv run alembic heads`. The head MUST be `0002_add_books` (Story 2.1's migration). If the head is `0001_init`, run `uv run alembic upgrade head` first.
+  - [x] Skim `services/bff/src/bff/models/entities/__init__.py` to confirm `Book` is in the imports and in `__all__`. (If 2.1 was implemented per its spec, both will be present.)
 
-- [ ] **Task 2 — Add `Book` truncation to the handler (AC1, AC2)**
-  - [ ] Open `services/bff/src/bff/api/test_reset.py`. Locate the `try:` block inside `test_reset` (around line 249 — the three-statement sequence: `sessions_result = await db.execute(...)`, `auth_states_result = await db.execute(...)`, `await db.commit()`).
-  - [ ] Insert a third execute between the auth_states execute and the commit:
+- [x] **Task 2 — Add `Book` truncation to the handler (AC1, AC2)**
+  - [x] Open `services/bff/src/bff/api/test_reset.py`. Locate the `try:` block inside `test_reset` (around line 249 — the three-statement sequence: `sessions_result = await db.execute(...)`, `auth_states_result = await db.execute(...)`, `await db.commit()`).
+  - [x] Insert a third execute between the auth_states execute and the commit:
     ```python
     books_result = await db.execute(
         _delete(entities.Book),
@@ -205,43 +205,43 @@ The new test scenario plus the extended assertions add `~30 LOC` of test code; t
     )
     ```
     Keep the bare `_delete` import alias — it's already imported at module top as `from sqlalchemy import delete as _delete` (test_reset.py:75). No new imports needed; `entities.Book` resolves through the existing `from bff.models import entities` (test_reset.py:82).
-  - [ ] After the three executes, the single `await db.commit()` line stays exactly where it is. The DB sees one transaction with three DELETEs (atomic from the DB's POV per Story 1.12 AC6).
-  - [ ] In the success-path `logger.info(...)` call (~line 282), update the format string AND its arguments:
+  - [x] After the three executes, the single `await db.commit()` line stays exactly where it is. The DB sees one transaction with three DELETEs (atomic from the DB's POV per Story 1.12 AC6).
+  - [x] In the success-path `logger.info(...)` call (~line 282), update the format string AND its arguments:
     - String: `"test_reset_truncated tables=sessions,auth_states,books sessions_deleted=%s auth_states_deleted=%s books_deleted=%s"`.
     - Compute `books_deleted = getattr(books_result, "rowcount", -1)` next to the existing two `sessions_deleted` / `auth_states_deleted` assignments.
     - Append `books_deleted` as the third positional arg to `logger.info`.
-  - [ ] Re-read the function once to confirm no other code paths reference `sessions_result` or `auth_states_result`; the new `books_result` follows the same one-line-then-rowcount-pluck shape.
+  - [x] Re-read the function once to confirm no other code paths reference `sessions_result` or `auth_states_result`; the new `books_result` follows the same one-line-then-rowcount-pluck shape.
 
-- [ ] **Task 3 — Update module docstring (AC9)**
-  - [ ] In the docstring at the top of `services/bff/src/bff/api/test_reset.py`, find the line under "Endpoints provided when the gate is ON" describing `POST /v1/test/reset`. Change `"truncates `sessions` and `auth_states`"` to `"truncates `sessions`, `auth_states`, and `books`"` and update the attribution from `(Story 1.12)` to `(Story 1.12 + Story 2.3)`.
-  - [ ] In the same docstring, near the handler implementation note that currently says `"Story 2.3 will extend this handler with a third DELETE for the `books` table; keep the structure ordered and explicit..."` — UPDATE this comment to past tense / present tense: `"Story 2.3 added the books DELETE; the structure remains ordered and explicit (one db.execute per table) so future tables follow the same pattern."` (The forward-pointer comment becomes a backwards-pointer comment — same code-archaeology value, accurate after this story lands.)
-  - [ ] In the `References` block at the bottom of the docstring, append one line:
+- [x] **Task 3 — Update module docstring (AC9)**
+  - [x] In the docstring at the top of `services/bff/src/bff/api/test_reset.py`, find the line under "Endpoints provided when the gate is ON" describing `POST /v1/test/reset`. Change `"truncates `sessions` and `auth_states`"` to `"truncates `sessions`, `auth_states`, and `books`"` and update the attribution from `(Story 1.12)` to `(Story 1.12 + Story 2.3)`.
+  - [x] In the same docstring, near the handler implementation note that currently says `"Story 2.3 will extend this handler with a third DELETE for the `books` table; keep the structure ordered and explicit..."` — UPDATE this comment to past tense / present tense: `"Story 2.3 added the books DELETE; the structure remains ordered and explicit (one db.execute per table) so future tables follow the same pattern."` (The forward-pointer comment becomes a backwards-pointer comment — same code-archaeology value, accurate after this story lands.)
+  - [x] In the `References` block at the bottom of the docstring, append one line:
     ```
     - epics.md §Story 2.3 (lines 854–878) — adds `books` to the truncate sequence.
     ```
 
-- [ ] **Task 4 — Add test helpers `_seed_book_row` and `_count_books` (AC7)**
-  - [ ] Open `services/bff/tests/api/test_test_reset.py`. Find the helper block (lines 132–170) containing `_seed_session_row`, `_seed_auth_state_row`, `_count_sessions`, `_count_auth_states`.
-  - [ ] Add `_seed_book_row` immediately after `_seed_auth_state_row` (keep table-alphabetical groupings within the seed and count helpers).
-  - [ ] Add `_count_books` immediately after `_count_auth_states`.
-  - [ ] Use the snippet provided in AC7 verbatim. The existing helpers use `select(entities.<Model>)` followed by `.scalars().all()` — match that idiom exactly.
-  - [ ] Confirm `select` is already imported at the top of the test file (test_test_reset.py:25 imports `from sqlalchemy import select`).
+- [x] **Task 4 — Add test helpers `_seed_book_row` and `_count_books` (AC7)**
+  - [x] Open `services/bff/tests/api/test_test_reset.py`. Find the helper block (lines 132–170) containing `_seed_session_row`, `_seed_auth_state_row`, `_count_sessions`, `_count_auth_states`.
+  - [x] Add `_seed_book_row` immediately after `_seed_auth_state_row` (keep table-alphabetical groupings within the seed and count helpers).
+  - [x] Add `_count_books` immediately after `_count_auth_states`.
+  - [x] Use the snippet provided in AC7 verbatim. The existing helpers use `select(entities.<Model>)` followed by `.scalars().all()` — match that idiom exactly.
+  - [x] Confirm `select` is already imported at the top of the test file (test_test_reset.py:25 imports `from sqlalchemy import select`).
 
-- [ ] **Task 5 — Extend existing scenarios 11, 12, 13, 14, 17 (AC6)**
-  - [ ] **Scenario 11** (`test_scenario_11_correct_bearer_empty_tables`):
+- [x] **Task 5 — Extend existing scenarios 11, 12, 13, 14, 17 (AC6)**
+  - [x] **Scenario 11** (`test_scenario_11_correct_bearer_empty_tables`):
     - Add `assert await _count_books(ctx) == 0` pre and post the POST call (mirroring the existing two pre/post asserts).
     - Update the `any(...)` log-assertion: append `and "books_deleted=0" in r.message` to the boolean.
-  - [ ] **Scenario 12** (`test_scenario_12_correct_bearer_sessions_populated`):
+  - [x] **Scenario 12** (`test_scenario_12_correct_bearer_sessions_populated`):
     - Update the log assertion: change the boolean from `"sessions_deleted=3" in r.message and "auth_states_deleted=0" in r.message` to also include `"books_deleted=0" in r.message`.
     - Optional: add `assert await _count_books(ctx) == 0` post the POST — but since no books are seeded, this asserts the trivial case. Add it for symmetry with the new helper.
-  - [ ] **Scenario 13** (`test_scenario_13_correct_bearer_auth_states_populated`): same treatment as scenario 12 — log assertion adds `"books_deleted=0"`.
-  - [ ] **Scenario 14** (`test_scenario_14_correct_bearer_both_tables_populated`): same treatment — log assertion adds `"books_deleted=0"`. Optionally add `assert await _count_books(ctx) == 0` post.
-  - [ ] **Scenario 17** (`test_scenario_17_idempotent_successive_calls`): no behavioral change needed since the test asserts on count of `truncated_logs` (== 2), not on the per-log message contents. **However**, the asserted log message format now includes `books_deleted=` — any other test that pattern-matches `test_reset_truncated` with the substring `tables=sessions,auth_states` will break because the new format reads `tables=sessions,auth_states,books`. Audit `caplog` substring matches: scenarios 11–14 use `sessions_deleted=` / `auth_states_deleted=` substrings (not the `tables=` substring), so they are immune. Scenario 17 only counts records — also immune. **No change to scenario 17 except verifying it still passes.**
-  - [ ] **Scenario 23** (`test_scenario_23_trailing_slash_path_is_csrf_exempt_and_succeeds`): asserts on `response.status_code == 204` only — no log-substring assertion on `test_reset_truncated`. Verify it still passes; no code change needed.
+  - [x] **Scenario 13** (`test_scenario_13_correct_bearer_auth_states_populated`): same treatment as scenario 12 — log assertion adds `"books_deleted=0"`.
+  - [x] **Scenario 14** (`test_scenario_14_correct_bearer_both_tables_populated`): same treatment — log assertion adds `"books_deleted=0"`. Optionally add `assert await _count_books(ctx) == 0` post.
+  - [x] **Scenario 17** (`test_scenario_17_idempotent_successive_calls`): no behavioral change needed since the test asserts on count of `truncated_logs` (== 2), not on the per-log message contents. **However**, the asserted log message format now includes `books_deleted=` — any other test that pattern-matches `test_reset_truncated` with the substring `tables=sessions,auth_states` will break because the new format reads `tables=sessions,auth_states,books`. Audit `caplog` substring matches: scenarios 11–14 use `sessions_deleted=` / `auth_states_deleted=` substrings (not the `tables=` substring), so they are immune. Scenario 17 only counts records — also immune. **No change to scenario 17 except verifying it still passes.**
+  - [x] **Scenario 23** (`test_scenario_23_trailing_slash_path_is_csrf_exempt_and_succeeds`): asserts on `response.status_code == 204` only — no log-substring assertion on `test_reset_truncated`. Verify it still passes; no code change needed.
 
-- [ ] **Task 6 — Add new scenario for books-only seed (AC4, AC8)**
-  - [ ] Add a new test function `test_scenario_14b_correct_bearer_books_populated` immediately after `test_scenario_14_correct_bearer_both_tables_populated` in the test file.
-  - [ ] Body shape (mirror scenario 12 / 13 exactly):
+- [x] **Task 6 — Add new scenario for books-only seed (AC4, AC8)**
+  - [x] Add a new test function `test_scenario_14b_correct_bearer_books_populated` immediately after `test_scenario_14_correct_bearer_both_tables_populated` in the test file.
+  - [x] Body shape (mirror scenario 12 / 13 exactly):
     ```python
     async def test_scenario_14b_correct_bearer_books_populated(
         monkeypatch: pytest.MonkeyPatch,
@@ -272,22 +272,22 @@ The new test scenario plus the extended assertions add `~30 LOC` of test code; t
         finally:
             await ctx.engine.dispose()
     ```
-  - [ ] (Optional, but recommended for completeness) Add a second new test `test_scenario_14c_correct_bearer_all_three_tables_populated` that seeds e.g. 2 sessions + 3 auth_states + 5 books and asserts the log line carries `sessions_deleted=2 auth_states_deleted=3 books_deleted=5` — this is the symmetric "all three" case that AC3 describes. If you skip this, scenario 14 + 14b together give equivalent coverage; if you add it, the coverage matrix is fully symmetric. Pick one approach and document the choice in **Completion Notes**.
+  - [x] (Optional, but recommended for completeness) Add a second new test `test_scenario_14c_correct_bearer_all_three_tables_populated` that seeds e.g. 2 sessions + 3 auth_states + 5 books and asserts the log line carries `sessions_deleted=2 auth_states_deleted=3 books_deleted=5` — this is the symmetric "all three" case that AC3 describes. If you skip this, scenario 14 + 14b together give equivalent coverage; if you add it, the coverage matrix is fully symmetric. Pick one approach and document the choice in **Completion Notes**. — **SKIPPED**: scenarios 14 + 14b give equivalent coverage of the per-counter format; AC3's "all three populated" wire contract is exercised structurally by 14b's seeded-table case combined with 14's two-table case. See Completion Notes.
 
-- [ ] **Task 7 — Run the full BFF gate matrix (AC10)**
-  - [ ] From `services/bff/`:
+- [x] **Task 7 — Run the full BFF gate matrix (AC10)**
+  - [x] From `services/bff/`:
     - `uv sync --frozen` → exit 0.
     - `uv run ruff check` → clean.
     - `uv run ruff format --check` → clean.
     - `uv run ty check` → clean.
     - `uv run pytest --cov` → all tests pass; total coverage ≥ 90%; coverage of `src/bff/api/test_reset.py` ≥ 90%.
-  - [ ] Capture before/after suite-size counts and the coverage delta on `src/bff/api/test_reset.py` in **Completion Notes**.
-  - [ ] No compose verification needed — no compose files change in this story.
+  - [x] Capture before/after suite-size counts and the coverage delta on `src/bff/api/test_reset.py` in **Completion Notes**.
+  - [x] No compose verification needed — no compose files change in this story.
 
-- [ ] **Task 8 — Update sprint-status**
-  - [ ] On story start: flip `_bmad-output/implementation-artifacts/sprint-status.yaml` development_status `2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev` → `in-progress`. Bump `last_updated`.
-  - [ ] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
-  - [ ] If any defect surfaces, append to `deferred-work.md` with the next sequential D-number.
+- [x] **Task 8 — Update sprint-status**
+  - [x] On story start: flip `_bmad-output/implementation-artifacts/sprint-status.yaml` development_status `2-3-bff-extend-v1-test-reset-to-truncate-books: ready-for-dev` → `in-progress`. Bump `last_updated`.
+  - [x] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
+  - [x] If any defect surfaces, append to `deferred-work.md` with the next sequential D-number.
 
 ## Dev Notes
 
@@ -502,20 +502,40 @@ Project-context facts loaded at activation:
 
 ### Agent Model Used
 
-<!-- filled by dev-story -->
+Claude Opus 4.7 (1M context) — `claude-opus-4-7[1m]`
 
 ### Debug Log References
 
-<!-- filled by dev-story -->
+- `services/bff` test suite: 423 tests passed (was 422 — +1 scenario 14b); coverage 97.57% (gate 90%); `src/bff/api/test_reset.py` 99% (1 miss is the pre-existing `_safe_session_id_log` helper line 108, unchanged from Story 1.13).
+- `uv run ruff check`, `uv run ruff format --check`, `uv run ty check` — all clean.
+- Pre-implementation: worktree was branched off `61d5dc0` (pre-2.1). Fast-forwarded to `epic-2` HEAD (`7ce6774`) to pick up Stories 2.1, 2.2, and 2.4 which are required precondition for this story to compile and test.
 
 ### Completion Notes List
 
-- Ultimate context engine analysis completed — comprehensive developer guide created.
+- **Scope:** strict one-table extension of `POST /v1/test/reset` per AC1–AC10. Handler gains one `_delete(entities.Book)` execute inside the existing `try/except` block; the single `await db.commit()` is preserved (atomic three-DELETE transaction). Log format extends to `tables=sessions,auth_states,books` with a new `books_deleted=%s` token sourced via `getattr(books_result, "rowcount", -1)` — identical accessor pattern to the existing two counters.
+- **Docstring:** module docstring's "Endpoints provided" bullet now reads `(Story 1.12 + Story 2.3) — truncates sessions, auth_states, and books`. The forward-pointer comment in `test_reset()` was rewritten in past tense per Task 3 AC9. References block gained the new `epics.md §Story 2.3` line.
+- **Test helpers:** `_seed_book_row(ctx, *, suffix)` and `_count_books(ctx)` added directly after their `_auth_state` siblings (table-alphabetical), mirroring the existing seed/count idiom exactly. `select` is already imported in the test file.
+- **Existing scenarios 11–14 extended:** each scenario's `any(... for r in caplog.records)` log assertion now includes `"books_deleted=<N>" in r.message`. Scenarios 11, 12, 13, 14 also gained a `_count_books(ctx) == 0` post-assertion for symmetry with the new helper (scenario 11 also asserts the pre-condition). Scenario 17 (idempotency count of records) and scenario 23 (trailing-slash CSRF non-regression) needed no body change — verified passing.
+- **New scenario 14b:** `test_scenario_14b_correct_bearer_books_populated` seeds 4 `Book` rows with `_seed_book_row` (suffix `s14b-0..3`), asserts response 204, `_count_books == 0` post, and log line carries `sessions_deleted=0 auth_states_deleted=0 books_deleted=4`. Count `4` distinct from 12/13/14 (3/2/5+3) to aid failure attribution.
+- **Optional Task 6 14c (skipped):** scenarios 14 (5 sessions + 3 auth_states + 0 books) and 14b (0 + 0 + 4) together exercise every counter slot in the new log format; an additional 14c "all three" case is logically redundant for AC3's wire contract (AC3 is about atomic single-commit + post-state count, both already covered structurally). Documented per Task 6's "pick-one" guidance.
+- **Suite size:** 422 → 423 tests (matches story prediction "~361" was stale — epic-2's parallel work already grew it to 422; +1 from this story).
+- **Coverage:** `src/bff/api/test_reset.py` 100% (Story 1.12 baseline) → 99% (1 line: `_safe_session_id_log` helper from Story 1.13 — pre-existing miss not introduced by this story; total project 97.57% well above 90% gate).
+- **No new dependencies, no env vars, no compose changes, no router changes, no Alembic changes.** Diff is constrained to the two files named in AC and the sprint-status YAML.
+- **Worktree hygiene:** before starting, the worktree was fast-forwarded from `61d5dc0` to `epic-2` HEAD `7ce6774` so the `entities.Book` import would resolve. Fast-forward only — no merge commits or rebase needed.
 
 ### File List
 
-<!-- filled by dev-story -->
+- `services/bff/src/bff/api/test_reset.py` (modified — handler extension + docstring update)
+- `services/bff/tests/api/test_test_reset.py` (modified — helpers + scenario extensions + new scenario 14b)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (modified — 2-3 status flip + last_updated)
+- `_bmad-output/implementation-artifacts/2-3-bff-extend-v1-test-reset-to-truncate-books.md` (modified — task checkboxes, Dev Agent Record, status header)
 
 ### Change Log
 
-<!-- filled by dev-story -->
+- 2026-05-16 — Story 2.3 dev-story phase: handler now truncates `books` alongside `sessions` and `auth_states` (one extra `_delete(entities.Book)` execute inside the existing try/except; single commit preserved). INFO log line extended with `books_deleted=<N>` and `tables=sessions,auth_states,books`. Module docstring updated to reflect Story 2.3 cross-reference and past-tense forward-pointer comment. Tests gain `_seed_book_row` / `_count_books` helpers, scenarios 11–14 extended with `books_deleted=` log substring + `_count_books` assertions, new scenario 14b for books-only seed. All gates green: 423 tests pass, ruff/format/ty clean, coverage 97.57% (test_reset.py 99%).
+- 2026-05-16 — Story 2.3 code-review phase: three-layer review (Blind Hunter / Edge Case Hunter / Acceptance Auditor) found zero must-fix and zero should-fix items. 10/10 ACs verified. Two nice-to-have observations logged as defers (W7, W8). Story closed.
+
+### Review Findings
+
+- [x] [Review][Defer] W7 — No scenario specifically covers third-DELETE (books) rollback after first two succeed [services/bff/tests/api/test_test_reset.py::test_scenario_24_db_failure_returns_project_envelope] — deferred, pre-existing pattern. Scenario 24 monkeypatches `_AsyncSession.execute` to fail on every call, so it raises on the FIRST execute (sessions). Story 1.12 Dev Notes explicitly state "books is structurally identical" — no new error-path scenario needed. A future hardening pass could add a parameterized fixture that fails on the Nth call to prove rollback symmetry for each table.
+- [x] [Review][Defer] W8 — No scenario covers all three counters with positive values simultaneously [services/bff/tests/api/test_test_reset.py] — deferred, spec Task 6 optional 14c explicitly skipped per "pick one approach" guidance. Scenarios 14 (5/3/0) + 14b (0/0/4) together exercise every counter slot, but no single test asserts the all-three-populated wire contract end-to-end. Add a `test_scenario_14c_correct_bearer_all_three_tables_populated` for symmetry if test-matrix completeness ever becomes a priority.
