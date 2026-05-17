@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 3.4 create-story — RS POST /v1/test/reset endpoint: gating shape mirrors BFF 1.12 with extra defensive reject of `change-me` placeholder; 25 test scenarios planned; compose changes deferred to 3.6 per epic line 1302-1304)
+last_updated: 2026-05-17 (story 3.4 dev-story complete — RS POST /v1/test/reset endpoint: 26 tests, 100% coverage on test_reset.py, project total 98.21%; ready for code-review)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -76,7 +76,7 @@ development_status:
   3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev: done
   3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness: done
   3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: done
-  3-4-rs-post-v1-test-reset-endpoint: ready-for-dev
+  3-4-rs-post-v1-test-reset-endpoint: review
   3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: backlog
   3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: backlog
   epic-3-retrospective: optional

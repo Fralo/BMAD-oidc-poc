@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 
 from resource_server.api.health import router as health_router
+from resource_server.api.test_reset import register_test_reset_router
 from resource_server.api.v1 import router as v1_router
 from resource_server.api.v2 import router as v2_router
 from resource_server.core.config import settings
@@ -67,3 +68,4 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.include_router(health_router)
 app.include_router(v1_router)
 app.include_router(v2_router)
+register_test_reset_router(app, settings)

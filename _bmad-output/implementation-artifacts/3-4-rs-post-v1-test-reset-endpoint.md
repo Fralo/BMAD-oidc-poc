@@ -1,5 +1,5 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 3-4-rs-post-v1-test-reset-endpoint
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded, `/health`, `ENABLE_TEST_RESET` + `TEST_RESET_TOKEN` already declared in `AppSettings` at `services/resource-server/src/resource_server/core/config.py:93-94`, project-specific `ErrorCode.SESSION_EXPIRED` at 401 lives in `core/errors.py:27-31`, `app_exception_handler` wired in `main.py:65`); 3.2 (done — `oidc_bearer` plugin per-route `Depends` model, NOT middleware — so the test-reset route's `oidc_bearer` non-application is just an absence of `Depends(require_scope(...))`); 3.3 (done — `ReadingSpeed` SQLModel at `models/entities/reading_speed.py`, `0001_init_init_reading_speeds.py` migration, `__all__ = ["ReadingSpeed"]` in `models/entities/__init__.py` so `SQLModel.metadata` picks it up)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.4: RS — `POST /v1/test/reset` endpoint
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -107,7 +107,7 @@ Coverage of `services/resource-server/src/resource_server/api/test_reset.py` AND
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Author `src/resource_server/api/test_reset.py`** (AC: #1, #3, #4, #5, #6, #7)
+- [x] **Task 1: Author `src/resource_server/api/test_reset.py`** (AC: #1, #3, #4, #5, #6, #7)
   - [ ] Create file `services/resource-server/src/resource_server/api/test_reset.py` with module docstring describing: purpose ("e2e profile test-reset endpoint"), gating (`ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` non-empty AND non-placeholder), safety ("registered conditionally; production builds omit the route entirely"), and source references (epics §Story 3.4, architecture §"POST /v1/test/reset (e2e profile only)").
   - [ ] Imports:
     ```python
@@ -217,7 +217,7 @@ Coverage of `services/resource-server/src/resource_server/api/test_reset.py` AND
     ```
   - [ ] Module-level `__all__ = ["router", "register_test_reset_router"]` so the imports from `main.py` are explicit.
 
-- [ ] **Task 2: Wire the registration helper into `main.py`** (AC: #1, #3)
+- [x] **Task 2: Wire the registration helper into `main.py`** (AC: #1, #3)
   - [ ] In `services/resource-server/src/resource_server/main.py`, add the import after the existing `from resource_server.api.v2 import router as v2_router` line (currently `main.py:11`):
     ```python
     from resource_server.api.test_reset import register_test_reset_router
@@ -229,7 +229,7 @@ Coverage of `services/resource-server/src/resource_server/api/test_reset.py` AND
   - [ ] **Important ordering note:** the call MUST come AFTER `add_exception_handler` calls (currently `main.py:65-66`) so that the new route — if registered — is wrapped by the existing exception handlers (relevant for scenario 24 where a `commit()` failure surfaces via the chain). FastAPI's middleware/handler/router stack is built lazily on first request, so route registration after `add_exception_handler` is functionally fine; placing it right after the existing `include_router` calls is the most readable choice.
   - [ ] **DO NOT** modify `services/resource-server/src/resource_server/api/v1/__init__.py`. The test-reset router is mounted into `app` directly via `register_test_reset_router`, NOT included into `v1_router`. Reason: `v1_router` is unconditionally mounted at `main.py:68`; including our test-reset router into `v1_router` would defeat the gate.
 
-- [ ] **Task 3: Author tests `tests/api/test_test_reset.py`** (AC: #2, #4–#7, #10 scenarios 1–25)
+- [x] **Task 3: Author tests `tests/api/test_test_reset.py`** (AC: #2, #4–#7, #10 scenarios 1–25)
   - [ ] Create `services/resource-server/tests/api/test_test_reset.py`. Module docstring: "Route-level tests for POST /v1/test/reset (Story 3.4). Covers gating (env on/off + placeholder rejection), bearer auth, truncation of `reading_speeds`, JWT-non-interaction, and OpenAPI surface."
   - [ ] Imports:
     ```python
@@ -300,13 +300,13 @@ Coverage of `services/resource-server/src/resource_server/api/test_reset.py` AND
     - Seed rows for `sub` ∈ {"user-a", "user-b", "user-c"}. POST with bearer. Assert all 3 are deleted (not just one). Document in the test docstring: "truncate is intentionally global; this differs from `/v1/reading-speed` GET/PUT which are sub-scoped — the test_reset endpoint is the e2e clean-slate primitive, not a per-user clear."
   - [ ] Run `uv run pytest tests/api/test_test_reset.py -v --cov=src/resource_server/api/test_reset` → all 25+ new tests pass; coverage of `test_reset.py` ≥ 90%.
 
-- [ ] **Task 4: Verify no compose changes are needed (AC8 + AC9)**
+- [x] **Task 4: Verify no compose changes are needed (AC8 + AC9)**
   - [ ] From repo root: `docker compose --profile default config` → valid; the rendered `resource-server` service has NO `ENABLE_TEST_RESET=true` (it should have NO `environment:` block for `ENABLE_TEST_RESET` at all on the `default` profile — the env_file points at the per-service `.env`, which keeps it as the default `false`). Capture output excerpt in dev log.
   - [ ] From repo root: `just e2e-config` (which is `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config`) → valid; the rendered `bff` service has `ENABLE_TEST_RESET=true` (from the existing BFF overlay) but `resource-server` is NOT listed in the e2e profile output (because the base `resource-server` service still has `profiles: [default, dev]` — Story 3.6 will add `e2e` to that list). Capture output excerpt in dev log to make the "deferred to 3.6" boundary explicit.
   - [ ] **Do NOT** modify `compose/app.yml` (`resource-server` profiles list) or `compose/app.e2e.yml` (add an RS overlay) in this story. Both belong to Story 3.6.
   - [ ] `docker compose build resource-server` → succeeds (no Dockerfile changes; image still builds).
 
-- [ ] **Task 5: Run the full RS gate matrix** (AC: #11)
+- [x] **Task 5: Run the full RS gate matrix** (AC: #11)
   - [ ] From `services/resource-server/`:
     - `uv sync --frozen` → exit 0 (no dep changes).
     - `uv run ruff check` → clean.
@@ -316,7 +316,7 @@ Coverage of `services/resource-server/src/resource_server/api/test_reset.py` AND
   - [ ] No Alembic migration needed (the `reading_speeds` table already exists from Story 3.3).
   - [ ] Capture command output excerpts in **Debug Log References**.
 
-- [ ] **Task 6: Update sprint-status + deferred-work**
+- [x] **Task 6: Update sprint-status + deferred-work**
   - [ ] On story start: flip `_bmad-output/implementation-artifacts/sprint-status.yaml` development_status `3-4-rs-post-v1-test-reset-endpoint: ready-for-dev` → `in-progress`. Bump `last_updated`.
   - [ ] On story complete (before `code-review`): flip to `review`. Bump `last_updated`.
   - [ ] If any new defects surface during implementation, append them as D71+ in `deferred-work.md` with severity / owner-story / rationale (mirrors the discipline established by Stories 3.1, 3.2, 3.3).
@@ -523,5 +523,47 @@ claude-opus-4-7
 ### Completion Notes List
 
 - Ultimate context engine analysis completed — comprehensive developer guide created.
+- **Task 1 decision (placeholder gate):** implemented all three gates as specified — `enable_test_reset == True` AND `test_reset_token.strip() != ""` AND `test_reset_token.strip() != "change-me"`. The `_PLACEHOLDER_TOKEN: Final[str] = "change-me"` constant lives at module scope so a future contributor can find it via Find-References before changing the literal. WARN log classifiers differentiate the three skip reasons (`test_reset_token_empty` vs `test_reset_token_default_placeholder`). Scenario 4 in the test suite pins the placeholder-reject behavior; the BFF parity gap is logged as D71 (security review owns the back-port).
+- **Task 2 decision (main.py wiring):** kept the diff to two lines — import added after `v2_router` import, helper call appended after `app.include_router(v2_router)`. No `build_app(cfg)` factory refactor (the conftest's global-`app` strategy still works because tests build fresh apps via `_build_test_context`).
+- **Task 3 decision (test fixture pattern):** chose the Story-1.12-style `_build_test_context(enable, token)` helper over monkeypatching the global `app`. Each scenario builds a fresh `FastAPI` + fresh in-memory SQLite engine + fresh sessionmaker + fresh `AppSettings`, registers `app_exception_handler` and `validation_exception_handler` to mirror `main.py:65-66`, overrides both `get_session` and `_settings_dep`, then calls `register_test_reset_router`. No cross-test state leak, no `app.include_router` un-mount problem.
+- **Task 3 decision (scenario 24 — commit-failure):** the `_FaultyCommitSession` proxy uses `__getattr__` for all attributes including `execute` (no explicit override) to keep `ty` happy with SQLAlchemy's overloaded `execute` signature. Only `commit` is overridden to raise. The test exercises both possible outcomes: an explicit ≥500 response OR an exception that bubbled out of the ASGI transport — either satisfies the "handler did not swallow" guarantee. The seeded row count is asserted unchanged at 1 post-call, proving rollback.
+- **Bearer comparison:** uses `hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))` with NO `.strip()` on either side — secrets are compared verbatim. Empty/whitespace `TEST_RESET_TOKEN` is treated as gate-off at registration time (defense-in-depth), but a non-empty token with leading/trailing whitespace IS compared literally; scenario 19 enforces "no silent stripping of secrets".
+- **`rowcount` access:** uses `getattr(result, "rowcount", -1)` per the story's type note — SQLAlchemy's `Result[Any]` static type does not declare `rowcount` even though the runtime `CursorResult` does. The `# ty: ignore[invalid-argument-type]` originally placed on `_delete(ReadingSpeed)` was removed when ty did not complain about it; ruff's `B008` and ty's overload checks both pass clean.
+- **AC1 helper signature:** `register_test_reset_router(app: FastAPI, cfg: AppSettings) -> None` — exactly as specified. `__all__ = ["register_test_reset_router", "router"]`.
+- **204 empty-body assertion:** scenario 13 originally asserted `content-length: "0"` but FastAPI's bare `Response(status_code=204)` omits the header (per RFC 7230 §3.3.2, optional for 204). Relaxed the assertion to just `response.content == b""` (the body itself is the load-bearing guarantee); added an inline comment explaining the RFC backing. Documented as intentional in the test's body comment.
+- **JWT non-interaction (scenario 16):** confirmed via caplog filter `[r for r in caplog.records if r.name == _OIDC_BEARER_LOGGER]` returning `[]` — the JWT-validation path's logger never fires on the test-reset route. Pins the absence-of-JWT-coupling.
+- **Coverage:** `src/resource_server/api/test_reset.py` 61/61 stmts → 100% (via `pytest --cov=resource_server.api.test_reset`); project total 98.21% (gate is 90%). Full RS suite: 268 tests, all green (was 242 at story start; this story adds 26 tests).
+- **Gates run from `services/resource-server/`:**
+  - `uv sync --frozen` → exit 0 (no dep changes; `pyproject.toml` untouched)
+  - `uv run ruff check` → All checks passed!
+  - `uv run ruff format --check` → 87 files already formatted (clean — one auto-format pass on the test file during dev)
+  - `uv run ty check` → All checks passed!
+  - `uv run pytest --cov` → 268 passed, 98.21% coverage
+- **Compose gates run from worktree root:**
+  - `docker compose --profile default config` → valid; `resource-server` service shows `ENABLE_TEST_RESET: "false"` and `TEST_RESET_TOKEN: change-me` (both gates fail → route not mounted; default profile is safe).
+  - `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` → valid; `resource-server` is NOT listed under the e2e profile (the base service still has `profiles: [default, dev]` — Story 3.6 will extend that). BFF retains `ENABLE_TEST_RESET=true` via the existing overlay. Confirms the "deferred to 3.6" boundary.
+  - The validation required a transient `.env` file in the worktree (gitignored). Created by copying the repo-root `.env` + `services/bff/.env` + falling back to `services/resource-server/.env.example` for the RS per-service file (the RS one is gitignored and absent from the source repo). All transient `.env` files removed before commit; `git status` shows only the intended changes.
+- **Deferred-work log:** added D71 (BFF placeholder-reject parity — owned by Story 5.2), D72 (405-via-wrong-method test coverage — test-quality cleanup), D73 (case-sensitive Bearer prefix vs RFC 6750 — owned by Story 5.2).
+- **Python invocation convention:** all command examples and inline documentation written in this story (story file, code docstrings, dev log) use `python` — never `python3` — per `CLAUDE.md` (root). The existing Dockerfile / compose healthchecks / pytest commands already followed this convention; nothing changed.
+- **Python `assert` in production code:** the `assert auth_header is not None` line in `test_reset.py:138` is a `ty` narrowing hint (the `_classify_auth_failure` check above ensures the header is non-None). Ruff's `S101` rule (`bandit-style assert usage`) is not enabled in this project's `[tool.ruff.lint.select]` (checked `pyproject.toml:53-62`); the `noqa: S101` comment makes the intent explicit for future reviewers.
 
 ### File List
+
+**New files (created by this story):**
+- `services/resource-server/src/resource_server/api/test_reset.py` — `POST /v1/test/reset` handler + `register_test_reset_router(app, cfg)` helper + `_classify_auth_failure` / `_unauthorized_response` / `_settings_dep` helpers. Module docstring describes purpose, gating (three gates including the `change-me` placeholder reject), auth, safety, and source references.
+- `services/resource-server/tests/api/test_test_reset.py` — pytest module covering all 25 AC10 scenarios plus one direct `_settings_dep` coverage test (26 tests total). Doubled `test_` prefix is intentional (pytest discovers it; the RS route module is `test_reset.py` without the prefix). Helper `_build_test_context(enable, token)` builds a fresh `FastAPI` app + in-memory SQLite engine per test for full isolation.
+
+**Modified files:**
+- `services/resource-server/src/resource_server/main.py` — added `from resource_server.api.test_reset import register_test_reset_router` import (line 11) and a single `register_test_reset_router(app, settings)` call after `app.include_router(v2_router)` (line 70). Two-line diff.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — flipped `3-4-rs-post-v1-test-reset-endpoint: backlog` → `ready-for-dev` → `in-progress` → `review` across the workflow.
+- `_bmad-output/implementation-artifacts/deferred-work.md` — appended D71 (BFF placeholder-reject parity), D72 (405-via-wrong-method test coverage), D73 (case-sensitive Bearer prefix).
+
+**NOT modified (intentional — per story spec):**
+- `services/resource-server/src/resource_server/core/config.py` — `enable_test_reset` (line 93) and `test_reset_token` (line 94) were already declared by Story 3.1.
+- `services/resource-server/.env.example` — `ENABLE_TEST_RESET=false` and `TEST_RESET_TOKEN=change-me` were already present (lines 58-59, Story 3.1).
+- `services/resource-server/pyproject.toml` — no new dependencies.
+- `services/resource-server/src/resource_server/api/v1/__init__.py` — the test-reset router is mounted into `app` directly via the helper, NOT included into `v1_router`.
+- `services/resource-server/src/resource_server/services/reading_speed_service.py` — no truncate method added; the truncate is handler-local in `api/test_reset.py`.
+- `services/resource-server/src/resource_server/models/entities/reading_speed.py` — schema unchanged from Story 3.3.
+- Alembic migrations — no schema changes; the `0001_init` from Story 3.3 already creates `reading_speeds`.
+- `compose/app.yml` / `compose/app.e2e.yml` / `Justfile` — all deferred to Story 3.6 per epic line 1302-1304.
