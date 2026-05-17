@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 4.1 code review pass: 6 patches applied (P1 integer-math ceiling, P2 fix tautological float-coercion assertion, P3 _PREFIX escape, P4 input-sanitization across 422 family, P5 EstimateOut.minutes ge=0, P6 403 full-envelope assertion); 6 defers logged D113-D118; status → done.)
+last_updated: 2026-05-17 (story 4.2 dev complete → review — BFF POST /v1/books/{id}/estimate + ResourceServerClient.compute_estimate landed. Four files modified (rsc.py, api/books.py, two test files); zero new files; 21 + 22 new tests added; per-file coverage 100% on both modified modules; project coverage 97.26%; all four gates (ruff/format/ty/pytest) green. Earlier today: story 4.2 contexted — file `4-2-bff-post-v1-books-id-estimate-resourceserverclient-compute-estimate.md` written from 4.1 + 3.5 + 2.2 precedents; 15 ACs + 10 tasks; status → ready-for-dev. Story 4.1 code review pass: 6 patches applied (P1 integer-math ceiling, P2 fix tautological float-coercion assertion, P3 _PREFIX escape, P4 input-sanitization across 422 family, P5 EstimateOut.minutes ge=0, P6 403 full-envelope assertion); 6 defers logged D113-D118; status → done.)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -84,7 +84,7 @@ development_status:
   # Epic 4: Reading-Time Estimate & Honest Failure (J3, J6)
   epic-4: in-progress
   4-1-rs-post-v1-estimate-endpoint-estimate-service-format-duration-helper: done
-  4-2-bff-post-v1-books-id-estimate-resourceserverclient-compute-estimate: backlog
+  4-2-bff-post-v1-books-id-estimate-resourceserverclient-compute-estimate: review
   4-3-spa-estimatecell-real-component-apperror-extensions-bookrow-integration: backlog
   4-4-e2e-specs-j3-estimate-j6-rs-unavailable: backlog
   epic-4-retrospective: optional

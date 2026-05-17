@@ -31,12 +31,14 @@ Public API:
       cannot recover (refresh failed → ``clear_cookies=True``; refresh
       succeeded but retry still 401 → ``clear_cookies=False``).
 
-Compute-estimate (Epic 4 Story 4.2) will land as a third public method on
-this class. Story 3.5 explicitly does NOT pre-stage that method.
+``compute_estimate`` (Story 4.2) is the third public method on this
+class. It brokers ``POST /v1/estimate`` and reuses the same
+refresh-and-replay cycle as the reading-speed methods.
 
 References
 ----------
 - epics.md §Story 3.5 lines 1326-1373
+- epics.md §Story 4.2 lines 1585-1628
 - architecture.md §A6 line 352 (token refresh strategy)
 - architecture.md §C6 line 413 (BFF→RS timeouts)
 - architecture.md §NFR3 line 38 (transparent token refresh)
@@ -66,6 +68,7 @@ logger = logging.getLogger(__name__)
 # architecture §C6's BFF→Keycloak row).
 _RS_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=10.0)
 _READING_SPEED_PATH = "/v1/reading-speed"
+_ESTIMATE_PATH = "/v1/estimate"
 _TOKEN_PATH_SUFFIX = "/protocol/openid-connect/token"
 
 
@@ -186,7 +189,9 @@ class ResourceServerClient:
         :class:`RsSessionTerminated` when the refresh cycle cannot
         recover.
         """
-        return await self._call_with_refresh(db, session_row, method="GET", body=None)
+        return await self._call_with_refresh(
+            db, session_row, method="GET", path=_READING_SPEED_PATH, body=None
+        )
 
     async def put_reading_speed(
         self, db: AsyncSession, session_row: Session, payload: dict[str, Any]
@@ -198,7 +203,28 @@ class ResourceServerClient:
         NFR6.
         """
         return await self._call_with_refresh(
-            db, session_row, method="PUT", body=payload
+            db, session_row, method="PUT", path=_READING_SPEED_PATH, body=payload
+        )
+
+    async def compute_estimate(
+        self,
+        db: AsyncSession,
+        session_row: Session,
+        *,
+        pages: int,
+    ) -> tuple[int, dict[str, Any] | None]:
+        """Issue ``POST /v1/estimate`` with body ``{"pages": pages}``.
+
+        Same return / raise contract as :meth:`get_reading_speed`. NFR6:
+        ``sub`` is NEVER added to the URL, query, or body. The RS reads
+        ``sub`` from the JWT only (architecture line 1141).
+        """
+        return await self._call_with_refresh(
+            db,
+            session_row,
+            method="POST",
+            path=_ESTIMATE_PATH,
+            body={"pages": pages},
         )
 
     async def _call_with_refresh(
@@ -207,10 +233,13 @@ class ResourceServerClient:
         session_row: Session,
         *,
         method: str,
+        path: str,
         body: dict[str, Any] | None,
     ) -> tuple[int, dict[str, Any] | None]:
         # First attempt with the current access_token.
-        status, parsed = await self._do_rs_call(method, session_row.access_token, body)
+        status, parsed = await self._do_rs_call(
+            method, path, session_row.access_token, body
+        )
         if status != 401:
             return status, parsed
 
@@ -234,7 +263,7 @@ class ResourceServerClient:
         await self._persist_refreshed_tokens(db, session_row, new_tokens)
 
         retry_status, retry_parsed = await self._do_rs_call(
-            method, new_tokens["access_token"], body
+            method, path, new_tokens["access_token"], body
         )
         if retry_status == 401:
             # Retry still 401 — refresh worked but RS still rejected.
@@ -252,11 +281,12 @@ class ResourceServerClient:
     async def _do_rs_call(
         self,
         method: str,
+        path: str,
         access_token: str,
         body: dict[str, Any] | None,
     ) -> tuple[int, dict[str, Any] | None]:
         """Issue a single RS HTTP call. Normalize failures to RsUnavailable."""
-        url = self._settings.rs_base_url.rstrip("/") + _READING_SPEED_PATH
+        url = self._settings.rs_base_url.rstrip("/") + path
         headers = {"Authorization": f"Bearer {access_token}"}
         try:
             async with httpx.AsyncClient(timeout=_RS_TIMEOUT) as client:
@@ -264,7 +294,9 @@ class ResourceServerClient:
                     response = await client.get(url, headers=headers)
                 elif method == "PUT":
                     response = await client.put(url, headers=headers, json=body)
-                else:  # pragma: no cover -- only GET/PUT shapes are wired
+                elif method == "POST":
+                    response = await client.post(url, headers=headers, json=body)
+                else:  # pragma: no cover -- only GET/PUT/POST shapes are wired
                     msg = f"unsupported method: {method}"
                     raise ValueError(msg)
         except httpx.HTTPError as exc:

@@ -11,12 +11,17 @@ test files self-contained outweighs the 30-line copy.
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import jwt
+import pytest
+import respx
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from bff.core.config import settings
 from bff.models import entities
+from bff.models.entities.session import Session as SessionRow
 from bff.services.session_service import SessionService
 
 
@@ -695,3 +700,479 @@ async def test_two_distinct_sessions_cross_user_isolation(
     )
     assert len(all_a) == 2
     assert len(all_b) == 3
+
+
+# ===========================================================================
+# Story 4.2 — POST /v1/books/{id}/estimate
+# ===========================================================================
+# Route-level coverage of the BFF→RS estimate proxy. Mirrors
+# test_reading_speed_proxy.py's respx-based pattern.
+
+_RS_BASE_URL = "http://rs.test"
+_RS_ESTIMATE_URL = f"{_RS_BASE_URL}/v1/estimate"
+
+
+@pytest.fixture
+def rs_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the BFF's settings at the respx mock host (RS + Keycloak)."""
+    monkeypatch.setattr(settings, "rs_base_url", _RS_BASE_URL)
+    monkeypatch.setattr(settings, "oidc_issuer_url", "http://idp.test/realms/test")
+    monkeypatch.setattr(settings, "oidc_client_id", "bmad-books-bff")
+    monkeypatch.setattr(settings, "bff_client_secret", "test-secret")
+
+
+async def _seed_session_row(
+    db: AsyncSession,
+    *,
+    sub: str = "user-est-A",
+    session_id: str = "sess-est-A",
+    access_token: str = "initial-at",
+    refresh_token: str = "initial-rt",
+    expires_offset: int = 3600,
+) -> SessionRow:
+    """Insert a session row directly with deterministic access_token + id.
+
+    The `_seed_session` helper above generates a random session id; this
+    helper takes a fixed one so the cookie can be set in advance for the
+    estimate tests that need to assert on the captured RS Authorization
+    header.
+    """
+    row = SessionRow(
+        id=session_id,
+        sub=sub,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        id_token="dummy-id-token",
+        expires_at=(datetime.now(UTC) + timedelta(seconds=expires_offset)).replace(
+            tzinfo=None
+        ),
+        csrf_secret="dummy-csrf-secret",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def test_estimate_happy_200_forwards_body(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-happy")
+    book = await _seed_book(session, sub="est-happy", title="Dune", pages=688)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    envelope = {"minutes": 1376, "formatted": "≈ 22 h 56 m"}
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json=envelope)
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 200
+    assert response.json() == envelope
+    assert rs_route.call_count == 1
+
+
+async def test_estimate_missing_book_id_returns_404_no_rs_call(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-miss")
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post("/v1/books/9999/estimate")
+    assert response.status_code == 404
+    assert response.json() == {
+        "errorCode": "book_not_found",
+        "message": "Book not found",
+        "detail": None,
+    }
+    assert rs_route.call_count == 0  # RS never called.
+
+
+async def test_estimate_cross_user_book_returns_404_no_rs_call(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """User A posts to user B's book id → 404 + no RS fanout (AC3 + NFR6)."""
+    sess_a = await _seed_session_row(session, sub="est-A", session_id="sess-A")
+    b_book = await _seed_book(session, sub="est-B", title="B-book", pages=100)
+    client_with_csrf.cookies.set("bff_session", sess_a.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post(f"/v1/books/{b_book.id}/estimate")
+    assert response.status_code == 404
+    assert response.json()["errorCode"] == "book_not_found"
+    assert rs_route.call_count == 0
+
+
+async def test_estimate_no_session_cookie_returns_401_no_clear(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    # Note: client_with_csrf carries the csrf header/cookie; we just don't set
+    # `bff_session` so the session-resolution path 401s before any RS call.
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post("/v1/books/1/estimate")
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    assert rs_route.call_count == 0
+    # No clearing Set-Cookie on the missing-cookie path. (AC11.)
+    set_cookie = response.headers.get_list("set-cookie")
+    assert all("max-age=0" not in c.lower() for c in set_cookie)
+
+
+async def test_estimate_unknown_session_id_returns_401(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    client_with_csrf.cookies.set("bff_session", "nonexistent-session-id")
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post("/v1/books/1/estimate")
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    assert rs_route.call_count == 0
+
+
+async def test_estimate_expired_session_returns_401_and_deletes_row(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(
+        session, sub="est-exp", session_id="sess-exp", expires_offset=-60
+    )
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post("/v1/books/1/estimate")
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    # Expired row was lazy-deleted.
+    service = SessionService()
+    assert await service.get_session(session, session_id=row.id) is None
+
+
+async def test_estimate_without_csrf_returns_403(
+    client: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """No CSRF header → 403 csrf_invalid at the middleware before the handler."""
+    row = await _seed_session_row(session, sub="est-csrf")
+    book = await _seed_book(session, sub="est-csrf", title="x", pages=10)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client.post(
+            f"/v1/books/{book.id}/estimate", cookies={"bff_session": row.id}
+        )
+    assert response.status_code == 403
+    assert response.json()["errorCode"] == "csrf_invalid"
+    assert rs_route.call_count == 0
+
+
+async def test_estimate_rs_412_forwarded(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-412")
+    book = await _seed_book(session, sub="est-412", title="x", pages=200)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    envelope = {
+        "errorCode": "reading_speed_unset",
+        "message": "Reading speed not set for this user",
+        "detail": None,
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(412, json=envelope)
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 412
+    assert response.json() == envelope
+
+
+async def test_estimate_rs_403_forwarded(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-403")
+    book = await _seed_book(session, sub="est-403", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    envelope = {
+        "errorCode": "forbidden_scope",
+        "message": "Required scope is missing",
+        "detail": None,
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(403, json=envelope)
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 403
+    assert response.json() == envelope
+
+
+async def test_estimate_rs_422_forwarded(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-422")
+    book = await _seed_book(session, sub="est-422", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    envelope = {
+        "errorCode": "invalid_input",
+        "message": "Request validation failed",
+        "detail": [{"loc": ["body", "pages"], "msg": "ge", "type": "value_error"}],
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(422, json=envelope)
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 422
+    assert response.json() == envelope
+
+
+@pytest.mark.parametrize("rs_status", [500, 503])
+async def test_estimate_rs_5xx_returns_503(
+    client_with_csrf: AsyncClient,
+    session: AsyncSession,
+    rs_settings: None,
+    rs_status: int,
+) -> None:
+    row = await _seed_session_row(session, sub=f"est-{rs_status}")
+    book = await _seed_book(session, sub=f"est-{rs_status}", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(rs_status)
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 503
+    assert response.json() == {
+        "errorCode": "resource_server_unavailable",
+        "message": "The resource server is temporarily unavailable",
+        "detail": None,
+    }
+    assert rs_route.call_count == 1  # No retry on 5xx.
+
+
+async def test_estimate_rs_connect_error_returns_503(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-conn")
+    book = await _seed_book(session, sub="est-conn", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            side_effect=httpx.ConnectError("refused")
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 503
+    assert response.json()["errorCode"] == "resource_server_unavailable"
+    assert rs_route.call_count == 1
+
+
+async def test_estimate_rs_read_timeout_returns_503(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-rt")
+    book = await _seed_book(session, sub="est-rt", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=httpx.ReadTimeout("slow"))
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 503
+    assert response.json()["errorCode"] == "resource_server_unavailable"
+
+
+async def test_estimate_refresh_failure_clears_cookies_and_returns_401(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-refresh-fail")
+    book = await _seed_book(session, sub="est-refresh-fail", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
+        mock.post("http://idp.test/realms/test/protocol/openid-connect/token").mock(
+            return_value=httpx.Response(400, json={"error": "invalid_grant"})
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    assert len(set_cookie_headers) == 2
+    joined = "\n".join(set_cookie_headers).lower()
+    assert "bff_session=" in joined
+    assert "csrf_token=" in joined
+    assert "max-age=0" in joined
+    # Session row was deleted by ResourceServerClient.
+    service = SessionService()
+    assert await service.get_session(session, session_id=row.id) is None
+
+
+async def test_estimate_refresh_replay_happy_forwards_200(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-replay")
+    book = await _seed_book(session, sub="est-replay", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    rs_call_seq: list[int] = []
+
+    def _rs(request: httpx.Request) -> httpx.Response:
+        rs_call_seq.append(1)
+        token = request.headers.get("authorization", "")
+        if token == "Bearer initial-at":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_rs)
+        mock.post("http://idp.test/realms/test/protocol/openid-connect/token").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": "new-at",
+                    "refresh_token": "new-rt",
+                    "expires_in": 3600,
+                },
+            )
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 200
+    assert response.json() == {"minutes": 100, "formatted": "≈ 1 h 40 m"}
+    assert len(rs_call_seq) == 2
+    await session.refresh(row)
+    assert row.access_token == "new-at"
+
+
+async def test_estimate_refresh_worked_retry_401_no_cookie_clear(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-retry401")
+    book = await _seed_book(session, sub="est-retry401", title="x", pages=50)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
+        mock.post("http://idp.test/realms/test/protocol/openid-connect/token").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": "new-at",
+                    "refresh_token": "new-rt",
+                    "expires_in": 3600,
+                },
+            )
+        )
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+    assert response.status_code == 401
+    assert response.json()["errorCode"] == "session_expired"
+    # No Set-Cookie clearing — refresh worked, retry just 401'd.
+    set_cookie_headers = response.headers.get_list("set-cookie")
+    assert set_cookie_headers == []
+    # Row still present (rotated tokens, but not deleted).
+    service = SessionService()
+    assert await service.get_session(session, session_id=row.id) is not None
+
+
+async def test_estimate_nfr6_captured_rs_request_shape(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-nfr6", access_token="bearer-nfr6")
+    book = await _seed_book(session, sub="est-nfr6", title="x", pages=688)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    captured: list[httpx.Request] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"minutes": 1376, "formatted": "≈ 22 h 56 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
+        await client_with_csrf.post(f"/v1/books/{book.id}/estimate")
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.path == "/v1/estimate"
+    assert request.url.params == httpx.QueryParams()
+    import json as _json
+
+    body = _json.loads(request.content)
+    assert body == {"pages": 688}
+    assert "sub" not in body
+    assert request.headers["authorization"] == "Bearer bearer-nfr6"
+
+
+async def test_estimate_uses_owner_pages_not_other_users(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """Two users with their own books — A's POST sends A's pages, not B's."""
+    sess_a = await _seed_session_row(session, sub="est-iso-A", session_id="sess-iso-A")
+    a_book = await _seed_book(session, sub="est-iso-A", title="A", pages=111)
+    await _seed_book(session, sub="est-iso-B", title="B", pages=999)
+    client_with_csrf.cookies.set("bff_session", sess_a.id)
+    captured: list[httpx.Request] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
+        await client_with_csrf.post(f"/v1/books/{a_book.id}/estimate")
+    import json as _json
+
+    body = _json.loads(captured[0].content)
+    assert body == {"pages": 111}
+
+
+async def test_estimate_non_integer_book_id_returns_422(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session_row(session, sub="est-path")
+    client_with_csrf.cookies.set("bff_session", row.id)
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(200, json={"minutes": 1, "formatted": "x"})
+        )
+        response = await client_with_csrf.post("/v1/books/not-an-int/estimate")
+    assert response.status_code == 422
+    assert response.json()["errorCode"] == "invalid_input"
+    assert rs_route.call_count == 0
+
+
+async def test_estimate_ignores_request_body(
+    client_with_csrf: AsyncClient, session: AsyncSession, rs_settings: None
+) -> None:
+    """The handler does not consume a request body — `pages` is read from
+    the seeded book row, not the request. A POST with `{}` succeeds with the
+    book's stored pages forwarded to the RS.
+    """
+    row = await _seed_session_row(session, sub="est-body")
+    book = await _seed_book(session, sub="est-body", title="x", pages=200)
+    client_with_csrf.cookies.set("bff_session", row.id)
+    captured: list[httpx.Request] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"minutes": 400, "formatted": "≈ 6 h 40 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
+        response = await client_with_csrf.post(f"/v1/books/{book.id}/estimate", json={})
+    assert response.status_code == 200
+    import json as _json
+
+    body = _json.loads(captured[0].content)
+    assert body == {"pages": 200}  # book.pages, not the request body.
+
+
+async def test_estimate_openapi_path_listed(client: AsyncClient) -> None:
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/v1/books/{book_id}/estimate" in paths
+    assert "post" in paths["/v1/books/{book_id}/estimate"]

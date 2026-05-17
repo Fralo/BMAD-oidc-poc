@@ -44,6 +44,7 @@ from bff.services.session_service import SessionService
 
 _RS_BASE_URL = "http://rs.test"
 _RS_READING_SPEED_URL = f"{_RS_BASE_URL}/v1/reading-speed"
+_RS_ESTIMATE_URL = f"{_RS_BASE_URL}/v1/estimate"
 _KEYCLOAK_ISSUER = "http://idp.test/realms/test"
 _KEYCLOAK_TOKEN_URL = f"{_KEYCLOAK_ISSUER}/protocol/openid-connect/token"
 
@@ -786,3 +787,324 @@ def test_classify_transport_error_branches() -> None:
     assert _classify_transport_error(httpx.NetworkError("x")) == "network_error"
     # Catch-all fallback for any other httpx.HTTPError subclass.
     assert _classify_transport_error(httpx.HTTPError("x")) == "unknown_transport"
+
+
+# ---------------------------------------------------------------------------
+# Story 4.2 — compute_estimate (POST /v1/estimate)
+# ---------------------------------------------------------------------------
+# AC12 matrix — happy + 4xx forwarding + every RsUnavailable trigger +
+# refresh-and-replay variants + NFR6 invariants + post-body shape.
+
+
+async def test_compute_estimate_happy_200_forwards_body(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(
+                200, json={"minutes": 1376, "formatted": "≈ 22 h 56 m"}
+            )
+        )
+        status, body = await client.compute_estimate(session, row, pages=688)
+    assert status == 200
+    assert body == {"minutes": 1376, "formatted": "≈ 22 h 56 m"}
+    assert rs_route.call_count == 1
+
+
+async def test_compute_estimate_rs_412_forwarded(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    envelope = {
+        "errorCode": "reading_speed_unset",
+        "message": "Reading speed not set for this user",
+        "detail": None,
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(412, json=envelope)
+        )
+        status, body = await client.compute_estimate(session, row, pages=100)
+    assert status == 412
+    assert body == envelope
+    assert rs_route.call_count == 1
+
+
+async def test_compute_estimate_rs_403_forwarded(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    envelope = {
+        "errorCode": "forbidden_scope",
+        "message": "Required scope is missing",
+        "detail": None,
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(403, json=envelope)
+        )
+        status, body = await client.compute_estimate(session, row, pages=100)
+    assert status == 403
+    assert body == envelope
+
+
+async def test_compute_estimate_rs_422_forwarded(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    envelope = {
+        "errorCode": "invalid_input",
+        "message": "Request validation failed",
+        "detail": [{"loc": ["body", "pages"], "msg": "ge", "type": "value_error"}],
+    }
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(422, json=envelope)
+        )
+        status, body = await client.compute_estimate(session, row, pages=1)
+    assert status == 422
+    assert body == envelope
+
+
+@pytest.mark.parametrize("rs_status", [500, 502, 503, 504])
+async def test_compute_estimate_rs_5xx_raises_unavailable(
+    session: AsyncSession, rs_settings: None, rs_status: int
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(rs_status)
+        )
+        with pytest.raises(RsUnavailable) as exc_info:
+            await client.compute_estimate(session, row, pages=100)
+    assert exc_info.value.cause == "rs_5xx_response"
+    assert exc_info.value.http_status == rs_status
+    assert rs_route.call_count == 1  # No retry on 5xx.
+
+
+@pytest.mark.parametrize(
+    ("exc_factory", "expected_cause"),
+    [
+        (lambda: httpx.ConnectError("refused"), "connect_error"),
+        (lambda: httpx.ConnectTimeout("slow connect"), "connect_timeout"),
+        (lambda: httpx.ReadTimeout("slow read"), "read_timeout"),
+        (lambda: httpx.WriteTimeout("slow write"), "write_timeout"),
+    ],
+)
+async def test_compute_estimate_transport_error_raises_unavailable(
+    session: AsyncSession,
+    rs_settings: None,
+    exc_factory: object,
+    expected_cause: str,
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(side_effect=exc_factory())  # type: ignore[operator]
+        with pytest.raises(RsUnavailable) as exc_info:
+            await client.compute_estimate(session, row, pages=100)
+    assert exc_info.value.cause == expected_cause
+    assert exc_info.value.http_status is None
+    assert rs_route.call_count == 1
+
+
+async def test_compute_estimate_refresh_and_replay_happy(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    rs_calls: list[int] = []
+
+    def _rs(request: httpx.Request) -> httpx.Response:
+        rs_calls.append(1)
+        token = request.headers.get("authorization", "")
+        if token == "Bearer initial-at":
+            return httpx.Response(401, json={"errorCode": "session_expired"})
+        return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_rs)
+        token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": "new-at",
+                    "refresh_token": "new-rt",
+                    "expires_in": 3600,
+                },
+            )
+        )
+        status, body = await client.compute_estimate(session, row, pages=50)
+    assert status == 200
+    assert body == {"minutes": 100, "formatted": "≈ 1 h 40 m"}
+    assert len(rs_calls) == 2
+    assert token_route.call_count == 1
+    await session.refresh(row)
+    assert row.access_token == "new-at"
+
+
+async def test_compute_estimate_refresh_failure_terminates_session(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
+        mock.post(_KEYCLOAK_TOKEN_URL).mock(
+            return_value=httpx.Response(400, json={"error": "invalid_grant"})
+        )
+        with pytest.raises(RsSessionTerminated) as exc_info:
+            await client.compute_estimate(session, row, pages=50)
+    assert exc_info.value.clear_cookies is True
+    found = (
+        await session.execute(select(SessionRow).where(SessionRow.id == row.id))
+    ).first()
+    assert found is None
+
+
+async def test_compute_estimate_refresh_succeeds_retry_still_401(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
+        token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "access_token": "new-at",
+                    "refresh_token": "new-rt",
+                    "expires_in": 3600,
+                },
+            )
+        )
+        with pytest.raises(RsSessionTerminated) as exc_info:
+            await client.compute_estimate(session, row, pages=50)
+    assert exc_info.value.clear_cookies is False
+    assert rs_route.call_count == 2
+    assert token_route.call_count == 1
+    # Session row NOT deleted.
+    found = (
+        await session.execute(select(SessionRow).where(SessionRow.id == row.id))
+    ).first()
+    assert found is not None
+
+
+async def test_compute_estimate_no_sub_in_url_query_or_body(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    """NFR6: ``sub`` MUST NOT appear in URL path, query, or body."""
+    row = await _seed_session(session, access_token="bearer-xyz")
+    client = _build_client()
+    captured: list[httpx.Request] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
+        await client.compute_estimate(session, row, pages=688)
+
+    assert len(captured) == 1
+    request = captured[0]
+    assert request.url.path == "/v1/estimate"
+    assert request.url.params == httpx.QueryParams()
+    import json as _json
+
+    parsed_body = _json.loads(request.content)
+    assert parsed_body == {"pages": 688}
+    assert "sub" not in parsed_body
+    assert request.headers["authorization"] == "Bearer bearer-xyz"
+
+
+async def test_compute_estimate_post_body_pages_is_int(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    """The ``pages`` field in the wire body MUST be a JSON integer (600), not
+    a string (``"600"``) or float (``600.0``).
+    """
+    row = await _seed_session(session)
+    client = _build_client()
+    captured: list[bytes] = []
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
+        await client.compute_estimate(session, row, pages=600)
+
+    # JSON int (no decimal, no quotes). httpx emits without the inner space
+    # ('{"pages":600}'), so assert on the parsed shape AND the raw bytes
+    # contain `600` not `"600"`/`600.0`.
+    import json as _json
+
+    raw = captured[0]
+    parsed = _json.loads(raw)
+    assert parsed == {"pages": 600}
+    assert isinstance(parsed["pages"], int) and not isinstance(parsed["pages"], bool)
+    assert b'"600"' not in raw
+    assert b"600.0" not in raw
+
+
+async def test_compute_estimate_pages_is_keyword_only() -> None:
+    """``pages`` is keyword-only via the ``*`` separator — positional call raises."""
+    import inspect
+
+    sig = inspect.signature(ResourceServerClient.compute_estimate)
+    assert sig.parameters["pages"].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+@pytest.mark.parametrize(
+    ("status_code", "envelope"),
+    [
+        (412, {"errorCode": "reading_speed_unset"}),
+        (403, {"errorCode": "forbidden_scope"}),
+    ],
+)
+async def test_compute_estimate_no_refresh_on_4xx_forwarded(
+    session: AsyncSession,
+    rs_settings: None,
+    status_code: int,
+    envelope: dict[str, str],
+) -> None:
+    """Refresh-and-replay fires ONLY on 401 — 412/403 are forwarded as-is."""
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(
+            return_value=httpx.Response(status_code, json=envelope)
+        )
+        token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
+            return_value=httpx.Response(200, json={})
+        )
+        status, _ = await client.compute_estimate(session, row, pages=50)
+    assert status == status_code
+    assert rs_route.call_count == 1
+    assert token_route.call_count == 0
+
+
+async def test_compute_estimate_no_refresh_on_5xx(
+    session: AsyncSession, rs_settings: None
+) -> None:
+    """5xx is the unavailable path, not the refresh path — no /token call."""
+    row = await _seed_session(session)
+    client = _build_client()
+    with respx.mock(assert_all_called=False) as mock:
+        rs_route = mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(500))
+        token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
+            return_value=httpx.Response(200, json={})
+        )
+        with pytest.raises(RsUnavailable):
+            await client.compute_estimate(session, row, pages=50)
+    assert rs_route.call_count == 1
+    assert token_route.call_count == 0
