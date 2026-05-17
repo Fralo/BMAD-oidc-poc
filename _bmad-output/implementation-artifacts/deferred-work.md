@@ -517,24 +517,35 @@ Option (a) is the architecturally clean answer and is the smallest deviation fro
 
 Option (a) is the smallest correct fix; (b)/(c) are documented for completeness only.
 
-**Belongs to:** Epic 5 / a compose-hardening story, OR a one-line follow-up commit to Story 1.14 (which originated the gap by deferring AC8). Without W9, the canonical CI command `just e2e-up` cannot succeed end-to-end.
+**Attempted on 2026-05-17 (post-Story 2.7 follow-up) — both option (a) and a host.docker.internal variant were tried and reverted. Lessons learned:**
+
+- **Option (a) does NOT work**: `extra_hosts: ["localhost:host-gateway"]` was applied; same 1 passed / 12 timed-out result. Root cause: **Chromium hard-codes `localhost` to its own loopback** (the hostname is special-cased as a "secure context" for security/performance — `chrome://flags#allow-insecure-localhost` and the localhost-loopback CL are the documented basis). The browser ignores `/etc/hosts` entries for `localhost` regardless of `extra_hosts`.
+
+- **Option (a)-variant via `host.docker.internal` also incomplete**: a second attempt rewired the compose stack to anchor browser-facing URLs on `host.docker.internal` (which Chromium does NOT special-case):
+  - `extra_hosts: ["host.docker.internal:host-gateway"]` on the playwright service (Linux CI compat; no-op on Docker Desktop).
+  - `KC_HOSTNAME: host.docker.internal` override on keycloak in `compose/app.e2e.yml`.
+  - `OIDC_AUTHORIZE_URL_BROWSER: http://host.docker.internal:8080/realms/bmad-books` override on bff in `compose/app.e2e.yml`.
+
+  This got the browser past the initial KC redirect (KC's login form rendered and the password was submitted — confirmed by KC's `Non-secure context detected` cookie warning in the logs), but **every test still failed** at the next step: the post-login redirect from KC back to the BFF callback landed on `chrome-error://chromewebdata/`. Diagnosis: the OAuth flow has **four** URLs that need to anchor on the same browser-reachable host, and the partial fix only covered two of them.
+
+- **The full URL-chain that must be browser-reachable from inside the runner container:**
+  1. KC authorize endpoint (`OIDC_AUTHORIZE_URL_BROWSER`) — set in `.env`, BFF emits in 302. ✅ covered by the partial fix.
+  2. KC login form action + session cookies (`KC_HOSTNAME`-based) — KC's own response Set-Cookies + form-submit URL. ✅ covered by the partial fix.
+  3. **BFF callback URL** (`BFF_BASE_URL` → `/auth/callback`) — KC redirects browser back here after login. ❌ still `localhost:8000` after the partial fix → chrome-error.
+  4. **Playwright `baseURL`** (`E2E_BASE_URL` in `compose/app.yml`) — currently `http://bff:8000`; would need to match (3) for origin / SameSite-cookie consistency with the callback.
+  5. **KC realm `redirectUris` + `webOrigins`** (`keycloak/realm-bmad-books.json:82-87`) — currently hardcoded to `http://localhost:8000/auth/callback` / `http://localhost:8000`. KC rejects any redirect_uri not in the registered list; would need an additional `http://host.docker.internal:8000/...` entry (keeping the localhost entries so host-side dev still works).
+
+- **Validation cost so far**: two ~13-minute runs (each fails after 12 × 60s test timeouts). Each iteration is expensive — debug it with a single-test invocation (`npx playwright test j1-first-login.spec.ts:53 --reporter=line`) once a full hypothesis is wired, not on the full suite.
+
+**Recommended next attempt (a comprehensive option (a)-variant):**
+  1. Add `extra_hosts: ["host.docker.internal:host-gateway"]` to the `playwright` service in `compose/app.yml`.
+  2. In `compose/app.e2e.yml`, override on the `bff` service: `BFF_BASE_URL=http://host.docker.internal:8000`, `OIDC_AUTHORIZE_URL_BROWSER=http://host.docker.internal:8080/realms/bmad-books`.
+  3. In `compose/app.e2e.yml`, override on the `keycloak` service: `KC_HOSTNAME=host.docker.internal`.
+  4. In `compose/app.yml` playwright service env: change `E2E_BASE_URL` to `http://host.docker.internal:8000`.
+  5. In `keycloak/realm-bmad-books.json`, append `http://host.docker.internal:8000/auth/callback` to `redirectUris` and `http://host.docker.internal:8000` to `webOrigins` (do NOT remove the existing localhost entries — they're still needed for host-side dev).
+  6. Verify the J5 refresh-token revocation assertion still works: it uses `KEYCLOAK_INTERNAL_URL=http://keycloak:8080` for a runner-process back-channel POST (not a browser call), so it should be unaffected by the browser-URL rewiring — but worth confirming once the OAuth chain is green.
+
+**Belongs to:** Epic 5 / a compose-hardening story, OR a dedicated Story 1.14 follow-up. Given the wider-than-expected blast radius (touches realm JSON + 3 compose files + an env override) this is no longer "one-line follow-up" territory — it deserves its own story with a clean AC list.
 **Severity:** medium (deferred — the local-dev workflow is fully verified-green for J2; the compose-runner path is the canonical-CI path and is broken, but no production behavior depends on it).
 **Blocks:** Story 1.13 AC6 (originally "deferred to reviewer"), Story 1.14 AC8 ("skipped"), Story 2.7 AC13 (compose-runner half), Story 5.4 final smoke (almost certainly).
 
-### D64 — `tests/j1-first-login.spec.ts:70` asserts `'Books — coming in Epic 2'` placeholder copy that Story 2.5 removed
-
-**Surfaced by:** Story 2.7 dev agent (local-dev `npm test` run — 1 J1 test fails).
-**File:** `e2e/tests/j1-first-login.spec.ts:70` — `await expect(page.getByText('Books — coming in Epic 2')).toBeVisible();`.
-**Issue:** Story 2.5 replaced `BookRowPlaceholder` / the books-page placeholder with the real `BookListPage`. The page now renders `<h1>Books</h1>` + the add form + (empty/loading/list states), not the literal string `'Books — coming in Epic 2'`. Story 2.5's review did not catch the stale E2E assertion; J2's spec is unaffected (Story 2.7 asserts against the current copy `'No books yet. Add one above.'`).
-**Fix:** Replace the assertion with `await expect(page.getByRole('heading', { name: 'Books' })).toBeVisible();` — the post-login `/books` route's authoritative content marker after Story 2.5.
-**Belongs to:** a future E2E-stabilization pass — touch under "fix(2.7-follow-up)" or roll into Story 5.x. Two-line edit; out of scope for Story 2.7 (the parent's task description was explicit about not modifying out-of-scope SPA / earlier-story specs to make new ones pass).
-**Severity:** nit (deferred — pre-existing test-debt, not a behavior regression).
-
-### D65 — `tests/j5-logout.spec.ts:51` uses ambiguous `getByText('Reading Time Estimator')` which matches both the top-chrome brand AND the LoginView heading
-
-**Surfaced by:** Story 2.7 dev agent (local-dev `npm test` run — 1 J5 test fails with strict-mode-violation: 2-element resolution).
-**File:** `e2e/tests/j5-logout.spec.ts:51` — `await expect(page.getByText('Reading Time Estimator')).toBeVisible();`.
-**Issue:** Story 1.10's late patches (`b8c6629 chore(1.10): code review — apply patches P1-P3, mark done`) added an `<h1 class="login-headline">Sign in to Reading Time Estimator</h1>` to LoginView. Playwright's strict-mode locator now sees TWO elements containing the substring `'Reading Time Estimator'` — the brand `<span class="top-chrome-brand">` and the new `<h1>` — and refuses to resolve.
-**Fix:** Tighten to either `page.getByText('Reading Time Estimator', { exact: true })` (the brand `<span>` text is exactly that string, the LoginView heading is `'Sign in to Reading Time Estimator'`), OR scope to a stable container: `page.locator('.top-chrome-brand')`.
-**Belongs to:** same future E2E-stabilization pass as D64. Two-line edit; out of scope for Story 2.7.
-**Severity:** nit (deferred — pre-existing test-debt; not a behavior regression).
