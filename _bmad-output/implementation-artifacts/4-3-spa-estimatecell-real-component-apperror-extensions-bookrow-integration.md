@@ -1,6 +1,6 @@
 # Story 4.3: SPA — `EstimateCell` (real component) + `AppError` extensions + BookRow integration
 
-Status: review
+Status: done
 
 <!-- Sprint: Epic 4 (Reading-Time Estimate & Honest Failure — J3, J6) -->
 <!-- Precedes: Story 4.4 (E2E J3 + J6 specs). Follows: Story 4.2 (BFF estimate proxy — ready-for-dev). -->
@@ -595,4 +595,22 @@ Claude Opus 4.7 (1M context) via bmad-dev-story skill (executed in worktree `age
 ### Change Log
 
 - 2026-05-17 — Status `ready-for-dev` → `in-progress` → `review`. Implemented EstimateCell (types, component, template, CSS, spec) + BooksService.requestEstimate (impl + tests). Audited AppError union, ErrorService.parse, and error-service.spec.ts — no edits required (covered by Story 3.5). SPA test suite 139 → 152, all green. Lint: no new errors (3 pre-existing fallthrough errors in book-row.ts / book-form.ts / status-control.ts inherited from `main`).
+- 2026-05-17 — Status `review` → `done`. Adversarial code review (Blind Hunter / Edge Case Hunter / Acceptance Auditor passes performed sequentially in single agent). One P1 patch applied: tightened test 4 with mid-flight pessimistic-UI assertions (stale `≈ 4 h 20 m` cleared during loading window between Re-estimate click and the second flush; loading button disabled + relabelled). Remaining adversarial findings all classified as dismiss (template-level race guards, computed-vs-method styling, `never` runtime fallback, RouterLink assertion shape — all noise or established precedents). No defers logged. SPA suite still 152/152 green after P1.
+
+### Review Findings
+
+- [x] [Review][Patch] P1 — Strengthen test 4 (re-estimate) with mid-flight assertions that confirm pessimistic-UI clears the stale `≈ 4 h 20 m` result and shows the disabled `Estimating…` button before the second flush [spa/src/app/books/estimate-cell.spec.ts:167-176] — applied.
+- [x] [Review][Defer] None — all adversarial findings either patched (P1) or dismissed as noise (10 dismissed). No genuine pre-existing issues surfaced that warrant a D-code entry in `deferred-work.md`.
+
+Dismissed findings (for transparency, not persisted to story body):
+- B1 / E1 — Re-entry race: template hides idle/re-estimate button during `loading=true`; no UI reachable surface for a second click. Programmatic invocation is not a real risk.
+- B2 — `errorCopy()` as method vs. `computed()`: stylistic, OnPush + signals already deduplicate.
+- B3 / E12 — `pages` input required but unused at runtime: explicitly required by AC4 (BookRow binding stability).
+- B4 / E4 — `_exhaustive: never = err; return _exhaustive;` typed-string fallthrough: established precedent across `book-row.ts` / `book-form.ts` / `status-control.ts`; build fails at type-check before runtime.
+- B6 — `.not.toContain('≈ 4 h 20 m')` brittleness: works deterministically in jsdom with Angular text rendering.
+- B7 — `harness?.httpTesting.verify()` no-op on early-test failure: acceptable; Vitest surfaces the original failure regardless.
+- E2 — `errorCopy()` empty string when `reading_speed_unset`: verified safe — template short-circuits before calling `errorCopy()` for that variant.
+- E3 — RouterLink assertion accepts multiple shapes: defensive across Angular variants.
+- E5 — Redundant `error()` signal read in `errorCopy()`: signal memoization makes it free.
+- E7 / E8 — No chained `success → error → success` transition test: AC16 doesn't require it; individual tests cover the constituent logic.
 

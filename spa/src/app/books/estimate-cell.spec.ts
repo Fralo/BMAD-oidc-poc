@@ -164,6 +164,16 @@ describe('EstimateCell', () => {
     // Click Re-estimate via the same handler.
     pending = click(fixture);
     fixture.detectChanges();
+
+    // Mid-flight: AC6 mandates `result` is cleared synchronously on click so
+    // stale state doesn't bleed through the loading view. The previous
+    // `≈ 4 h 20 m` MUST be gone from the DOM during the loading window.
+    expect(el.querySelector('.estimate-cell-result')).toBeNull();
+    expect(el.textContent ?? '').not.toContain('≈ 4 h 20 m');
+    const loadingBtn = el.querySelector('button') as HTMLButtonElement;
+    expect(loadingBtn.disabled).toBe(true);
+    expect(loadingBtn.textContent?.trim()).toBe(ESTIMATE_CELL_LOADING_LABEL);
+
     // Second request fires.
     const req = httpTesting.expectOne({ method: 'POST', url: `/v1/books/${BOOK_ID}/estimate` });
     expect(req.request.body).toEqual({});
