@@ -95,6 +95,14 @@ class AppSettings(BaseSettings):
     enable_test_reset: bool = False
     test_reset_token: str = ""
 
+    # BFF → Resource Server base URL (Story 3.5). Compose-internal default
+    # matches the `resource-server` service name in `compose/app.yml`; in dev
+    # (host runs), override to the local RS port. Required-fail-fast validation
+    # at startup (`_validate_rs_base_url`) closes the misconfig hole where a
+    # silent default could direct traffic at `localhost` or an attacker-controlled
+    # URL.
+    rs_base_url: str = "http://resource-server:8000"
+
     # OIDC discovery probe timeouts (architecture §C6: BFF→Keycloak 5s/10s, no
     # retries). The discovery fetch uses these.
     oidc_discovery_connect_timeout: float = 5.0
@@ -126,6 +134,30 @@ class AppSettings(BaseSettings):
         if not val.startswith(("http://", "https://")):
             msg = (
                 "OIDC_AUTHORIZE_URL_BROWSER must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rs_base_url(self) -> AppSettings:
+        # Story 3.5: BFF→RS base URL is required-fail-fast. Mirrors the
+        # `_validate_oidc_authorize_url_browser` pattern. A silent default
+        # could direct production traffic at `localhost` (which would not
+        # resolve to the RS in compose) or, worse, an attacker-controlled URL
+        # if a typo'd env var lands in the deployment config.
+        val = self.rs_base_url.strip()
+        if not val:
+            msg = (
+                "RS_BASE_URL is required and must be non-empty "
+                "(the BFF→Resource Server base URL — typically "
+                "http://resource-server:8000 in compose, "
+                "http://localhost:8001 in dev)"
+            )
+            raise ValueError(msg)
+        if not val.startswith(("http://", "https://")):
+            msg = (
+                "RS_BASE_URL must start with 'http://' or 'https://' "
                 f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)

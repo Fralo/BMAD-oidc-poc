@@ -1,0 +1,56 @@
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-6);
+}
+
+.settings-heading {
+  font: var(--text-page-title);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.settings-label {
+  font: var(--text-body);
+  color: var(--color-text);
+  display: block;
+  margin-bottom: var(--spacing-1);
+}
+
+.settings-input {
+  font: var(--text-body);
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  width: 200px;
+}
+
+.settings-input:disabled {
+  opacity: 0.5;
+}
+
+.settings-helper {
+  font: var(--text-small);
+  color: var(--color-text-muted);
+  margin: var(--spacing-1) 0 0;
+}
+
+.settings-save {
+  font: var(--text-body);
+  padding: var(--spacing-2) var(--spacing-4);
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: var(--spacing-4);
+}
+
+.settings-save:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.settings-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

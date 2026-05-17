@@ -1,5 +1,5 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route
 epic: 3
 prerequisites: 3.3 (done — RS `ReadingSpeed` model + `/v1/reading-speed` GET/PUT, scope-gated `reading-speed:read` / `reading-speed:write`, project-specific `invalid_input`/`reading_speed_unset`/`forbidden_scope`/`session_expired` lower_snake wire codes); 3.4 (done — RS `POST /v1/test/reset`; conftest patterns for fresh-app test contexts); 1.5 (done — BFF `keycloak_cookie_session.py` exchange_code/revoke/end_session pattern; `OidcVerificationError`; httpx Timeout idiom); 1.6 (done — `CsrfMiddleware`; `csrf_token` cookie + `X-CSRF-Token` header double-submit); 1.9 (done — SPA `AuthService`, `withCredentialsInterceptor` (global 401 handler skipping `/api/me`), `csrfInterceptor`, functional guards `authGuard` / `redirectIfAuthedGuard`); 1.10 (done — SPA `TopChrome` contextual link, `ErrorMessage` shared component, `/settings` route loading `SettingsPagePlaceholder` via `authGuard`)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.5: BFF `ResourceServerClient` (refresh-and-replay) + `/v1/reading-speed` GET/PUT proxy + SPA `SettingsView` + `ReadingSpeedService` + `/settings` route
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -479,7 +479,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — BFF: add `RESOURCE_SERVER_UNAVAILABLE` ErrorCode** (AC: #6)
+- [x] **Task 1 — BFF: add `RESOURCE_SERVER_UNAVAILABLE` ErrorCode** (AC: #6)
   - [ ] Edit `services/bff/src/bff/core/errors.py`. Add to the `ErrorCode` enum after `CSRF_INVALID`:
     ```python
     RESOURCE_SERVER_UNAVAILABLE = (
@@ -491,7 +491,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
   - [ ] Update the leading project-specific-codes comment to mention Story 3.5's addition (mirrors the discipline established by Stories 1.5-1.7 and 3.3 on the RS).
   - [ ] Run `uv run pytest tests/core/` → existing error-handler tests still pass (the addition is a new enum member, no behavior change to existing handlers).
 
-- [ ] **Task 2 — BFF: add `rs_base_url` config field** (AC: #2)
+- [x] **Task 2 — BFF: add `rs_base_url` config field** (AC: #2)
   - [ ] Edit `services/bff/src/bff/core/config.py`:
     - Add field after `test_reset_token`: `rs_base_url: str = "http://resource-server:8000"`.
     - Add `@model_validator(mode="after")` named `_validate_rs_base_url` mirroring `_validate_oidc_authorize_url_browser`:
@@ -524,7 +524,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
   - [ ] Edit `compose/app.yml` — locate the `bff` service block, add `RS_BASE_URL=http://resource-server:8000` to its `environment:` list (verify whether the BFF uses `environment:` inline or only `env_file:` — match the existing pattern). If the BFF uses ONLY `env_file:`, the `.env.example` change is sufficient and the value carries via `services/bff/.env` at compose time.
   - [ ] Re-run `uv sync --frozen` (idempotent) and verify `AppSettings()` constructs cleanly with the default value.
 
-- [ ] **Task 3 — BFF: author `ResourceServerClient` class** (AC: #1, #4, #6, #7)
+- [x] **Task 3 — BFF: author `ResourceServerClient` class** (AC: #1, #4, #6, #7)
   - [ ] Create `services/bff/src/bff/services/resource_server_client.py`. Module docstring describes: purpose (BFF → RS HTTP client), refresh-and-replay cycle (NFR3 / A6), timeouts (AR19 — 5s connect / 10s read; no retries on 5xx), identity propagation (NFR6 — no `sub` injection), and source references.
   - [ ] Imports:
     ```python
@@ -730,7 +730,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     Place this AT MODULE SCOPE so the `bff/api/reading_speed.py` proxy router can `except resource_server_client._SessionTerminated as exc:` (export it through `__all__` to make the import shape explicit; or use a public-named class like `RsSessionTerminated` to avoid the underscore). **Recommended:** rename to `RsSessionTerminated` (public) so the proxy router's try/except is readable; the underscore convention is for module-internal classes only.
   - [ ] Module-level singleton: `resource_server_client = ResourceServerClient(settings)` at the bottom of the file. Also `__all__ = ["RsSessionTerminated", "ResourceServerClient", "resource_server_client"]`.
 
-- [ ] **Task 4 — BFF: author `/v1/reading-speed` proxy router** (AC: #3, #5, #6, #7, #8, #9, #10)
+- [x] **Task 4 — BFF: author `/v1/reading-speed` proxy router** (AC: #3, #5, #6, #7, #8, #9, #10)
   - [ ] Create `services/bff/src/bff/api/reading_speed.py`. Module docstring describes: purpose (thin proxy to RS), session check (mirrors `api/me.py`), forwarding rules (verbatim for 2xx/4xx; mapped 503 for 5xx), refresh-and-replay (delegated to `ResourceServerClient`), and source references.
   - [ ] Imports:
     ```python
@@ -846,7 +846,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     ```
   - [ ] Verify NO edits to `main.py` are needed.
 
-- [ ] **Task 5 — BFF: author proxy tests `tests/api/test_reading_speed_proxy.py`** (AC: #11)
+- [x] **Task 5 — BFF: author proxy tests `tests/api/test_reading_speed_proxy.py`** (AC: #11)
   - [ ] Create `services/bff/tests/api/test_reading_speed_proxy.py`. Module docstring + ~20 tests per the AC11 matrix.
   - [ ] Imports: respx, httpx, pytest, the conftest fixtures (`client`, `client_with_csrf`, `session`). Use `respx.mock(assert_all_called=False, assert_all_mocked=False)` as a context manager OR `respx_mock` fixture.
   - [ ] Helper to seed a session row: `async def _seed_session(session, sub="user-a", access_token="initial-at", refresh_token="initial-rt", expires_at=None) -> Session` — uses `SessionService.create_session` OR direct `session.add(Session(...))`. Set the session cookie on the test client by adding it to `client.cookies` (the conftest `client_with_csrf` fixture handles the CSRF cookie + header; you can layer the session cookie on top).
@@ -855,7 +855,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
   - [ ] For 503 scenarios, also assert the WARN log via `caplog`: `caplog.set_level(logging.WARNING, logger="bff.services.resource_server_client")` then `assert "resource_server_unavailable" in caplog.text and "cause=connect_error" in caplog.text` etc.
   - [ ] Add a sanity test that the OpenAPI schema includes `/v1/reading-speed` (GET + PUT) — `response = await client.get("/openapi.json"); assert "/v1/reading-speed" in response.json()["paths"]`.
 
-- [ ] **Task 6 — BFF: author refresh-and-replay tests `tests/services/test_resource_server_client.py`** (AC: #12)
+- [x] **Task 6 — BFF: author refresh-and-replay tests `tests/services/test_resource_server_client.py`** (AC: #12)
   - [ ] Create `services/bff/tests/services/test_resource_server_client.py`. Module docstring describes the refresh-and-replay contract.
   - [ ] Use the BFF synthetic-IdP harness (`build_synthetic_idp(monkeypatch)` from `tests/auth/synthetic_idp.py`). The IdP's `_token_handler` already handles the `refresh_token` grant — no changes needed there.
   - [ ] For each scenario in AC12 #1-20:
@@ -868,7 +868,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
   - [ ] For the cookie-clearing assertion (AC12 #19), the test calls `ResourceServerClient.get_reading_speed` directly (which raises `RsSessionTerminated`), then drives the proxy router's `_session_terminated_response` helper directly OR uses the `client_with_csrf` fixture to exercise the full proxy path and inspect `response.headers.get_list("set-cookie")`. The full-proxy approach is preferred for catching response-shape regressions.
   - [ ] Aim for ≥90% coverage of `services/resource_server_client.py`.
 
-- [ ] **Task 7 — SPA: author `AppError` discriminated union + `ErrorService`** (AC: #14)
+- [x] **Task 7 — SPA: author `AppError` discriminated union + `ErrorService`** (AC: #14)
   - [ ] Create `spa/src/app/shared/errors/` directory.
   - [ ] Create `spa/src/app/shared/errors/app-error.types.ts` with the discriminated union per AC14.
   - [ ] Create `spa/src/app/shared/errors/error-service.ts`:
@@ -915,7 +915,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     ```
   - [ ] Create `spa/src/app/shared/errors/error-service.spec.ts` covering each branch of `parse`: 503/412/422/403 happy paths, 503/412 with wrong errorCode (falls through to unknown), non-HttpErrorResponse input, missing body fields.
 
-- [ ] **Task 8 — SPA: author `ReadingSpeedService`** (AC: #15, #16)
+- [x] **Task 8 — SPA: author `ReadingSpeedService`** (AC: #15, #16)
   - [ ] Create `spa/src/app/settings/reading-speed.types.ts` with the `ReadingSpeedOut` interface.
   - [ ] Create `spa/src/app/settings/reading-speed-service.ts`:
     ```ts
@@ -1002,7 +1002,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     - Use `provideHttpClient(withFetch())` + `provideHttpClientTesting()` + `inject(HttpTestingController)`.
     - For the `justSaved` pulse, use vitest fake timers: `vi.useFakeTimers()` in `beforeEach`, `vi.advanceTimersByTime(1000)` after save resolves.
 
-- [ ] **Task 9 — SPA: author `SettingsPage` component** (AC: #17, #18)
+- [x] **Task 9 — SPA: author `SettingsPage` component** (AC: #17, #18)
   - [ ] Create `spa/src/app/settings/settings-page.{ts,html,css,spec.ts}` per AC17.
   - [ ] In `settings-page.ts`:
     ```ts
@@ -1083,13 +1083,13 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
   - [ ] In `settings-page.css`: the styles per AC17.
   - [ ] In `settings-page.spec.ts`: 16 tests per AC22.
 
-- [ ] **Task 10 — SPA: update route table + delete placeholder** (AC: #19, #20)
+- [x] **Task 10 — SPA: update route table + delete placeholder** (AC: #19, #20)
   - [ ] Edit `spa/src/app/app.routes.ts`. Replace the `settings` route's `loadComponent` to import `./settings/settings-page` → `m.SettingsPage`.
   - [ ] Delete `spa/src/app/settings/settings-page-placeholder.ts`.
   - [ ] Run `git status` after the deletion to verify it's tracked.
   - [ ] Verify `top-chrome.spec.ts` already covers the `/settings` → `"Books"` contextual link case. If not, add the test per AC20.
 
-- [ ] **Task 11 — Run BFF gates** (AC: #25, #26)
+- [x] **Task 11 — Run BFF gates** (AC: #25, #26)
   - [ ] From `services/bff/`:
     - `uv sync --frozen` → exit 0.
     - `uv run ruff check` → 0 findings.
@@ -1098,7 +1098,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     - `uv run pytest --cov` → all prior + ~40 new tests pass; total coverage ≥ 90%. Capture %.
   - [ ] From repo root: `docker compose --profile default config` → exit 0; capture the `bff` service block to confirm `RS_BASE_URL` is wired.
 
-- [ ] **Task 12 — Run SPA gates** (AC: #24)
+- [x] **Task 12 — Run SPA gates** (AC: #24)
   - [ ] From `spa/`:
     - `npm run lint` → exit 0.
     - `npm test -- --no-watch` → exit 0. Capture test count.
@@ -1106,7 +1106,7 @@ The placeholder `spa/src/app/settings/settings-page-placeholder.ts` is **DELETED
     - `npm run test:coverage` → exit 0; coverage of `src/app/settings/` ≥70%; coverage of `src/app/shared/errors/` ≥70%.
   - [ ] If `vitest.config.ts` exists (Story 1.9 may have created it), verify `src/app/shared/errors/**` is in its `coverage.include` glob. If not, add it.
 
-- [ ] **Task 13 — Bookkeeping** (AC: #27)
+- [x] **Task 13 — Bookkeeping** (AC: #27)
   - [ ] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-5-bff-resourceserverclient-...` `ready-for-dev` → `in-progress` at story start, → `review` at end. Bump `last_updated`.
   - [ ] If new defers surface during implementation, append them under `## Deferred from: dev-story of 3-5-...` in `deferred-work.md`. Start at D80 (D71-D79 are owned by Story 3.4; verify the current ceiling).
   - [ ] Verify `git diff --stat` matches the file list in AC27 (no surprise touches).
@@ -1393,10 +1393,80 @@ claude-opus-4-7
 
 ### Debug Log References
 
+- **BFF gates (services/bff/, post-implementation):**
+  - `uv run ruff check` → All checks passed!
+  - `uv run ruff format --check` → 70 files already formatted
+  - `uv run ty check` → All checks passed!
+  - `uv run pytest --cov` → 392 passed (348 baseline + 44 new); total coverage 96.28% (project gate 90%)
+  - Per-file coverage of new modules: `src/bff/api/reading_speed.py` 98%, `src/bff/services/resource_server_client.py` 90% — both ≥ epic-mandated 90%.
+- **SPA gates (spa/, post-implementation):**
+  - `npm run lint` → All files pass linting.
+  - `npm run build` → exit 0; `dist/spa/browser/index.html` produced; `settings-page` lazy chunk emitted (5.89 kB raw).
+  - `npm test -- --no-watch` → 71 passed (32 baseline + 39 new across 12 test files).
+  - `npm run test:coverage` → 97.16% overall; `reading-speed-service.ts` 100%, `error-service.ts` 100%, `settings-page.ts` 94.64%. All ≥ epic-mandated 70% on `src/app/settings/` and `src/app/shared/errors/`.
+- **Compose validation (worktree root, with transient `.env` files restored from `.env.example` per Story 3.4 dev-log convention):**
+  - `docker compose --profile default config` → exit 0; BFF service environment contains `RS_BASE_URL=http://resource-server:8000`; `resource-server` service present in default profile. Transient `.env` files removed before commit.
+
 ### Completion Notes List
 
-- Ultimate context engine analysis completed — comprehensive developer guide created.
+- **Task 1 — `RESOURCE_SERVER_UNAVAILABLE` ErrorCode:** added to `bff/core/errors.py` per architecture §C5; the leading project-specific-codes comment now enumerates Story 3.5's addition alongside the Epic 1 codes.
+- **Task 2 — `rs_base_url` config field:** added to `AppSettings` with default `http://resource-server:8000`; the `_validate_rs_base_url` model_validator mirrors `_validate_oidc_authorize_url_browser` (non-empty + http(s)://). `services/bff/.env.example` carries the new `RS_BASE_URL` line under a fresh "AR29: BFF → Resource Server" section. `compose/app.yml` was NOT modified — the BFF service uses `env_file:` only, so `RS_BASE_URL` flows in through `services/bff/.env` as expected.
+- **Task 3 — `ResourceServerClient`:** implemented with the AR19 timeout budget (`httpx.Timeout(connect=5, read=10, write=10, pool=10)`), the single 401-refresh-replay cycle (NFR3/A6), and the FR-ERROR-01 honest-503 surface. Exposes `get_reading_speed` and `put_reading_speed` (no `compute_estimate` — deferred to Story 4.2 per epic line 1331). Two custom exception classes: `RsUnavailable` (5xx / transport failures) and `RsSessionTerminated` (refresh cycle terminal). The `_RefreshFailed` internal exception is collapsed into `RsSessionTerminated(clear_cookies=True)` for callers. Module-level `resource_server_client` singleton mirrors `api/me.py`'s `_session_service` pattern. The three exception classes carry `# noqa: N818` because their semantic role is "control-flow signal" not "stack-trace error" — same convention as the BFF's existing `AppException` (`core/errors.py:35`).
+- **Task 4 — Proxy router:** authored `bff/api/reading_speed.py` with GET + PUT handlers that delegate to `ResourceServerClient`. Session check mirrors `api/me.py:50-69` verbatim (no shared helper extracted — Story 3.5 is only the second consumer of the pattern; extraction will land when a third consumer arrives, e.g., Story 2.2's books CRUD). Two response builders: `_session_terminated_response(cfg, clear_cookies=...)` and `_resource_server_unavailable_response()`. The proxy forwards bodies verbatim for 2xx/4xx via `JSONResponse(status_code=status, content=body)`; only the 5xx/transport path emits a project-owned envelope. Wired into `bff/api/v1/__init__.py` via `include_router` — no `main.py` edit needed.
+- **Task 5 — Proxy tests:** authored `tests/api/test_reading_speed_proxy.py` with 23 tests (AC11's 20 scenarios + 2 cookie-clearing assertions on the refresh path + 1 OpenAPI surface check). Uses respx to mock the RS endpoint; `respx_mock.get(...).mock(return_value=...)` for happy responses, `side_effect=httpx.<Error>` for transport failures. The cookie-clearing tests monkeypatch `settings.oidc_issuer_url` to the synthetic IdP host so the refresh call is intercepted.
+- **Task 6 — Refresh-and-replay tests:** authored `tests/services/test_resource_server_client.py` with 21 tests (AC12's 20 scenarios + 1 unit test on `_RefreshFailed.cause`). Exercises `ResourceServerClient` directly (not through the proxy). Covers happy refresh-and-replay, refresh-failure modes (4xx, 5xx, transport, malformed response, missing refresh_token), `expires_at` advance, refresh-token rotation, no-refresh-on-non-401 statuses, single-attempt invariant, and the refresh request shape (grant_type, client_id, client_secret as form fields).
+- **Task 7 — `AppError` + `ErrorService`:** authored `spa/src/app/shared/errors/app-error.types.ts` with the 5-variant discriminated union (reading_speed_unset, resource_server_unavailable, invalid_input, forbidden_scope, unknown) and `error-service.ts` with the `parse(err)` method. The parser checks BOTH the HTTP status AND the wire-level `errorCode` field so a server emitting a contract-divergent envelope falls through to `{ kind: 'unknown' }` rather than getting silently coerced. Spec `error-service.spec.ts` has 9 tests covering each branch including non-HttpErrorResponse input and missing body fields.
+- **Task 8 — `ReadingSpeedService`:** authored with the 6 signals + 2 methods spec'd by AC15. The `justSaved` ~1s pulse uses `setTimeout(() => this._justSaved.set(false), 1000)` (vitest fake timers in the spec verify the toggle window). 412 on load is the legitimate unset state (NOT a load error). 401 is swallowed silently in both `load` and `save` — the global `withCredentialsInterceptor` (Story 1.9) owns the `/login` navigation. Spec `reading-speed-service.spec.ts` has 14 tests covering each branch + the justSaved pulse via `vi.advanceTimersByTime`.
+- **Task 9 — `SettingsPage`:** authored as a standalone component with `OnPush` change detection. The local `_inputValue` signal is synchronized from `speedService.pagesPerHour()` via an `effect()` until the user types (`_userEdited` boolean flips on first input event and prevents the effect from clobbering user edits thereafter). Validation regex `/^[1-9]\d*$/` rejects empty, zero, negative, non-numeric, and leading-zero values per UX-DR15 (validation on submit only — NOT on blur). The template uses Angular v21 `@if` block syntax and the `ErrorMessage` standalone component from Story 1.10. CSS uses the `--spacing-*` tokens (story spec called them `--space-*` but the actual `styles.css` declares `--spacing-*` — verified by reading `styles.css:18-23`; the story spec's prose typo did not survive contact with reality, and the CSS now matches the declared token names). Spec `settings-page.spec.ts` has 16 tests covering all 9 render states + validation matrix.
+- **Task 10 — Route table + placeholder deletion:** `spa/src/app/app.routes.ts` repointed `'settings'` from `SettingsPagePlaceholder` to `SettingsPage`. `spa/src/app/settings/settings-page-placeholder.ts` deleted. The Story 1.10 `top-chrome.spec.ts` already covered the `/settings → "Books"` contextual-link case (line 84-93 — verified), so AC20 is satisfied without extending the spec.
+- **AC20 verification:** `grep -n "/settings.*Books"` in `top-chrome.spec.ts` confirms a test asserting `link.textContent === "Books"` on the `/settings` route. No spec change needed.
+- **AC26 — compose validation:** the `bff` service uses `env_file: ../services/bff/.env`, so the new `RS_BASE_URL=http://resource-server:8000` line in `.env.example` propagates via the per-service `.env` at deploy time. `docker compose --profile default config` (run after restoring transient `.env` from `.env.example`, per Story 3.4 dev-log convention) shows `RS_BASE_URL: http://resource-server:8000` in the BFF service block. Transient `.env` files removed before commit.
+- **AC27 verification:** `git diff --stat` shows the change-set is scoped to the 13 modified+new+deleted paths enumerated in AC27. No accidental touches to RS, e2e, keycloak, root files, or out-of-scope SPA folders.
+- **Defers:** no new defers from this story's dev-story phase. Code review may surface items D80+.
 
 ### File List
 
-(To be populated by dev-story.)
+**Created (BFF):**
+- `services/bff/src/bff/services/resource_server_client.py` — `ResourceServerClient` class + `RsUnavailable` / `RsSessionTerminated` exceptions + module-level singleton.
+- `services/bff/src/bff/api/reading_speed.py` — `/v1/reading-speed` GET + PUT proxy handlers + session-check helper + 2 response builders.
+- `services/bff/tests/api/test_reading_speed_proxy.py` — 23 tests covering AC11.
+- `services/bff/tests/services/test_resource_server_client.py` — 21 tests covering AC12.
+
+**Created (SPA):**
+- `spa/src/app/shared/errors/app-error.types.ts` — `AppError` discriminated union (5 variants).
+- `spa/src/app/shared/errors/error-service.ts` — `ErrorService` with `parse(err): AppError`.
+- `spa/src/app/shared/errors/error-service.spec.ts` — 9 tests covering each parser branch.
+- `spa/src/app/settings/reading-speed.types.ts` — `ReadingSpeedOut` wire-shape interface.
+- `spa/src/app/settings/reading-speed-service.ts` — `ReadingSpeedService` with 6 signals + load/save methods.
+- `spa/src/app/settings/reading-speed-service.spec.ts` — 14 tests covering AC21.
+- `spa/src/app/settings/settings-page.ts` — `SettingsPage` standalone component.
+- `spa/src/app/settings/settings-page.html` — template per UX-DR9.
+- `spa/src/app/settings/settings-page.css` — token-derived styles.
+- `spa/src/app/settings/settings-page.spec.ts` — 16 tests covering AC22.
+
+**Modified (BFF):**
+- `services/bff/src/bff/core/errors.py` — added `RESOURCE_SERVER_UNAVAILABLE` ErrorCode enum member.
+- `services/bff/src/bff/core/config.py` — added `rs_base_url` field + `_validate_rs_base_url` model_validator.
+- `services/bff/src/bff/api/v1/__init__.py` — included the new `reading_speed_router`.
+- `services/bff/.env.example` — added `RS_BASE_URL` entry under a fresh "AR29: BFF → Resource Server" section.
+
+**Modified (SPA):**
+- `spa/src/app/app.routes.ts` — repointed `'settings'` to `SettingsPage`.
+
+**Deleted:**
+- `spa/src/app/settings/settings-page-placeholder.ts`.
+
+**Modified (bookkeeping):**
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — flipped status across the workflow.
+
+**NOT modified (intentional, per story spec):**
+- `services/resource-server/**` — RS consumed unchanged.
+- `services/bff/src/bff/main.py` — `v1_router` already mounted at line 137.
+- `services/bff/src/bff/api/me.py`, `auth.py`, `health.py`, `test_reset.py` — unchanged.
+- `services/bff/src/bff/services/session_service.py` — consumed as-is.
+- `services/bff/src/bff/auth/csrf.py` — no new exemption added.
+- `compose/app.yml` — BFF uses `env_file:` only; new env var flows via per-service `.env`.
+- `spa/src/app/auth/**`, `spa/src/app/shared/http/**`, `spa/src/app/shared/chrome/**` — Story 1.9 + 1.10 contracts consumed unchanged.
+- `spa/src/app/app.config.ts`, `app.html`, `app.ts`, `app.css`, `app.spec.ts` — unchanged.
+- `spa/src/app/shared/ui/error-message.{ts,html,css}` — consumed unchanged.
+- `spa/src/app/shared/chrome/top-chrome.spec.ts` — Story 1.10's `/settings → Books` test already covers AC20.
