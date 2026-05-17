@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 2.7 review — E2E J2 spec authored, 8/8 J2 tests passing via local-dev workflow; 3 defers surfaced: W9 compose-runner KC URL, D64 J1 stale assertion, D65 J5 ambiguous selector)
+last_updated: 2026-05-17 (story 2.7 done — E2E J2 spec, 8/8 J2 tests green; code review clean: 0 must-fix, 3 dev-time defers (W9/D64/D65), 5 dismissed. Epic 2 stories 2.1–2.7 all done; epic-2-retrospective now available (optional).)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -68,7 +68,7 @@ development_status:
   2-4-spa-booksservice-types: done
   2-5-spa-booklist-page-bookform-add-variant-states: done
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: done
-  2-7-e2e-spec-j2-manage-books: review
+  2-7-e2e-spec-j2-manage-books: done
   epic-2-retrospective: optional
 
   # Epic 3: Reading Speed Settings (J4)
