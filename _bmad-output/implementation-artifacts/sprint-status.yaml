@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 3.3 done — code-review pass: CR1–CR3 applied (extra="forbid" on ReadingSpeedUpsert, float-shape tests for pages_per_hour, created_at==updated_at on INSERT pin); 5 defers D66–D70; 242 tests, coverage 98.06% (api.reading_speed and services.reading_speed_service: 100% each); all 15 ACs MET)
+last_updated: 2026-05-17 (story 3.4 done — code-review pass: CR1–CR3 applied (startup WARN on whitespace-padded token, OpenAPI 401 envelope, case+underscore-normalized placeholder reject); 6 defers D74–D79; 281 tests, coverage 98.23% (api.test_reset.py: 100%); all 12 ACs MET)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -76,7 +76,7 @@ development_status:
   3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev: done
   3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness: done
   3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: done
-  3-4-rs-post-v1-test-reset-endpoint: backlog
+  3-4-rs-post-v1-test-reset-endpoint: done
   3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: backlog
   3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: backlog
   epic-3-retrospective: optional
