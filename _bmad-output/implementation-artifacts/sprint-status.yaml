@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 2.7 done — E2E J2 spec, 8/8 J2 tests green; code review clean: 0 must-fix, 3 dev-time defers (W9/D64/D65), 5 dismissed. Epic 2 stories 2.1–2.7 all done; epic-2-retrospective now available (optional).)
+last_updated: 2026-05-17 (epic-2-retrospective done — 3 action items: A1 W9 compose-runner fix as dedicated story, A2 reactive-state in-flight guards bundled into single Epic 5 story, A3 promote epic-doc-vs-codebase callout to story template. 5 of 6 Epic 1 retro commitments dropped as speculative hygiene; T1/T3 folded into Story 5.2 (security review).)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -69,7 +69,7 @@ development_status:
   2-5-spa-booklist-page-bookform-add-variant-states: done
   2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: done
   2-7-e2e-spec-j2-manage-books: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   # Epic 3: Reading Speed Settings (J4)
   epic-3: backlog
