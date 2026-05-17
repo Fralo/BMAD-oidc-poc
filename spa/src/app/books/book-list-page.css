@@ -1,0 +1,11 @@
+.book-list-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-6);
+}
+
+.book-list-page-title {
+  margin: 0 0 var(--spacing-4);
+  color: var(--color-text);
+  font: var(--text-page-title);
+}

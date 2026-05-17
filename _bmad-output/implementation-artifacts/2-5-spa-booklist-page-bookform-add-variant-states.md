@@ -1,12 +1,12 @@
 ---
-status: ready-for-dev
+status: done
 story_key: 2-5-spa-booklist-page-bookform-add-variant-states
 created: 2026-05-16
 ---
 
 # Story 2.5: SPA — BookList page + BookForm (add variant) + states
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -292,41 +292,41 @@ For `book-form.spec.ts`, instantiate `BooksService` for real with `provideHttpCl
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Route swap and placeholder deletion (AC1)
-  - [ ] 1.1 In `spa/src/app/app.routes.ts`, change the `/books` route's `loadComponent` from `./books/books-page-placeholder` to `./books/book-list-page`.
-  - [ ] 1.2 Delete `spa/src/app/books/books-page-placeholder.ts`. Run `grep -rn "books-page-placeholder\|BooksPagePlaceholder" spa/` to confirm zero remaining references before deletion.
-  - [ ] 1.3 Verify the existing `e2e/tests/j1-first-login.spec.ts` and `e2e/tests/j5-logout.spec.ts` still pass by skim-reading their `expect(...)` lines — they assert URL is `/books` after login, not a specific placeholder text. Do NOT modify them.
+- [x] Task 1 — Route swap and placeholder deletion (AC1)
+  - [x] 1.1 In `spa/src/app/app.routes.ts`, change the `/books` route's `loadComponent` from `./books/books-page-placeholder` to `./books/book-list-page`.
+  - [x] 1.2 Delete `spa/src/app/books/books-page-placeholder.ts`. Run `grep -rn "books-page-placeholder\|BooksPagePlaceholder" spa/` to confirm zero remaining references before deletion.
+  - [x] 1.3 Verify the existing `e2e/tests/j1-first-login.spec.ts` and `e2e/tests/j5-logout.spec.ts` still pass by skim-reading their `expect(...)` lines — they assert URL is `/books` after login, not a specific placeholder text. Do NOT modify them.
 
-- [ ] Task 2 — `BookListPage` component (AC2, AC3)
-  - [ ] 2.1 Create `spa/src/app/books/book-list-page.ts` with the class shell from AC2. Import `BookForm` and `BookList` in the `imports` array.
-  - [ ] 2.2 Create `spa/src/app/books/book-list-page.html` with the template from AC3 (heading + `<app-book-form variant="add" />` + `<app-book-list />`).
-  - [ ] 2.3 Create `spa/src/app/books/book-list-page.css` with layout only (heading top spacing via `var(--spacing-8)`; `gap` between heading / form / list via `var(--spacing-6)` on the `.book-list-page` flex/block container). NO max-width — the parent `.app-content` already constrains to 720px.
-  - [ ] 2.4 Create `spa/src/app/books/book-list-page.spec.ts` covering the two tests from AC9. Stub `BooksService` to record the `load()` call.
+- [x] Task 2 — `BookListPage` component (AC2, AC3)
+  - [x] 2.1 Create `spa/src/app/books/book-list-page.ts` with the class shell from AC2. Import `BookForm` and `BookList` in the `imports` array.
+  - [x] 2.2 Create `spa/src/app/books/book-list-page.html` with the template from AC3 (heading + `<app-book-form variant="add" />` + `<app-book-list />`).
+  - [x] 2.3 Create `spa/src/app/books/book-list-page.css` with layout only (heading top spacing via `var(--spacing-8)`; `gap` between heading / form / list via `var(--spacing-6)` on the `.book-list-page` flex/block container). NO max-width — the parent `.app-content` already constrains to 720px.
+  - [x] 2.4 Create `spa/src/app/books/book-list-page.spec.ts` covering the two tests from AC9. Stub `BooksService` to record the `load()` call.
 
-- [ ] Task 3 — `BookList` component (AC4, AC5)
-  - [ ] 3.1 Create `spa/src/app/books/book-list.ts` with the class shell from AC4. Import `BookRowPlaceholder` (if Option A) and `ErrorMessage`.
-  - [ ] 3.2 Create `spa/src/app/books/book-list.html` with the four-state `@if` / `@else if` cascade, following the precedence order from AC4. Use Angular's new control flow (`@if`/`@for`) — NOT structural directives `*ngIf` / `*ngFor` (architecture line 238).
-  - [ ] 3.3 Create `spa/src/app/books/book-list.css` for the populated-state `<ul>` (no bullets — `list-style: none`, padding: 0), the row borders (`border-top: 1px solid var(--color-border)` on `li:not(:first-child)`), and the loading / empty `<p>` styling using `var(--text-small)` / `var(--color-text-muted)`.
-  - [ ] 3.4 Create `spa/src/app/books/book-list.spec.ts` covering the four state tests from AC9. Stub `BooksService` with a signal-only fake (no HTTP).
+- [x] Task 3 — `BookList` component (AC4, AC5)
+  - [x] 3.1 Create `spa/src/app/books/book-list.ts` with the class shell from AC4. Import `BookRowPlaceholder` (if Option A) and `ErrorMessage`.
+  - [x] 3.2 Create `spa/src/app/books/book-list.html` with the four-state `@if` / `@else if` cascade, following the precedence order from AC4. Use Angular's new control flow (`@if`/`@for`) — NOT structural directives `*ngIf` / `*ngFor` (architecture line 238).
+  - [x] 3.3 Create `spa/src/app/books/book-list.css` for the populated-state `<ul>` (no bullets — `list-style: none`, padding: 0), the row borders (`border-top: 1px solid var(--color-border)` on `li:not(:first-child)`), and the loading / empty `<p>` styling using `var(--text-small)` / `var(--color-text-muted)`.
+  - [x] 3.4 Create `spa/src/app/books/book-list.spec.ts` covering the four state tests from AC9. Stub `BooksService` with a signal-only fake (no HTTP).
 
-- [ ] Task 4 — `BookRowPlaceholder` stub (AC5 — pick Option A or B)
-  - [ ] 4.1 **Option A (recommended):** Create `spa/src/app/books/book-row-placeholder.ts` as a standalone `OnPush` component with `input.required<Book>('book')` rendering `<span class="book-row-title">{{ book().title }}</span>`. Add minimal HTML/CSS.
-  - [ ] 4.2 **Option B:** Skip this task and inline the title rendering inside `book-list.html`. Document the choice in the story's "Completion Notes" so Story 2.6's owner knows whether to introduce a new component or rename one.
+- [x] Task 4 — `BookRowPlaceholder` stub (AC5 — pick Option A or B)
+  - [x] 4.1 **Option A (recommended):** Create `spa/src/app/books/book-row-placeholder.ts` as a standalone `OnPush` component with `input.required<Book>('book')` rendering `<span class="book-row-title">{{ book().title }}</span>`. Add minimal HTML/CSS.
+  - [ ] 4.2 **Option B:** Skip this task and inline the title rendering inside `book-list.html`. (Not chosen — Option A selected; see Completion Notes.)
 
-- [ ] Task 5 — `BookForm[variant=add]` component (AC6, AC7, AC8)
-  - [ ] 5.1 Create `spa/src/app/books/book-form.ts` with the class shell from AC6. Import `ReactiveFormsModule` and `ErrorMessage`. Use `NonNullableFormBuilder` for cleaner types.
-  - [ ] 5.2 Add the custom whitespace-title validator OR the submit-time `trim() && length > 0` check (see Dev Notes §"Whitespace title"). Pick one strategy and apply consistently.
-  - [ ] 5.3 Create `spa/src/app/books/book-form.html` with the template from AC7. Three labelled inputs (title text, pages number with `min="1"`, status select with three options) + primary submit button + inline `<app-error-message />`. **No Cancel button** (gated by `variant() === 'edit'` — Story 2.6 adds it).
-  - [ ] 5.4 Create `spa/src/app/books/book-form.css` styling the submit button identically to `.login-button` (accent color, hover state, disabled 50% opacity per UX-DR14). Use `--spacing-3` for input vertical rhythm.
-  - [ ] 5.5 Implement `onSubmit()` per AC8: validation-on-submit → submit gating (`submitting` signal) → call `BooksService.create()` → success: `form.reset()` (clears to defaults); failure: format `AppError` and render inline (inputs preserved).
-  - [ ] 5.6 Implement `buildValidationMessage()` and `formatServerError(err: AppError)` per Dev Notes §"Validation copy" and §"Mapping AppError → user-visible copy".
-  - [ ] 5.7 Create `spa/src/app/books/book-form.spec.ts` covering the four states from AC9 (default, submitting, validation-error including whitespace-title + pages-zero/negative sub-cases, server-error including `invalid_input` + `csrf_invalid`). Use a real `BooksService` against `HttpTestingController`.
+- [x] Task 5 — `BookForm[variant=add]` component (AC6, AC7, AC8)
+  - [x] 5.1 Create `spa/src/app/books/book-form.ts` with the class shell from AC6. Import `ReactiveFormsModule` and `ErrorMessage`. Use `NonNullableFormBuilder` for cleaner types.
+  - [x] 5.2 Add the custom whitespace-title validator OR the submit-time `trim() && length > 0` check (see Dev Notes §"Whitespace title"). Pick one strategy and apply consistently.
+  - [x] 5.3 Create `spa/src/app/books/book-form.html` with the template from AC7. Three labelled inputs (title text, pages number with `min="1"`, status select with three options) + primary submit button + inline `<app-error-message />`. **No Cancel button** (gated by `variant() === 'edit'` — Story 2.6 adds it).
+  - [x] 5.4 Create `spa/src/app/books/book-form.css` styling the submit button identically to `.login-button` (accent color, hover state, disabled 50% opacity per UX-DR14). Use `--spacing-3` for input vertical rhythm.
+  - [x] 5.5 Implement `onSubmit()` per AC8: validation-on-submit → submit gating (`submitting` signal) → call `BooksService.create()` → success: `form.reset()` (clears to defaults); failure: format `AppError` and render inline (inputs preserved).
+  - [x] 5.6 Implement `buildValidationMessage()` and `formatServerError(err: AppError)` per Dev Notes §"Validation copy" and §"Mapping AppError → user-visible copy".
+  - [x] 5.7 Create `spa/src/app/books/book-form.spec.ts` covering the four states from AC9 (default, submitting, validation-error including whitespace-title + pages-zero/negative sub-cases, server-error including `invalid_input` + `csrf_invalid`). Use a real `BooksService` against `HttpTestingController`.
 
-- [ ] Task 6 — Lint, coverage, and suite verification (AC10)
-  - [ ] 6.1 `npm test -- --watch=false` from `spa/` — green; new test count ≥ 10 above the 65-test baseline.
-  - [ ] 6.2 `npm run lint` from `spa/` — clean.
-  - [ ] 6.3 `npm run test:coverage` — spot-check `book-list-page.ts`, `book-list.ts`, `book-form.ts` are all ≥70% per AR34. If any module misses, add sub-cases to the existing test files (do not invent new test categories — they'd be coverage-only, not behavior-driven).
-  - [ ] 6.4 Manual smoke test under `npm run start` against a running BFF: navigate to `/books`, verify loading flash → empty state; add a book; verify the new row appears at the top; refresh; verify the row persists (round-trips through `GET /v1/books`).
+- [x] Task 6 — Lint, coverage, and suite verification (AC10)
+  - [x] 6.1 `npm test -- --watch=false` from `spa/` — green; new test count ≥ 10 above the 65-test baseline.
+  - [x] 6.2 `npm run lint` from `spa/` — clean.
+  - [x] 6.3 `npm run test:coverage` — spot-check `book-list-page.ts`, `book-list.ts`, `book-form.ts` are all ≥70% per AR34. If any module misses, add sub-cases to the existing test files (do not invent new test categories — they'd be coverage-only, not behavior-driven).
+  - [ ] 6.4 Manual smoke test under `npm run start` against a running BFF: navigate to `/books`, verify loading flash → empty state; add a book; verify the new row appears at the top; refresh; verify the row persists (round-trips through `GET /v1/books`). **Deferred — requires running stack; see Completion Notes (live-stack smoke is to be performed by the integrator).**
 
 ## Dev Notes
 
@@ -586,8 +586,59 @@ Claude Opus 4.7 (1M context) — via `bmad-dev-story` workflow.
 
 ### Debug Log References
 
+- Initial spec run (after first implementation pass): 82 tests (65 baseline + 17 new), 3 failures in `book-form.spec.ts`. Failures were button-state assertions after `await whenStable()` post-`req.flush()` — the `(ngSubmit)` dispatch returned the Promise but the spec couldn't reach it. Fixed by invoking `componentInstance.onSubmit()` directly so the returned Promise can be awaited. After the fix: 82/82 green.
+- Lint: clean on first try.
+- Coverage spot-check (Vitest v8 reporter): `app/books/book-form.ts` 91.37% statements / 80% branches, `app/books/books-service.ts` 100% statements (Story 2.4 baseline unchanged). All four new modules are above the AR34 ≥70% gate.
+
 ### Completion Notes List
+
+- **Option A selected for the row stub:** created `book-row-placeholder.{ts,html,css}` (no `.spec`; populated-state coverage in `book-list.spec.ts` exercises it). Same-shape swap target for Story 2.6's real `BookRow`.
+- **Whitespace-title strategy:** Strategy A (custom `nonWhitespaceValidator` ValidatorFn) — bubbles through `form.invalid`. Submit-time `trim()` still applied before sending the payload (defense-in-depth + payload normalization).
+- **Inline error copy reuses module-level constants** (`BOOK_LIST_LOAD_ERROR_COPY`, `BOOK_FORM_*`) so the spec asserts against the same symbol the template reads — refactoring copy is a one-line edit, not a test-edit cost.
+- **Books service NOT modified** — Story 2.4 surface consumed verbatim. No new methods, no signal-shape changes.
+- **`BookListPage` does NOT render `<app-top-chrome />`** — global app shell handles it (`app.html`). The "Settings link visible at `/books`" requirement is satisfied by `TopChrome.contextualLink` (covered by `top-chrome.spec.ts`; not retested here).
+- **`app.routes.ts` edited (one line)** — `/books` `loadComponent` now points at `BookListPage`; `books-page-placeholder.ts` deleted (zero remaining references in `spa/`).
+- **Task 6.4 (manual `npm run start` smoke)** not performed in this worktree: the worktree has no running BFF/Keycloak. Compose-level smoke is the integrator's pre-merge step.
+- **Code-review pass (post-dev):** zero must-fix; two should-fix applied in this story (S1 + S2 below); five nice-to-have defers logged in `deferred-work.md` as D57-D61.
+  - **S1 (applied)** — `BookForm.formatServerError` now has a `default: const _exhaustive: never = err;` branch so future `AppError` variants (e.g., Story 3.5's `resource_server_unavailable`) cause a compile-time error instead of returning `undefined`.
+  - **S2 (applied)** — Removed dead `Validators.required` on the `status` FormControl. The `<select>` has no empty option and the initial value (`'to-read'`) is always valid, so the validator was unreachable. Adds a comment documenting why.
+- **Deferred (not fixed in 2.5):**
+  - **D57** — `<input type="number">` for pages accepts decimals (`step` not set); server-side Pydantic catches.
+  - **D58** — `BookForm.onSubmit` has no synchronous double-submit guard beyond the disabled attribute; programmatic callers could race.
+  - **D59** — `BookList`'s loading state never shows during a re-fetch when `books` is already populated; explicit AC out-of-scope.
+  - **D60** — `BookListPage` does not guard against `load()` rejection; depends on Story 2.4's "load() never rejects" contract.
+  - **D61** — `BookForm` duplicates `LoginView`'s button styling rather than sharing a token / component.
+- **Re-ran tests + lint after S1 + S2 fixes:** 82/82 green, lint clean. Coverage unchanged at 91.4% statements for `book-form.ts` (S1 adds an unreachable `default` branch; S2 removes one branch — net neutral).
 
 ### File List
 
+**Added (new):**
+- `spa/src/app/books/book-list-page.ts`
+- `spa/src/app/books/book-list-page.html`
+- `spa/src/app/books/book-list-page.css`
+- `spa/src/app/books/book-list-page.spec.ts`
+- `spa/src/app/books/book-list.ts`
+- `spa/src/app/books/book-list.html`
+- `spa/src/app/books/book-list.css`
+- `spa/src/app/books/book-list.spec.ts`
+- `spa/src/app/books/book-form.ts`
+- `spa/src/app/books/book-form.html`
+- `spa/src/app/books/book-form.css`
+- `spa/src/app/books/book-form.spec.ts`
+- `spa/src/app/books/book-row-placeholder.ts`
+- `spa/src/app/books/book-row-placeholder.html`
+- `spa/src/app/books/book-row-placeholder.css`
+
+**Modified:**
+- `spa/src/app/app.routes.ts` — `/books` `loadComponent` swap (one line).
+
+**Deleted:**
+- `spa/src/app/books/books-page-placeholder.ts`
+
 ### Change Log
+
+| Date | Note |
+| --- | --- |
+| 2026-05-16 | Dev pass complete: 17 new tests added (2 page, 5 list, 10 form); 82 total green; lint clean; coverage ≥70% on all new modules. Story moved to `review`. |
+| 2026-05-16 | Code-review pass complete: 0 must-fix; 2 should-fix applied (S1 exhaustive `never` check on `formatServerError`; S2 removed dead `Validators.required` on `status`). 5 nice-to-have defers logged (D57-D61). Tests re-run: 82/82 green; lint clean. Story moved to `done`. |
+

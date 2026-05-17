@@ -12,8 +12,7 @@ export const routes: Routes = [
   },
   {
     path: 'books',
-    loadComponent: () =>
-      import('./books/books-page-placeholder').then((m) => m.BooksPagePlaceholder),
+    loadComponent: () => import('./books/book-list-page').then((m) => m.BookListPage),
     canActivate: [authGuard],
   },
   {

@@ -1,0 +1,4 @@
+.book-row-title {
+  color: var(--color-text);
+  font: var(--text-body);
+}

@@ -1,0 +1,26 @@
+<form class="book-form" [formGroup]="form" (ngSubmit)="onSubmit()">
+  <label class="book-form-label">
+    <span class="book-form-label-text">Title</span>
+    <input class="book-form-input" type="text" formControlName="title" />
+  </label>
+  <label class="book-form-label">
+    <span class="book-form-label-text">Page count</span>
+    <input class="book-form-input" type="number" min="1" formControlName="pages" />
+  </label>
+  <label class="book-form-label">
+    <span class="book-form-label-text">Status</span>
+    <select class="book-form-input" formControlName="status">
+      <option value="to-read">to-read</option>
+      <option value="reading">reading</option>
+      <option value="finished">finished</option>
+    </select>
+  </label>
+  <div class="book-form-actions">
+    <button class="book-form-submit" type="submit" [disabled]="submitting()">
+      {{ submitting() ? submittingButtonLabel : idleButtonLabel }}
+    </button>
+  </div>
+  @if (errorMessage(); as msg) {
+    <app-error-message [message]="msg" />
+  }
+</form>
