@@ -14,9 +14,10 @@ class ErrorCode(enum.Enum):
     UNAUTHORIZED = ("UNAUTHORIZED", "Authentication required", 401)
     FORBIDDEN = ("FORBIDDEN", "Access forbidden", 403)
     # BMAD_books project-specific codes (architecture §C5). Wire values are
-    # lower_snake_case per the documented contract; only codes consumed by
-    # this story's surface are added now — later stories add their own as
-    # they introduce the consuming handlers.
+    # lower_snake_case per the documented contract; codes consumed by stories
+    # so far: SESSION_EXPIRED (1.5), SERVICE_UNAVAILABLE (1.5/health), CSRF_INVALID
+    # (1.6), AUTH_STATE_INVALID (1.5), RESOURCE_SERVER_UNAVAILABLE (3.5 — emitted
+    # by the BFF when the RS is unreachable or returns 5xx, per FR-ERROR-01 / AR17).
     SESSION_EXPIRED = ("session_expired", "Session expired or not present", 401)
     SERVICE_UNAVAILABLE = (
         "service_unavailable",
@@ -25,6 +26,15 @@ class ErrorCode(enum.Enum):
     )
     AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
     CSRF_INVALID = ("csrf_invalid", "CSRF token missing or invalid", 403)
+    # CR8: message kept generic so Epic 4 Story 4.2's compute-estimate path
+    # can reuse the same envelope without claiming "reading-speed" on an
+    # estimate failure. The SPA renders its own UX-DR12 copy
+    # ("Service unavailable — try again shortly") regardless of this text.
+    RESOURCE_SERVER_UNAVAILABLE = (
+        "resource_server_unavailable",
+        "The resource server is temporarily unavailable",
+        503,
+    )
 
     def __init__(self, code: str, message: str, http_status: int) -> None:
         self.code = code

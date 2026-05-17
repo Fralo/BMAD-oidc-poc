@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 3.4 done — code-review pass: CR1–CR3 applied (startup WARN on whitespace-padded token, OpenAPI 401 envelope, case+underscore-normalized placeholder reject); 6 defers D74–D79; 281 tests, coverage 98.23% (api.test_reset.py: 100%); all 12 ACs MET)
+last_updated: 2026-05-17 (story 3.5 done — code review pass: CR1–CR10 applied (cookie-clear via _clear_session_cookies, PUT body extra=forbid, expires_in validation, RS_BASE_URL netloc check, justSaved timer cancel, 502/503/504 → resource_server_unavailable, generic 503 message, OIDC_ISSUER_URL fail-fast, RS non-dict 2xx → RsUnavailable); 23 defers D80–D102; BFF 423 tests, coverage 96.85%; SPA 72 tests; all 27 ACs MET)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -77,7 +77,7 @@ development_status:
   3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness: done
   3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: done
   3-4-rs-post-v1-test-reset-endpoint: done
-  3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: backlog
+  3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: done
   3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: backlog
   epic-3-retrospective: optional
 

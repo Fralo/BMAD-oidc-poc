@@ -18,8 +18,7 @@ export const routes: Routes = [
   },
   {
     path: 'settings',
-    loadComponent: () =>
-      import('./settings/settings-page-placeholder').then((m) => m.SettingsPagePlaceholder),
+    loadComponent: () => import('./settings/settings-page').then((m) => m.SettingsPage),
     canActivate: [authGuard],
   },
   { path: '**', redirectTo: 'books' },
