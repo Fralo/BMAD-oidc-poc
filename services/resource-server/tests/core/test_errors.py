@@ -62,12 +62,20 @@ def test_build_error_body_null_detail() -> None:
 
 
 async def test_validation_error_via_http(client: AsyncClient) -> None:
+    """RS validation failures now emit lower_snake `invalid_input` per
+    architecture §C5 (Story 3.3 flipped the handler from the archetype's
+    `VALIDATION_ERROR`). Detail is a list of Pydantic error dicts with the
+    `input` field stripped to prevent PII leakage on 422 responses (mirrors
+    BFF Story 1.3 review patch P3)."""
     response = await client.post("/test/open")
     assert response.status_code == 422
     data = response.json()
-    assert data["errorCode"] == "VALIDATION_ERROR"
+    assert data["errorCode"] == "invalid_input"
     assert data["message"] == "Request validation failed"
-    assert "detail" in data
+    assert isinstance(data["detail"], list)
+    # Sanitization: no `input` keys in any error entry.
+    for entry in data["detail"]:
+        assert "input" not in entry, f"input field leaked into 422 detail: {entry}"
 
 
 def test_app_exception_handler_returns_json() -> None:

@@ -1,5 +1,5 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded, `/health` + readiness probes, RS in compose default/dev, `ErrorCode.SERVICE_UNAVAILABLE`, required-fail-fast OIDC config, Alembic env.py reads `RS_DATABASE_URL`); 3.2 (done — `oidc_bearer` plugin, `get_authenticated_principal`, `require_scope(scope)`, `Principal.scopes: frozenset[str]`, `ErrorCode.{SESSION_EXPIRED, FORBIDDEN_SCOPE}`, synthetic-IdP harness)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.3: RS — `ReadingSpeed` model + migration + `/v1/reading-speed` GET/PUT (scope-gated)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -166,8 +166,8 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Extend `ErrorCode` with READING_SPEED_UNSET + INVALID_INPUT** (AC: #5)
-  - [ ] Edit `services/resource-server/src/resource_server/core/errors.py`. Add to the `ErrorCode` enum, after `FORBIDDEN_SCOPE`:
+- [x] **Task 1 — Extend `ErrorCode` with READING_SPEED_UNSET + INVALID_INPUT** (AC: #5)
+  - [x] Edit `services/resource-server/src/resource_server/core/errors.py`. Add to the `ErrorCode` enum, after `FORBIDDEN_SCOPE`:
     ```python
     READING_SPEED_UNSET = (
         "reading_speed_unset",
@@ -180,14 +180,14 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
         422,
     )
     ```
-  - [ ] Update the leading project-specific-codes comment to reflect Story 3.3's additions.
-  - [ ] **Update `validation_exception_handler`** to emit `INVALID_INPUT` instead of `VALIDATION_ERROR`. Mirror the BFF's `services/bff/src/bff/core/errors.py:58-76` (which strips Pydantic's `input` field from each error before serialization — Story 1.3 review P3 closed this PII-leak risk).
-  - [ ] Run `uv run pytest tests/core/test_errors.py -v` — existing tests expecting `VALIDATION_ERROR` envelopes WILL fail. Update them to expect `invalid_input` and the sanitized detail list. Capture the test-count delta in the dev log.
+  - [x] Update the leading project-specific-codes comment to reflect Story 3.3's additions.
+  - [x] **Update `validation_exception_handler`** to emit `INVALID_INPUT` instead of `VALIDATION_ERROR`. Mirror the BFF's `services/bff/src/bff/core/errors.py:58-76` (which strips Pydantic's `input` field from each error before serialization — Story 1.3 review P3 closed this PII-leak risk).
+  - [x] Run `uv run pytest tests/core/test_errors.py -v` — existing tests expecting `VALIDATION_ERROR` envelopes WILL fail. Update them to expect `invalid_input` and the sanitized detail list. Capture the test-count delta in the dev log.
 
-- [ ] **Task 2 — Author `ReadingSpeed` SQLModel** (AC: #1)
-  - [ ] Author `services/resource-server/src/resource_server/models/entities/reading_speed.py`.
-  - [ ] Imports: `from datetime import UTC, datetime; from sqlmodel import Field, SQLModel`.
-  - [ ] Class body:
+- [x] **Task 2 — Author `ReadingSpeed` SQLModel** (AC: #1)
+  - [x] Author `services/resource-server/src/resource_server/models/entities/reading_speed.py`.
+  - [x] Imports: `from datetime import UTC, datetime; from sqlmodel import Field, SQLModel`.
+  - [x] Class body:
     ```python
     class ReadingSpeed(SQLModel, table=True):
         """User's reading speed (pages per hour). Singleton per `sub`.
@@ -218,18 +218,18 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
             sa_column_kwargs={"onupdate": lambda: datetime.now(UTC)},
         )
     ```
-  - [ ] Register in `services/resource-server/src/resource_server/models/entities/__init__.py`:
+  - [x] Register in `services/resource-server/src/resource_server/models/entities/__init__.py`:
     ```python
     from resource_server.models.entities.reading_speed import ReadingSpeed
 
     __all__ = ["ReadingSpeed"]
     ```
     (Story 3.1's `__all__: list[str] = []` is replaced.)
-  - [ ] Smoke-import: `uv run python -c "from resource_server.models.entities import ReadingSpeed; print(ReadingSpeed.__tablename__)"` → `reading_speeds`.
+  - [x] Smoke-import: `uv run python -c "from resource_server.models.entities import ReadingSpeed; print(ReadingSpeed.__tablename__)"` → `reading_speeds`.
 
-- [ ] **Task 3 — Generate the `0001_init` Alembic migration** (AC: #3)
-  - [ ] From `services/resource-server/`: `uv run alembic revision --autogenerate -m "init reading_speeds"`. Alembic emits `alembic/versions/0001_init_init_reading_speeds.py` (the slug double-"init" is fine; matches BFF convention).
-  - [ ] Inspect the generated file. Expected `upgrade()`:
+- [x] **Task 3 — Generate the `0001_init` Alembic migration** (AC: #3)
+  - [x] From `services/resource-server/`: `uv run alembic revision --autogenerate -m "init reading_speeds"`. Alembic emits `alembic/versions/0001_init_init_reading_speeds.py` (the slug double-"init" is fine; matches BFF convention).
+  - [x] Inspect the generated file. Expected `upgrade()`:
     ```python
     op.create_table(
         "reading_speeds",
@@ -245,17 +245,17 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
     )
     ```
     Expected `downgrade()`: `op.drop_index(op.f("ix_reading_speeds_sub"), table_name="reading_speeds"); op.drop_table("reading_speeds")`.
-  - [ ] Verify the revision header: `revision: str = "0001_init"`, `down_revision: str | Sequence[str] | None = None`, `branch_labels: str | Sequence[str] | None = None`, `depends_on: str | Sequence[str] | None = None`. Matches BFF pattern at `services/bff/alembic/versions/0001_init_init_sessions_and_auth_states.py:14-19`.
-  - [ ] If Alembic emits a redundant separate `op.create_unique_constraint`, remove it. The unique index suffices.
-  - [ ] Smoke-test the migration:
+  - [x] Verify the revision header: `revision: str = "0001_init"`, `down_revision: str | Sequence[str] | None = None`, `branch_labels: str | Sequence[str] | None = None`, `depends_on: str | Sequence[str] | None = None`. Matches BFF pattern at `services/bff/alembic/versions/0001_init_init_sessions_and_auth_states.py:14-19`.
+  - [x] If Alembic emits a redundant separate `op.create_unique_constraint`, remove it. The unique index suffices.
+  - [x] Smoke-test the migration:
     - `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic upgrade head` → 0.
     - `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic current` reports `0001_init (head)`.
     - `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic downgrade base` → 0.
     - `rm -f rs-dev.db rs-dev.db-*` afterwards (the WAL / journal files too). Verify `git status` is clean of these artifacts (the repo's `.gitignore` should already cover `*.db`; if not, add it — see AC #15).
-  - [ ] Capture all command output in the dev log.
+  - [x] Capture all command output in the dev log.
 
-- [ ] **Task 4 — Author `core/exceptions.py` with `ReadingSpeedUnsetError`** (AC: #4)
-  - [ ] Create `services/resource-server/src/resource_server/core/exceptions.py`. Body:
+- [x] **Task 4 — Author `core/exceptions.py` with `ReadingSpeedUnsetError`** (AC: #4)
+  - [x] Create `services/resource-server/src/resource_server/core/exceptions.py`. Body:
     ```python
     """Domain exceptions for the Resource Server.
 
@@ -283,11 +283,11 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
         def __init__(self, detail: str | None = None) -> None:
             super().__init__(ErrorCode.READING_SPEED_UNSET, detail)
     ```
-  - [ ] Verify it round-trips through the existing `app_exception_handler` (no new handler registration needed — `AppException` is already wired in `main.py:65` via Story 3.1).
+  - [x] Verify it round-trips through the existing `app_exception_handler` (no new handler registration needed — `AppException` is already wired in `main.py:65` via Story 3.1).
 
-- [ ] **Task 5 — Author `api/schemas/reading_speed.py` with `ReadingSpeedOut` + `ReadingSpeedUpsert`** (AC: #2)
-  - [ ] Create the directory `services/resource-server/src/resource_server/api/schemas/` (and a minimal `__init__.py`).
-  - [ ] Author `services/resource-server/src/resource_server/api/schemas/reading_speed.py`:
+- [x] **Task 5 — Author `api/schemas/reading_speed.py` with `ReadingSpeedOut` + `ReadingSpeedUpsert`** (AC: #2)
+  - [x] Create the directory `services/resource-server/src/resource_server/api/schemas/` (and a minimal `__init__.py`).
+  - [x] Author `services/resource-server/src/resource_server/api/schemas/reading_speed.py`:
     ```python
     """API DTOs for /v1/reading-speed.
 
@@ -318,8 +318,8 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
         pages_per_hour: int = Field(ge=1)
     ```
 
-- [ ] **Task 6 — Author `services/reading_speed_service.py`** (AC: #6, #10)
-  - [ ] Create `services/resource-server/src/resource_server/services/reading_speed_service.py`. Body:
+- [x] **Task 6 — Author `services/reading_speed_service.py`** (AC: #6, #10)
+  - [x] Create `services/resource-server/src/resource_server/services/reading_speed_service.py`. Body:
     ```python
     """Business logic for /v1/reading-speed.
 
@@ -377,8 +377,8 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
         return row
     ```
 
-- [ ] **Task 7 — Author `api/reading_speed.py` with the GET + PUT handlers** (AC: #7)
-  - [ ] Create `services/resource-server/src/resource_server/api/reading_speed.py`. Body:
+- [x] **Task 7 — Author `api/reading_speed.py` with the GET + PUT handlers** (AC: #7)
+  - [x] Create `services/resource-server/src/resource_server/api/reading_speed.py`. Body:
     ```python
     """FastAPI router for /v1/reading-speed (GET + PUT, scope-gated)."""
 
@@ -421,7 +421,7 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
         )
         return ReadingSpeedOut(pages_per_hour=row.pages_per_hour)
     ```
-  - [ ] Wire the router into the v1 prefix wrapper. Edit `services/resource-server/src/resource_server/api/v1/__init__.py`:
+  - [x] Wire the router into the v1 prefix wrapper. Edit `services/resource-server/src/resource_server/api/v1/__init__.py`:
     ```python
     from fastapi import APIRouter
 
@@ -430,62 +430,62 @@ so that my reading speed is stored on the RS and cannot be read or modified by a
     router = APIRouter(prefix="/v1")
     router.include_router(reading_speed_router)
     ```
-  - [ ] Verify `main.py` requires NO edits — `v1_router` is already mounted on `app` at Story 3.1's line 67.
+  - [x] Verify `main.py` requires NO edits — `v1_router` is already mounted on `app` at Story 3.1's line 67.
 
-- [ ] **Task 8 — Author SQLModel-level tests** (AC: #11)
-  - [ ] Create `services/resource-server/tests/models/` and `tests/models/entities/` directories with empty `__init__.py` files.
-  - [ ] Author `services/resource-server/tests/models/entities/test_reading_speed.py`. 5+ tests per AC #11 bullet list:
+- [x] **Task 8 — Author SQLModel-level tests** (AC: #11)
+  - [x] Create `services/resource-server/tests/models/` and `tests/models/entities/` directories with empty `__init__.py` files.
+  - [x] Author `services/resource-server/tests/models/entities/test_reading_speed.py`. 5+ tests per AC #11 bullet list:
     1. `test_insert_and_read_back_round_trip`
     2. `test_unique_constraint_on_sub_rejects_duplicate_insert` → expect `sqlalchemy.exc.IntegrityError` (wrap in `pytest.raises`).
     3. `test_updated_at_bumps_on_update` — use `await asyncio.sleep(0.005)` between commits (or freezegun) so the timestamps differ; assert `row.updated_at > prior_updated_at`.
     4. `test_created_at_stable_on_update` — same row, two updates; assert `row.created_at` unchanged.
     5. `test_field_constraints` — `max_length=255` on `sub` (SQLite is permissive but the column metadata should expose `length=255`); `nullable=False` on `pages_per_hour` enforced by INSERT-with-NULL raising.
-  - [ ] Use the existing `engine` + `session` fixtures from `tests/conftest.py:75-99`. Verify by running the tests in isolation: `uv run pytest tests/models/ -v`.
+  - [x] Use the existing `engine` + `session` fixtures from `tests/conftest.py:75-99`. Verify by running the tests in isolation: `uv run pytest tests/models/ -v`.
 
-- [ ] **Task 9 — Author service-level tests** (AC: #11)
-  - [ ] Create `services/resource-server/tests/services/` directory if absent (it is — verified: only `tests/api/`, `tests/auth/`, `tests/core/`, `tests/observability/` exist).
-  - [ ] Author `services/resource-server/tests/services/test_reading_speed_service.py`. 5+ tests:
+- [x] **Task 9 — Author service-level tests** (AC: #11)
+  - [x] Create `services/resource-server/tests/services/` directory if absent (it is — verified: only `tests/api/`, `tests/auth/`, `tests/core/`, `tests/observability/` exist).
+  - [x] Author `services/resource-server/tests/services/test_reading_speed_service.py`. 5+ tests:
     1. `test_get_for_user_returns_existing_row`
     2. `test_get_for_user_raises_when_row_absent` → `pytest.raises(ReadingSpeedUnsetError)`.
     3. `test_upsert_insert_path_creates_new_row`
     4. `test_upsert_update_path_bumps_value_and_updated_at`
     5. `test_upsert_cross_user_isolation` — call `upsert(sub_a, 30)` then `upsert(sub_b, 50)`; assert two rows exist, each carrying its own value; calling `get_for_user(sub_a)` returns 30, `get_for_user(sub_b)` returns 50.
-  - [ ] Use the `session` fixture from `tests/conftest.py:90-98`.
+  - [x] Use the `session` fixture from `tests/conftest.py:90-98`.
 
-- [ ] **Task 10 — Author request-layer (API) tests** (AC: #11)
-  - [ ] Author `services/resource-server/tests/api/test_reading_speed.py`. Use the synthetic-IdP harness pattern established by Story 3.2:
+- [x] **Task 10 — Author request-layer (API) tests** (AC: #11)
+  - [x] Author `services/resource-server/tests/api/test_reading_speed.py`. Use the synthetic-IdP harness pattern established by Story 3.2:
     ```python
     from .auth.synthetic_idp import build_synthetic_rs_idp, SyntheticRsIdp
     ```
     Wait — the existing `synthetic_idp.py` lives at `tests/auth/synthetic_idp.py`. The API test under `tests/api/` imports it via relative-path `..auth.synthetic_idp` OR absolute `tests.auth.synthetic_idp` (the latter requires `tests/__init__.py` — verified present at `services/resource-server/tests/__init__.py`). Use the absolute import for clarity.
-  - [ ] Use the `client` fixture from `tests/conftest.py:101-111` which overrides `get_session` via `app.dependency_overrides`. The fixture is per-test, so each test starts with an empty DB.
-  - [ ] **Add a module-scoped `synthetic_rs_idp` fixture** that wraps `build_synthetic_rs_idp(monkeypatch)` (the existing one in `tests/auth/test_oidc_bearer.py:96-100` is module-private; we need a fresh fixture in this test file because pytest fixtures are not auto-shared across test files at module scope — copy the 3-line fixture).
-  - [ ] 13+ tests per AC #11 bullet list. Each test mints a token via `synthetic_rs_idp.make_access_token(sub=..., scope=...)` and calls the endpoint via the `client` fixture with `Authorization: Bearer <token>`.
-  - [ ] Helper for envelope assertion: `assert response.json() == {"errorCode": "<expected>", "message": "<msg>", "detail": <expected_detail>}` — match the body shape exactly, not just the errorCode (catches regressions in the handler).
+  - [x] Use the `client` fixture from `tests/conftest.py:101-111` which overrides `get_session` via `app.dependency_overrides`. The fixture is per-test, so each test starts with an empty DB.
+  - [x] **Add a module-scoped `synthetic_rs_idp` fixture** that wraps `build_synthetic_rs_idp(monkeypatch)` (the existing one in `tests/auth/test_oidc_bearer.py:96-100` is module-private; we need a fresh fixture in this test file because pytest fixtures are not auto-shared across test files at module scope — copy the 3-line fixture).
+  - [x] 13+ tests per AC #11 bullet list. Each test mints a token via `synthetic_rs_idp.make_access_token(sub=..., scope=...)` and calls the endpoint via the `client` fixture with `Authorization: Bearer <token>`.
+  - [x] Helper for envelope assertion: `assert response.json() == {"errorCode": "<expected>", "message": "<msg>", "detail": <expected_detail>}` — match the body shape exactly, not just the errorCode (catches regressions in the handler).
 
-- [ ] **Task 11 — Update `tests/core/test_errors.py` for INVALID_INPUT** (AC: #5, #13)
-  - [ ] Read `services/resource-server/tests/core/test_errors.py` and identify every test asserting on `VALIDATION_ERROR` wire-value envelopes.
-  - [ ] Update those assertions to expect:
+- [x] **Task 11 — Update `tests/core/test_errors.py` for INVALID_INPUT** (AC: #5, #13)
+  - [x] Read `services/resource-server/tests/core/test_errors.py` and identify every test asserting on `VALIDATION_ERROR` wire-value envelopes.
+  - [x] Update those assertions to expect:
     - `errorCode == "invalid_input"`
     - `status_code == 422`
     - `detail` is a list of Pydantic error dicts, each WITHOUT the `input` key (the sanitization from BFF Story 1.3 P3).
-  - [ ] Capture the count of updated tests in the dev log.
+  - [x] Capture the count of updated tests in the dev log.
 
-- [ ] **Task 12 — Run the full gate sequence** (AC: #14, #15)
-  - [ ] From `services/resource-server/`:
-    - [ ] `uv sync --frozen` → 0.
-    - [ ] `uv run ruff check` → 0 findings.
-    - [ ] `uv run ruff format --check` → 0 reformats needed.
-    - [ ] `uv run ty check` → 0 errors.
-    - [ ] `uv run pytest --cov` → all pass; whole-suite coverage ≥ 90%. Capture the post-change %.
-    - [ ] `uv run pytest --cov=resource_server.api.reading_speed --cov=resource_server.services.reading_speed_service --cov-report=term-missing tests/api/test_reading_speed.py tests/services/test_reading_speed_service.py` → confirm per-file coverage ≥ 90%.
-    - [ ] Alembic round-trip: `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic upgrade head` → 0; `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic downgrade base` → 0; `rm -f rs-dev.db*`.
-  - [ ] `git diff --stat` to verify the change set is scoped to: `core/errors.py`, `core/exceptions.py` (NEW), `models/entities/{__init__.py,reading_speed.py}`, `alembic/versions/0001_init_init_reading_speeds.py` (NEW), `api/schemas/__init__.py` (NEW), `api/schemas/reading_speed.py` (NEW), `api/reading_speed.py` (NEW), `api/v1/__init__.py`, `services/reading_speed_service.py` (NEW), `tests/models/__init__.py` (NEW if absent), `tests/models/entities/__init__.py` (NEW), `tests/models/entities/test_reading_speed.py` (NEW), `tests/services/__init__.py` (NEW), `tests/services/test_reading_speed_service.py` (NEW), `tests/api/test_reading_speed.py` (NEW), `tests/core/test_errors.py` (update), plus the BMAD bookkeeping files.
+- [x] **Task 12 — Run the full gate sequence** (AC: #14, #15)
+  - [x] From `services/resource-server/`:
+    - [x] `uv sync --frozen` → 0.
+    - [x] `uv run ruff check` → 0 findings.
+    - [x] `uv run ruff format --check` → 0 reformats needed.
+    - [x] `uv run ty check` → 0 errors.
+    - [x] `uv run pytest --cov` → all pass; whole-suite coverage ≥ 90%. Capture the post-change %.
+    - [x] `uv run pytest --cov=resource_server.api.reading_speed --cov=resource_server.services.reading_speed_service --cov-report=term-missing tests/api/test_reading_speed.py tests/services/test_reading_speed_service.py` → confirm per-file coverage ≥ 90%.
+    - [x] Alembic round-trip: `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic upgrade head` → 0; `RS_DATABASE_URL=sqlite+aiosqlite:///./rs-dev.db uv run alembic downgrade base` → 0; `rm -f rs-dev.db*`.
+  - [x] `git diff --stat` to verify the change set is scoped to: `core/errors.py`, `core/exceptions.py` (NEW), `models/entities/{__init__.py,reading_speed.py}`, `alembic/versions/0001_init_init_reading_speeds.py` (NEW), `api/schemas/__init__.py` (NEW), `api/schemas/reading_speed.py` (NEW), `api/reading_speed.py` (NEW), `api/v1/__init__.py`, `services/reading_speed_service.py` (NEW), `tests/models/__init__.py` (NEW if absent), `tests/models/entities/__init__.py` (NEW), `tests/models/entities/test_reading_speed.py` (NEW), `tests/services/__init__.py` (NEW), `tests/services/test_reading_speed_service.py` (NEW), `tests/api/test_reading_speed.py` (NEW), `tests/core/test_errors.py` (update), plus the BMAD bookkeeping files.
 
-- [ ] **Task 13 — Bookkeeping** (AC: #15)
-  - [ ] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated` `ready-for-dev` → `in-progress` at start, → `review` at end.
-  - [ ] If new defers surface during code review, append them under `## Deferred from: code review of 3-3-...` in `deferred-work.md`. Continue from D65 (the current ceiling from Story 3.2 review).
-  - [ ] Verify untouched-files list per AC #15.
+- [x] **Task 13 — Bookkeeping** (AC: #15)
+  - [x] Update `_bmad-output/implementation-artifacts/sprint-status.yaml`: flip `3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated` `ready-for-dev` → `in-progress` at start, → `review` at end.
+  - [x] If new defers surface during code review, append them under `## Deferred from: code review of 3-3-...` in `deferred-work.md`. Continue from D65 (the current ceiling from Story 3.2 review).
+  - [x] Verify untouched-files list per AC #15.
 
 ## Dev Notes
 
@@ -690,16 +690,79 @@ services/resource-server/
 
 ### Agent Model Used
 
-(to be filled by dev-story)
+claude-opus-4-7 (Claude Code, bmad-dev-story workflow)
 
 ### Debug Log References
 
-(to be filled by dev-story)
+**Task 1 — `ErrorCode` extension + handler flip:** Added `READING_SPEED_UNSET` (412) + `INVALID_INPUT` (422). Flipped `validation_exception_handler` to emit lower_snake `invalid_input` with per-error `input`-field sanitization (mirrors BFF Story 1.3 review P3). Updated one test in `tests/core/test_errors.py::test_validation_error_via_http`.
+
+**Task 2 — `ReadingSpeed` SQLModel:** Authored `models/entities/reading_speed.py` with the table conventions (`__tablename__ = "reading_speeds"`, `id` autoincrement PK, `sub` VARCHAR(255) `index=True, unique=True`, `pages_per_hour` NOT NULL, `created_at`/`updated_at` defaulting to `datetime.now(UTC)` with `onupdate` on the latter). Registered in `models/entities/__init__.py`.
+
+**Task 3 — Alembic migration:** Generated via `uv run alembic revision --autogenerate -m "init reading_speeds"` (with placeholder OIDC env vars for AppSettings fail-fast). Renamed the file from `ee4111fcacd1_init_reading_speeds.py` → `0001_init_init_reading_speeds.py` and edited the revision identifier to `"0001_init"`; added the missing `import sqlmodel` line that autogenerate misses (line 26 references `sqlmodel.sql.sqltypes.AutoString` but no import was emitted); reformatted to match BFF Story 1.4 conventions. Smoke-tested: `alembic upgrade head` → `0001_init (head)`; `alembic downgrade base` → empty. Cleaned up `rs-dev.db`.
+
+**Task 4 — `core/exceptions.py`:** New file with `ReadingSpeedUnsetError(AppException)`. No new handler registration; the archetype's `app_exception_handler` already catches `AppException` subclasses.
+
+**Task 5 — `api/schemas/reading_speed.py`:** New `api/schemas/` package. `ReadingSpeedOut(BaseModel)` for responses; `ReadingSpeedUpsert(BaseModel)` with `pages_per_hour: int = Field(ge=1)` for the PUT body — Pydantic rejects non-positive values at the boundary.
+
+**Task 6 — `services/reading_speed_service.py`:** Two async functions: `get_for_user(session, sub)` raising `ReadingSpeedUnsetError` on absent row; `upsert(session, sub, pages_per_hour)` with SELECT-then-INSERT-or-UPDATE. **Spec adjustment**: the spec's sample used SQLModel's `session.exec(...)` which is sync-Session-only; for `AsyncSession` the correct call is `await session.execute(select(...))` followed by `.scalars().first()` (verified pattern at `services/bff/src/bff/services/session_service.py:117`).
+
+**Task 7 — `api/reading_speed.py` + v1 wiring:** Authored the router with GET + PUT handlers, both gated via `Depends(require_scope(...))`. Wired into `api/v1/__init__.py` via `router.include_router(reading_speed_router)`. `main.py` unmodified.
+
+**Task 8 — SQLModel tests:** 5 tests in `tests/models/entities/test_reading_speed.py`: round-trip insert/read; UNIQUE rejection; `updated_at` bumps on UPDATE; `created_at` stable on UPDATE; column metadata (length=255, nullable=False, unique=True).
+
+**Task 9 — Service tests:** 5 tests in `tests/services/test_reading_speed_service.py`: `get_for_user` happy/raise; `upsert` insert/update; cross-user isolation.
+
+**Task 10 — API tests:** 15 tests in `tests/api/test_reading_speed.py` (13 unique + 3 parametrized = 15 collected): GET happy/412/403/401; PUT insert/update/403/422×3/401/boundary; cross-user isolation. Uses synthetic-IdP harness via absolute import `from tests.auth.synthetic_idp import ...`.
+
+**Task 11 — `tests/core/test_errors.py` update:** Flipped one test (`test_validation_error_via_http`) from UPPER_SNAKE `VALIDATION_ERROR` to lower_snake `invalid_input` with sanitized detail list assertion.
+
+**Task 12 — Final gate run:**
+- `uv sync --frozen` → 0 (84 packages)
+- `uv run ruff check` → All checks passed!
+- `uv run ruff format --check` → 85 files already formatted
+- `uv run ty check` → All checks passed!
+- `uv run pytest --cov` → **234 passed**, coverage **98.05%** (209 baseline → 234 = +25 new tests)
+- Per-file coverage on the new code paths → **100% / 100%** (api.reading_speed: 18/18; services.reading_speed_service: 23/23) — well above AC #11 ≥90% gate
+- Alembic round-trip verified: `upgrade head` → `0001_init (head)`; `downgrade base` → empty. `rs-dev.db` cleaned up.
 
 ### Completion Notes List
 
-(to be filled by dev-story)
+- All 15 ACs satisfied. RS now serves `/v1/reading-speed` GET + PUT, scope-gated via Story 3.2's `require_scope` factory, with cross-user isolation enforced via `principal.subject` (JWT `sub` claim — never body/path/query, per arch line 388).
+- `ReadingSpeed` SQLModel + Alembic migration `0001_init` lands the RS's first real schema. UNIQUE index on `sub` enforces singleton-per-user at the DB layer (defense-in-depth on top of the SELECT-then-INSERT pattern).
+- `core/exceptions.py` is the new home for domain exceptions (arch §"Communication Patterns / Error handling" line 735–749). First instance: `ReadingSpeedUnsetError`. Subclassing `AppException` means the existing handler picks it up without new registration.
+- **Wire-value flip from `VALIDATION_ERROR` to `invalid_input`** (Task 1): the archetype default contradicted arch §C5's lower_snake mandate. One existing test updated; no other consumers found.
+- **Async query pattern adjustment**: spec used `session.exec(...)` (sync-Session-only); switched to `await session.execute(select(...)).scalars().first()` per BFF parity. Documented in the service module's docstring.
+- Coverage of new code: **100%** (api.reading_speed.py 18/18; services.reading_speed_service.py 23/23). Whole-suite coverage 97.85% → **98.05%**.
+- **No production-app router changes** outside `api/v1/__init__.py`'s one-line inclusion. `main.py` untouched.
+- **No archetype regressions.** All 209 Story-3.1+3.2 tests continue green (one expected update for the wire-value flip).
+- **No defers introduced.** D59–D65 from Story 3.2 review remain open as-is.
+- **Adherence to `services/resource-server/CLAUDE.md`** verified: every gate green before commit; conventional-commit format without scope syntax.
 
 ### File List
 
-(to be filled by dev-story)
+**New files:**
+- `services/resource-server/src/resource_server/core/exceptions.py` — `ReadingSpeedUnsetError(AppException)` (Task 4).
+- `services/resource-server/src/resource_server/models/entities/reading_speed.py` — `ReadingSpeed` SQLModel (Task 2).
+- `services/resource-server/src/resource_server/api/schemas/__init__.py` — package marker for `api/schemas/` (Task 5).
+- `services/resource-server/src/resource_server/api/schemas/reading_speed.py` — `ReadingSpeedOut` + `ReadingSpeedUpsert(ge=1)` Pydantic DTOs (Task 5).
+- `services/resource-server/src/resource_server/api/reading_speed.py` — FastAPI router, scope-gated GET + PUT (Task 7).
+- `services/resource-server/src/resource_server/services/reading_speed_service.py` — `get_for_user` + `upsert` async services (Task 6).
+- `services/resource-server/alembic/versions/0001_init_init_reading_speeds.py` — Alembic migration creating `reading_speeds` + `ix_reading_speeds_sub` UNIQUE index (Task 3).
+- `services/resource-server/tests/models/__init__.py` (Task 8).
+- `services/resource-server/tests/models/entities/__init__.py` (Task 8).
+- `services/resource-server/tests/models/entities/test_reading_speed.py` — 5 tests (Task 8).
+- `services/resource-server/tests/services/__init__.py` (Task 9).
+- `services/resource-server/tests/services/test_reading_speed_service.py` — 5 tests (Task 9).
+- `services/resource-server/tests/api/test_reading_speed.py` — 15 tests (Task 10).
+
+**Modified files:**
+- `services/resource-server/src/resource_server/core/errors.py` — added `READING_SPEED_UNSET` (412) + `INVALID_INPUT` (422); flipped `validation_exception_handler` to emit `invalid_input` with input-field sanitization (Task 1).
+- `services/resource-server/src/resource_server/models/entities/__init__.py` — registered `ReadingSpeed` (Task 2).
+- `services/resource-server/src/resource_server/api/v1/__init__.py` — `router.include_router(reading_speed_router)` (Task 7).
+- `services/resource-server/tests/core/test_errors.py` — `test_validation_error_via_http` updated to expect `invalid_input` envelope with sanitized detail list (Task 11).
+
+**BMAD bookkeeping:**
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — story status `ready-for-dev` → `in-progress` → `review`.
+- `_bmad-output/implementation-artifacts/3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated.md` — frontmatter + status header → `review`; all 62 task/subtask checkboxes ticked.
+
+**Untouched (verified):** `CLAUDE.md`, root files, `docker-compose.yml`, `compose/*.yml`, `keycloak/**`, `services/bff/**`, `spa/**`, `e2e/**`, `services/resource-server/{Dockerfile,entrypoint.sh,.gitattributes,.env.example,pyproject.toml,uv.lock,alembic.ini,alembic/env.py,alembic/script.py.mako,src/resource_server/main.py,src/resource_server/aop/**,src/resource_server/api/health.py,src/resource_server/api/v2/**,src/resource_server/auth/**,src/resource_server/observability/**,src/resource_server/core/config.py,src/resource_server/core/database.py,src/resource_server/factories/**,src/resource_server/models/dto/**,tests/auth/**,tests/api/test_health.py,tests/api/test_cors.py,tests/aop/**,tests/observability/**,tests/conftest.py}` — bit-for-bit identical.
