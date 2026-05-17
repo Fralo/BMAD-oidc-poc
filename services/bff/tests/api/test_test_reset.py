@@ -158,6 +158,18 @@ async def _seed_auth_state_row(ctx: _AppContext, *, suffix: str) -> None:
         await db.commit()
 
 
+async def _seed_book_row(ctx: _AppContext, *, suffix: str) -> None:
+    async with ctx.factory() as db:
+        row = entities.Book(
+            sub=f"sub-{suffix}",
+            title=f"Book {suffix}",
+            pages=100,
+            # status defaults to "to-read"
+        )
+        db.add(row)
+        await db.commit()
+
+
 async def _count_sessions(ctx: _AppContext) -> int:
     async with ctx.factory() as db:
         result = await db.execute(select(entities.Session))
@@ -167,6 +179,12 @@ async def _count_sessions(ctx: _AppContext) -> int:
 async def _count_auth_states(ctx: _AppContext) -> int:
     async with ctx.factory() as db:
         result = await db.execute(select(entities.AuthState))
+        return len(result.scalars().all())
+
+
+async def _count_books(ctx: _AppContext) -> int:
+    async with ctx.factory() as db:
+        result = await db.execute(select(entities.Book))
         return len(result.scalars().all())
 
 
@@ -446,6 +464,7 @@ async def test_scenario_11_correct_bearer_empty_tables(
     try:
         assert await _count_sessions(ctx) == 0
         assert await _count_auth_states(ctx) == 0
+        assert await _count_books(ctx) == 0
         async with ctx.make_client() as client:
             response = await client.post(
                 "/v1/test/reset",
@@ -460,10 +479,12 @@ async def test_scenario_11_correct_bearer_empty_tables(
         assert "content-security-policy" not in response.headers
         assert await _count_sessions(ctx) == 0
         assert await _count_auth_states(ctx) == 0
+        assert await _count_books(ctx) == 0
         assert any(
             "test_reset_truncated" in r.message
             and "sessions_deleted=0" in r.message
             and "auth_states_deleted=0" in r.message
+            and "books_deleted=0" in r.message
             for r in caplog.records
         )
     finally:
@@ -490,8 +511,11 @@ async def test_scenario_12_correct_bearer_sessions_populated(
             )
         assert response.status_code == 204
         assert await _count_sessions(ctx) == 0
+        assert await _count_books(ctx) == 0
         assert any(
-            "sessions_deleted=3" in r.message and "auth_states_deleted=0" in r.message
+            "sessions_deleted=3" in r.message
+            and "auth_states_deleted=0" in r.message
+            and "books_deleted=0" in r.message
             for r in caplog.records
         )
     finally:
@@ -518,8 +542,11 @@ async def test_scenario_13_correct_bearer_auth_states_populated(
             )
         assert response.status_code == 204
         assert await _count_auth_states(ctx) == 0
+        assert await _count_books(ctx) == 0
         assert any(
-            "sessions_deleted=0" in r.message and "auth_states_deleted=2" in r.message
+            "sessions_deleted=0" in r.message
+            and "auth_states_deleted=2" in r.message
+            and "books_deleted=0" in r.message
             for r in caplog.records
         )
     finally:
@@ -548,8 +575,41 @@ async def test_scenario_14_correct_bearer_both_tables_populated(
         assert response.status_code == 204
         assert await _count_sessions(ctx) == 0
         assert await _count_auth_states(ctx) == 0
+        assert await _count_books(ctx) == 0
         assert any(
-            "sessions_deleted=5" in r.message and "auth_states_deleted=3" in r.message
+            "sessions_deleted=5" in r.message
+            and "auth_states_deleted=3" in r.message
+            and "books_deleted=0" in r.message
+            for r in caplog.records
+        )
+    finally:
+        await ctx.engine.dispose()
+
+
+async def test_scenario_14b_correct_bearer_books_populated(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#14b: 4 books seeded → 204; books=0; log reflects 0 / 0 / 4."""
+    monkeypatch.setattr(settings, "enable_test_reset", True)
+    monkeypatch.setattr(settings, "test_reset_token", _DEFAULT_TOKEN)
+    caplog.set_level(logging.INFO, logger="bff.api.test_reset")
+    ctx = await _build_context(enable=True, token=_DEFAULT_TOKEN)
+    try:
+        for i in range(4):
+            await _seed_book_row(ctx, suffix=f"s14b-{i}")
+        assert await _count_books(ctx) == 4
+        async with ctx.make_client() as client:
+            response = await client.post(
+                "/v1/test/reset",
+                headers={"Authorization": f"Bearer {_DEFAULT_TOKEN}"},
+            )
+        assert response.status_code == 204
+        assert await _count_books(ctx) == 0
+        assert any(
+            "sessions_deleted=0" in r.message
+            and "auth_states_deleted=0" in r.message
+            and "books_deleted=4" in r.message
             for r in caplog.records
         )
     finally:

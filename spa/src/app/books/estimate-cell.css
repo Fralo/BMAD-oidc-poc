@@ -1,0 +1,12 @@
+.estimate-cell-button {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font: var(--text-body);
+  cursor: not-allowed;
+  padding: 0;
+}
+
+.estimate-cell-button:disabled {
+  opacity: 0.6;
+}

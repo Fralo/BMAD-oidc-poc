@@ -65,9 +65,7 @@ test.describe('J1: first-time login', () => {
 
     await expect(page.getByText(`Signed in as ${testuser.username}`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Log out' })).toBeVisible();
-    // Books placeholder copy is the literal string from Story 1.10
-    // (spa/src/app/books/books-page-placeholder.ts:5).
-    await expect(page.getByText('Books — coming in Epic 2')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Books' })).toBeVisible();
   });
 
   test('protected route while unauthenticated redirects with return_to and returns user after login', async ({

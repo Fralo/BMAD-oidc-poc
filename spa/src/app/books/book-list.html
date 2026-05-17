@@ -1,0 +1,13 @@
+@if (loadError() !== null) {
+  <app-error-message [message]="loadErrorCopy" />
+} @else if (loading() && books().length === 0) {
+  <p class="book-list-loading">{{ loadingCopy }}</p>
+} @else if (books().length === 0) {
+  <p class="book-list-empty">{{ emptyCopy }}</p>
+} @else {
+  <ul class="book-list-rows">
+    @for (book of books(); track book.id) {
+      <li><app-book-row [book]="book" /></li>
+    }
+  </ul>
+}

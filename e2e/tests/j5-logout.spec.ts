@@ -48,7 +48,9 @@ test.describe('J5: logout and re-protection', () => {
     await page.waitForURL(/\/login$/);
 
     // Product name remains; identity affordances disappear.
-    await expect(page.getByText('Reading Time Estimator')).toBeVisible();
+    // `{ exact: true }` disambiguates the top-chrome brand span from the
+    // LoginView heading 'Sign in to Reading Time Estimator' (added by Story 1.10).
+    await expect(page.getByText('Reading Time Estimator', { exact: true })).toBeVisible();
     await expect(page.getByText(/Signed in as /)).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Log out' })).toHaveCount(0);
 

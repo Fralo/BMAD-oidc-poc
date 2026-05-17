@@ -7,6 +7,7 @@ test conftest's `SQLModel.metadata.create_all` call.
 """
 
 from bff.models.entities.auth_state import AuthState
+from bff.models.entities.book import Book
 from bff.models.entities.session import Session
 
-__all__ = ["AuthState", "Session"]
+__all__ = ["AuthState", "Book", "Session"]
