@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 story_key: 3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers
 epic: 3
 prerequisites: 3.1 (done — RS scaffold + `/health` + compose `default`/`dev` profiles); 3.2 (done — RS `oidc_bearer` + scope enforcement + synthetic-IdP harness); 3.3 (done — RS `ReadingSpeed` model + `/v1/reading-speed` GET/PUT, scope-gated); 3.4 (done — RS `POST /v1/test/reset`); 3.5 (done — BFF `ResourceServerClient` w/ refresh-and-replay + `/v1/reading-speed` proxy + SPA `SettingsPage` + `/settings` route); 1.11 (done — Playwright project + fixtures); 1.12 (done — `compose/app.e2e.yml` overlay + `${TEST_RESET_TOKEN:?...}` pattern); 1.13 (done — J1 + J5 specs; `requireEnv` pattern)
@@ -9,7 +9,7 @@ baseline_commit: fc041da
 
 # Story 3.6: E2E spec — J4 adjust reading speed + compose `e2e` profile updates + `killRs`/`startRs`/`resetState` helpers
 
-Status: in-progress
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

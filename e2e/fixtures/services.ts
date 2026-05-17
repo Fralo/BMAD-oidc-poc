@@ -55,46 +55,80 @@ async function runDocker(args: readonly string[]): Promise<{ stdout: string; std
 }
 
 /**
- * Returns true iff the resource-server container is in state `running`.
+ * Returns true if the resource-server container is in a state where it
+ * would still respond to TCP/HTTP — `running`, `paused`, or `restarting`.
+ * Returns false only for `exited`, `dead`, `created`, or `removing`.
+ *
+ * Why include `paused`: review patch P2. A paused container's TCP
+ * sockets stay open (only its processes are frozen via SIGSTOP); from
+ * `killRs`'s perspective, "is RS able to serve / do we still need to
+ * stop it?" the answer is yes. Treating `paused` as not-running made
+ * `killRs` a no-op while `/v1/reading-speed` could still be reached on
+ * old in-flight requests, producing false-green J4 RS-down tests.
+ *
+ * Throws if `docker compose ps` finds no container at all — that means
+ * either the service name doesn't exist in the project, or
+ * `COMPOSE_PROJECT_NAME` is misaligned. Silent-false would mask both
+ * misconfigs as "RS already stopped" and skip the kill (review P2).
+ *
+ * Uses `--all` so stopped containers still show up in stdout (without
+ * `--all`, compose v2 omits non-running containers from `ps`, and we
+ * couldn't distinguish "stopped" from "doesn't exist").
  *
  * Compose v2.20+ emits NDJSON from `docker compose ps --format json`
  * (one object per line). Older v2.x emits a single JSON array. Parse
  * both shapes defensively.
  */
+const _ACTIVE_STATES = new Set(['running', 'paused', 'restarting']);
+
 export async function isRsRunning(): Promise<boolean> {
-  const { stdout } = await runDocker(['compose', 'ps', '--format', 'json', RS_SERVICE]);
+  const { stdout } = await runDocker(['compose', 'ps', '--all', '--format', 'json', RS_SERVICE]);
   const trimmed = stdout.trim();
-  if (trimmed.length === 0) return false;
+  if (trimmed.length === 0) {
+    throw new Error(
+      `isRsRunning: no '${RS_SERVICE}' container found in this compose project. ` +
+        `Check COMPOSE_PROJECT_NAME (currently '${process.env.COMPOSE_PROJECT_NAME ?? '<unset>'}') ` +
+        `and that the service name is '${RS_SERVICE}'.`,
+    );
+  }
+
+  const states: string[] = [];
 
   // Shape (A): single JSON array — older v2.x.
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (Array.isArray(parsed)) {
-      return parsed.some(
-        (entry) =>
-          typeof entry === 'object' && entry !== null && (entry as { State?: string }).State === 'running',
-      );
-    }
-    // Shape (C): single object (older v2.x for one-service queries).
-    if (typeof parsed === 'object' && parsed !== null) {
-      return (parsed as { State?: string }).State === 'running';
+      for (const entry of parsed) {
+        if (typeof entry === 'object' && entry !== null) {
+          const s = (entry as { State?: string }).State;
+          if (s) states.push(s);
+        }
+      }
+    } else if (typeof parsed === 'object' && parsed !== null) {
+      // Shape (C): single object (older v2.x for one-service queries).
+      const s = (parsed as { State?: string }).State;
+      if (s) states.push(s);
     }
   } catch {
-    // Fall through to NDJSON parsing.
-  }
-
-  // Shape (B): NDJSON — one object per line, v2.20+.
-  for (const line of trimmed.split('\n')) {
-    const ln = line.trim();
-    if (!ln) continue;
-    try {
-      const obj = JSON.parse(ln) as { State?: string };
-      if (obj.State === 'running') return true;
-    } catch {
-      // Ignore non-JSON lines (defensive — shouldn't happen).
+    // Shape (B): NDJSON — one object per line, v2.20+.
+    for (const line of trimmed.split('\n')) {
+      const ln = line.trim();
+      if (!ln) continue;
+      try {
+        const obj = JSON.parse(ln) as { State?: string };
+        if (obj.State) states.push(obj.State);
+      } catch {
+        // Ignore non-JSON lines (defensive — shouldn't happen).
+      }
     }
   }
-  return false;
+
+  if (states.length === 0) {
+    throw new Error(
+      `isRsRunning: '${RS_SERVICE}' container present but produced no parseable State field. Raw output: ${trimmed.slice(0, 200)}`,
+    );
+  }
+  return states.some((s) => _ACTIVE_STATES.has(s));
 }
 
 /**
@@ -119,9 +153,23 @@ export async function waitForRsHealthy(timeoutMs = 30_000): Promise<void> {
       ]);
       last = stdout.trim();
       if (last === 'healthy') return;
+      // Review patch P3: `<no value>` is Go template's nil-deref output —
+      // emitted when `.State.Health` is nil because no HEALTHCHECK is
+      // declared (or the container was removed). Polling for 30s in that
+      // case wastes a test budget on a config error. Fail fast with a
+      // clearer signal than a generic timeout.
+      if (last === '<no value>') {
+        throw new Error(
+          `waitForRsHealthy: '${RS_SERVICE}' has no healthcheck declared (docker inspect returned '<no value>'). ` +
+            `Expected the Story 3.1 HEALTHCHECK on compose/app.yml:89-97 to be active.`,
+        );
+      }
     } catch (err) {
-      // Container may not exist yet during a fast stop/start cycle — treat
-      // as transient until the timeout.
+      // Re-throw the P3 fast-fail; absorb other inspect errors (container
+      // may not exist yet during a fast stop/start cycle — transient).
+      if (err instanceof Error && err.message.startsWith('waitForRsHealthy:')) {
+        throw err;
+      }
       last = `inspect-error: ${(err as Error).message}`;
     }
     await new Promise((resolve) => setTimeout(resolve, 500));

@@ -38,10 +38,17 @@ e2e-config:
 # original `up --abort-on-container-exit` form interpreted that intentional
 # stop as a service crash and SIGTERM'd the playwright runner before the
 # test could call `startRs()`, masking the AC10-AC14 results.
+#
+# `set -e` + `trap … EXIT` runs the `down` cleanup on any failure path —
+# the previous three-line `&&`-chain left services running when `up` or
+# the playwright run failed, breaking the next invocation on
+# `container_name: playwright` collisions (review patch P1).
 e2e-up:
+    #!/usr/bin/env bash
+    set -e
+    trap 'docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e down' EXIT
     docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up -d --wait keycloak bff resource-server
     docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm playwright
-    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e down
 
 # Tear down the e2e stack and remove volumes (idempotent).
 e2e-down:
