@@ -1,12 +1,12 @@
 ---
-status: ready-for-dev
+status: review
 story_key: 2-7-e2e-spec-j2-manage-books
 created: 2026-05-17
 ---
 
 # Story 2.7: E2E spec — J2 manage books
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -288,51 +288,50 @@ Running `just e2e-up` from the repo root (expanded: `docker compose -f docker-co
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Add `logOut(page)` helper to `e2e/fixtures/helpers.ts`** (AC: #10)
-  - [ ] Open `e2e/fixtures/helpers.ts`. Add the `logOut` export below `resetState` and above `killRs`. Verbatim per AC10.
-  - [ ] No new imports needed (`Page` is already imported from `@playwright/test`).
-  - [ ] Run `cd e2e && npx tsc --noEmit` — exit 0.
+- [x] **Task 1 — Add `logOut(page)` helper to `e2e/fixtures/helpers.ts`** (AC: #10)
+  - [x] Open `e2e/fixtures/helpers.ts`. Add the `logOut` export below `resetState` and above `killRs`. Verbatim per AC10.
+  - [x] No new imports needed (`Page` is already imported from `@playwright/test`).
+  - [x] Run `cd e2e && npx tsc --noEmit` — exit 0.
 
-- [ ] **Task 2 — Write `e2e/tests/j2-manage-books.spec.ts`** (AC: #1, #2, #3, #4, #5, #6, #7, #8, #9)
-  - [ ] Create the file. File header docstring should mirror `j1-first-login.spec.ts`'s shape: a top-of-file comment describing the journey, the stack components it exercises, and the test-isolation contract.
-  - [ ] Copy the `requireEnv` helper verbatim from `j1-first-login.spec.ts` (the duplicate is intentional — Story 1.13 left this in-file rather than extracting; consistency over DRY for now).
-  - [ ] Wire imports per AC1.
-  - [ ] Write `test.describe('J2: manage books', () => { ... })` with the `beforeEach` per AC1.
-  - [ ] Write the eight test cases (AC2–AC9) in the order listed. Each test must be self-sufficient — `beforeEach` resets state and logs in; each test creates whatever rows it needs.
-  - [ ] For AC3, document the `page.route` deferred-PATCH idiom with a one-line comment explaining the "optimistic before network" assertion.
-  - [ ] For AC6/AC7, prefer `page.once('dialog', ...)` over `page.on('dialog', ...)`.
-  - [ ] Run `cd e2e && npx tsc --noEmit` after writing the file — exit 0.
-  - [ ] Run `cd e2e && npx playwright test --list` — confirms the spec is discovered and lists eight test cases.
+- [x] **Task 2 — Write `e2e/tests/j2-manage-books.spec.ts`** (AC: #1, #2, #3, #4, #5, #6, #7, #8, #9)
+  - [x] Create the file. File header docstring should mirror `j1-first-login.spec.ts`'s shape: a top-of-file comment describing the journey, the stack components it exercises, and the test-isolation contract.
+  - [x] Copy the `requireEnv` helper verbatim from `j1-first-login.spec.ts` (the duplicate is intentional — Story 1.13 left this in-file rather than extracting; consistency over DRY for now).
+  - [x] Wire imports per AC1.
+  - [x] Write `test.describe('J2: manage books', () => { ... })` with the `beforeEach` per AC1.
+  - [x] Write the eight test cases (AC2–AC9) in the order listed. Each test must be self-sufficient — `beforeEach` resets state and logs in; each test creates whatever rows it needs.
+  - [x] For AC3, document the `page.route` deferred-PATCH idiom with a one-line comment explaining the "optimistic before network" assertion.
+  - [x] For AC6/AC7, prefer `page.once('dialog', ...)` over `page.on('dialog', ...)`.
+  - [x] Run `cd e2e && npx tsc --noEmit` after writing the file — exit 0.
+  - [x] Run `cd e2e && npx playwright test --list` — confirms the spec is discovered and lists eight test cases.
 
-- [ ] **Task 3 — Update `e2e/README.md`** (AC: #11)
-  - [ ] Open `e2e/README.md`. Locate the "Specs in this directory" section.
-  - [ ] Insert the new J2 bullet immediately after the J5 bullet per AC11.
-  - [ ] No other edits to README; env-var docs, compose-vs-local notes, RS-test-reset placeholder all remain.
+- [x] **Task 3 — Update `e2e/README.md`** (AC: #11)
+  - [x] Open `e2e/README.md`. Locate the "Specs in this directory" section.
+  - [x] Insert the new J2 bullet immediately after the J5 bullet per AC11.
+  - [x] No other edits to README; env-var docs, compose-vs-local notes, RS-test-reset placeholder all remain.
 
-- [ ] **Task 4 — Bring up the compose e2e stack and run the live spec** (AC: #13)
-  - [ ] From the repo root: `just e2e-up`. (If a port collision occurs in the worktree, prepend `COMPOSE_PROJECT_NAME=bmad-2-7-e2e` to namespace the docker network.)
-  - [ ] Wait for Keycloak + BFF healthchecks, then the Playwright runner starts.
-  - [ ] Observe the runner output: "13 passed" (or higher if regression cases were added inside J2).
-  - [ ] If a test fails, the trace / screenshot / video for that test is under `e2e/test-results/`. Triage: spec bug? selector drift? stack flake? Refer to the existing `book-row.html`, `book-form.html`, `book-list.html` for selector ground truth. Do NOT modify SPA / BFF code to make the spec pass — file a defer instead.
-  - [ ] Capture the runner output (the `N passed` line + start/end timestamps + teardown) in the Debug Log References below.
-  - [ ] Run `just e2e-down` (or `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e down -v`, namespaced if you used `COMPOSE_PROJECT_NAME`) to clean up.
+- [x] **Task 4 — Bring up the compose e2e stack and run the live spec** (AC: #13 — partial; see Debug Log)
+  - [x] From the repo root: `COMPOSE_PROJECT_NAME=bmad-2-7-e2e docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up --abort-on-container-exit`. Stale orphan containers from a prior worktree run had to be `docker rm`'d first.
+  - [x] Stack came up cleanly (Keycloak healthy, BFF healthy after Story 1.14's multi-stage build).
+  - [x] Playwright runner ran but **only the redirect-only J1 test passed (1/13)**; the other 12 timed out at 60s. Root cause: the Playwright **runner-internal Chromium** cannot reach `http://localhost:8080` (the browser-facing Keycloak URL emitted by `KC_HOSTNAME=localhost`) — `localhost` inside the runner container is the runner's own loopback, not Keycloak. This is a **pre-existing infrastructure gap**: Story 1.14 explicitly marked AC8 (live `just e2e-up`) as "skipped — deferred to reviewer." No commit ever proved the in-compose runner path green. Fixing it requires either (a) compose-side `extra_hosts: ["localhost:host-gateway"]` or (b) a separate `OIDC_AUTHORIZE_URL_BROWSER` value when serving the runner — both out of scope for Story 2.7.
+  - [x] Logged as **W9** in `deferred-work.md` (see Completion Notes).
+  - [x] Tore down with `COMPOSE_PROJECT_NAME=bmad-2-7-e2e docker compose -f ... down -v`.
 
-- [ ] **Task 5 — Local-dev workflow smoke (optional but recommended; documented in `e2e/README.md`)** (AC: #13 secondary path)
-  - [ ] If Task 4 succeeded, also smoke the local-dev path: `docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up -d keycloak bff` + `cd e2e && TEST_RESET_TOKEN=$TEST_RESET_TOKEN BFF_CLIENT_SECRET=$BFF_CLIENT_SECRET OIDC_CLIENT_ID=bmad-books-bff KEYCLOAK_INTERNAL_URL=http://localhost:8080 npm test`.
-  - [ ] Expect all 13 tests to pass against the same stack via the host-side workflow.
-  - [ ] If this path is skipped due to time / environment constraints, note it in the Debug Log References. The compose-up path (Task 4) is the AC-required one.
+- [x] **Task 5 — Local-dev workflow smoke (the verified-green AC13 path)** (AC: #13 primary in practice)
+  - [x] Brought up Keycloak + BFF in compose, then ran `npm test` from the host (the path documented in `e2e/README.md` "Running locally"). Result: **11 passed, 2 failed (11.9s)** — all 8 J2 tests green; 1 J1 test + 1 J5 test failed on PRE-EXISTING stale assertions inherited from Story 1.13.
+  - [x] J2-only run: **8/8 passed in 3.8s** (`npm test -- tests/j2-manage-books.spec.ts`). Story 2.7's deliverable is fully green.
+  - [x] J1/J5 stale failures logged as **D64 + D65** in `deferred-work.md` (see Completion Notes).
 
-- [ ] **Task 6 — Static / unit regression gates** (AC: #12)
-  - [ ] `cd e2e && npx tsc --noEmit` → exit 0.
-  - [ ] `cd e2e && npx playwright test --list` → exit 0; three spec files listed; ≥13 tests total.
-  - [ ] `cd services/bff && uv sync --frozen && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest --cov` → all exit 0; pytest count is 423; coverage ≥90%.
-  - [ ] `cd spa && npm run lint && npm test -- --no-watch && npm run build` → all exit 0; vitest count is 105.
-  - [ ] `just default-config && just e2e-config` → both valid.
+- [x] **Task 6 — Static / unit regression gates** (AC: #12)
+  - [x] `cd e2e && npx tsc --noEmit` → exit 0.
+  - [x] `cd e2e && npx playwright test --list` → exit 0; 3 spec files; 13 tests total (3 J1 + 8 J2 + 2 J5).
+  - [x] `cd services/bff && uv sync --frozen && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest -q --cov` → all exit 0; **423 passed**; coverage 97.57%.
+  - [x] `cd spa && npm run lint && npm test -- --no-watch && npm run build` → all exit 0; **105 passed** (17 test files); bundle build OK.
+  - [x] `docker compose --profile default config` & `COMPOSE_PROJECT_NAME=bmad-2-7-e2e docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config` → both valid.
 
-- [ ] **Task 7 — Update the story file** (AC: meta)
-  - [ ] Set Status to `review`.
-  - [ ] Fill in Completion Notes (concrete deltas, any defers surfaced, the "N passed" line from Task 4).
-  - [ ] Note any deviations from the ACs and justify them.
+- [x] **Task 7 — Update the story file** (AC: meta)
+  - [x] Status set to `review`.
+  - [x] Completion Notes filled (below).
+  - [x] Deviations: AC13's "13 passed" via `just e2e-up` is not achievable until the runner-internal-browser-to-Keycloak URL gap is fixed (W9). The local-dev workflow's `11 passed, 2 failed` outcome (J2 green, J1/J5 stale assertions deferred) is the honest spec result.
 
 ## Dev Notes
 
@@ -419,24 +418,55 @@ This story's expected output is a green spec file + helper extension + README bu
 
 ### Debug Log References
 
-(Populated by the dev agent. Expected: the `just e2e-up` runner output excerpt showing the "13 passed" line, plus the start/end wall-clock timestamps and any worktree-namespacing detail (`COMPOSE_PROJECT_NAME=bmad-2-7-e2e`) if used.)
+- **Stack bring-up:** Used `COMPOSE_PROJECT_NAME=bmad-2-7-e2e` to namespace network + volumes, avoiding collisions with the parent checkout. Had to `docker rm bff keycloak playwright` once to clear orphan containers from a prior 1.13/1.14 test cycle (the compose files hardcode `container_name:` so project-name namespacing doesn't isolate container names — only networks/volumes).
+- **Compose-up run** (full `--abort-on-container-exit`): 12.5 minutes, 1 passed / 12 timed out. The single pass was J1's `unauthenticated user navigating to / is redirected to /login` — the only test that does NOT exercise the OAuth round-trip. All 12 other tests timed out at 60s waiting for Keycloak's login form, which is unreachable from the runner-internal Chromium at `http://localhost:8080` (KC_HOSTNAME=localhost emits browser-facing URLs the runner-internal browser cannot resolve).
+- **Local-dev run** (host browser, compose Keycloak+BFF only): 11.9 seconds, **11 passed / 2 failed**:
+  - **Passing:** J1's redirect-to-login, J1's OAuth round-trip, J1's return_to flow (3/3); all 8 J2 tests (this story's deliverable); J5's refresh-token revocation (1/2).
+  - **Failing pre-existing:** J5's "clicking Log out terminates session" — `getByText('Reading Time Estimator')` is now ambiguous because LoginView (Story 1.10's late patches) renders an `<h1>Sign in to Reading Time Estimator</h1>`. Stale assertion in Story 1.13's J5 spec; not caused by Story 2.7.
+  - **Failing pre-existing:** J1's `clicking Log in completes the OAuth round-trip` — `getByText('Books — coming in Epic 2')` no longer matches because Story 2.5 replaced the placeholder with the real `BookListPage`. Stale assertion in Story 1.13's J1 spec; not caused by Story 2.7.
+- **J2-only run:** `npm test -- tests/j2-manage-books.spec.ts` → **8 passed (3.8s)**. Story 2.7's deliverable is fully green.
+- **All 13 tests listed by `npx playwright test --list`:** 3 J1 + 8 J2 + 2 J5 = 13.
 
 ### Completion Notes
 
-(Populated by the dev agent at handoff to review — list of concrete deltas, any cases where the spec deviated from the AC and why, defer entries surfaced, and the final test count.)
+**Deliverables (all green for J2):**
+- `e2e/tests/j2-manage-books.spec.ts` — NEW. 8 tests, all passing in 3.8s against the local-dev workflow. Covers add, optimistic status change with reload-survives, edit-save, edit-cancel, delete-accept, delete-dismiss, pages=0 validation, cross-user isolation.
+- `e2e/fixtures/helpers.ts` — UPDATE. Added `logOut(page: Page): Promise<void>` helper. Three lines (click `Log out`, wait for `/login`). Used by AC9's cross-user isolation case.
+- `e2e/README.md` — UPDATE. Added one bullet under "Specs in this directory" for the new J2 spec.
+
+**Pattern decisions worth flagging at review:**
+- **Selector strategy:** custom-element + CSS class (`app-book-row .book-row-title`, `app-book-form[variant="add"] input[formcontrolname="title"]`). Angular's element/attribute serialization is lowercased — `formcontrolname` (not `formControlName`) is the rendered attribute. No `getByLabel` used because the SPA's `<label>` doesn't pair `for=` with input ids (out of scope to fix per Story 2.6).
+- **Optimistic-UI assertion (AC3):** used `page.route('**/v1/books/*', ...)` to hold the PATCH open with a Promise we control, then asserted the on-screen `<select>` value AFTER `selectOption('reading')` and BEFORE releasing the PATCH. This is the deterministic Playwright idiom for proving optimistic-before-network — pure timing-based races are flaky against sub-millisecond local stacks.
+- **Native confirm dialogs (AC6/AC7):** `page.once('dialog', ...)` rather than `page.on(...)` so each test owns its handler and stray dialogs in future tests are not silently swallowed.
+- **Helper signatures:** `seedOneBook(page, args)`, `fillAddForm(page, args)`, `addForm(page)`, `editForm(page)`, `firstRow(page)` — local to the J2 spec, not extracted to `fixtures/helpers.ts`. These are J2-specific composition helpers; extracting them prematurely would couple to a single journey's DOM shape. Defensible to revisit if J3/J4 reuse them.
+- **Counterfactual proofs:** AC5 (cancel-edit), AC7 (delete-dismiss), AC8 (pages=0 validation) all attach a `page.on('request', ...)` listener counting the relevant HTTP verbs against `/v1/books/*` and assert the count stays at 0. Proves the SPA short-circuited correctly without hitting the wire.
+
+**Defers surfaced (added to `deferred-work.md`):**
+- **W9 — `just e2e-up` (compose runner) fails because the runner-internal Chromium cannot reach `http://localhost:8080` for Keycloak.** Story 1.14's AC8 explicitly skipped this verification. Fix: compose-side `extra_hosts: ["localhost:host-gateway"]` on the playwright service, OR a separate `OIDC_AUTHORIZE_URL_BROWSER_FROM_E2E_RUNNER=http://keycloak:8080/...` env override propagated through the BFF and Keycloak. Belongs to Epic 5 / a compose-hardening story.
+- **D64 — `tests/j1-first-login.spec.ts:70` asserts `'Books — coming in Epic 2'` which Story 2.5 removed.** Stale assertion. Two-line fix in the J1 spec (replace with `getByRole('heading', { name: 'Books' })` or similar). Story 2.5 / 2.6 should have caught this. Belongs to a future E2E-stabilization pass.
+- **D65 — `tests/j5-logout.spec.ts:51` ambiguous selector `getByText('Reading Time Estimator')` matches both the top-chrome brand and the LoginView heading.** Stale assertion since Story 1.10's late patches added the `<h1>Sign in to Reading Time Estimator</h1>` heading. Two-line fix — tighten to `getByText('Reading Time Estimator', { exact: true })` or scope to `.top-chrome-brand`. Belongs to a future E2E-stabilization pass.
+
+**Deviations from ACs:**
+- AC13 ("`just e2e-up` exits 0 with all three specs passing") is technically unmet because `just e2e-up` (compose runner path) is broken at the stack level (W9). The local-dev path documented in AC7 of Story 1.13's `e2e/README.md` "Running locally" section is the empirically-verified-green path for J2; all 8 J2 tests pass there in <4s. The acceptance condition the story spec actually cared about (J2 specs are green end-to-end against a real stack) is satisfied via the local-dev path.
+- No other deviations. All J2 ACs (AC1–AC12) are satisfied. The new `logOut` helper (AC10) and README bullet (AC11) landed as specified.
+
+**Counts (regression baselines all held):**
+- BFF: 423 passed (unchanged).
+- SPA: 105 passed (unchanged).
+- E2E: 13 tests listed; 11 pass / 2 fail via local-dev workflow (failures pre-existing; J2's 8 all green).
 
 ### File List
 
-(Populated by the dev agent. Expected:
-- `e2e/tests/j2-manage-books.spec.ts` — NEW.
-- `e2e/fixtures/helpers.ts` — UPDATE (one new `logOut` export).
-- `e2e/README.md` — UPDATE (one new bullet in "Specs in this directory").
-- `_bmad-output/implementation-artifacts/2-7-e2e-spec-j2-manage-books.md` — UPDATE (status flips to `review`, Completion Notes filled).
-- `_bmad-output/implementation-artifacts/sprint-status.yaml` — UPDATE (status to `review`).
-)
+- `e2e/tests/j2-manage-books.spec.ts` — NEW. J2 manage-books spec (8 tests).
+- `e2e/fixtures/helpers.ts` — UPDATE. Added `logOut(page)` export.
+- `e2e/README.md` — UPDATE. Added J2 bullet in "Specs in this directory".
+- `_bmad-output/implementation-artifacts/2-7-e2e-spec-j2-manage-books.md` — UPDATE. Status → `review`, tasks ticked, Dev Agent Record filled.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — UPDATE. `2-7-...` → `review`.
+- `_bmad-output/implementation-artifacts/deferred-work.md` — UPDATE. Added W9, D64, D65 + the section header "Deferred from: code review of 2-7-e2e-spec-j2-manage-books".
 
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-05-17 | 0.1 | Story created — comprehensive context engine pass. | bmad-create-story |
+| 2026-05-17 | 0.2 | Dev complete — J2 spec authored (8 tests, all green via local-dev workflow); logOut helper added; README updated; 3 defers logged (W9 compose-runner KC URL, D64 J1 stale assertion, D65 J5 ambiguous selector). Status → review. | bmad-dev-story |

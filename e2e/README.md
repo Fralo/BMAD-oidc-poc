@@ -116,6 +116,13 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
   protected route bounces back to `/login`; then captures the stored
   refresh_token via the test-only `GET /v1/test/session-debug` and asserts
   Keycloak rejects a refresh-grant attempt with `error=invalid_grant`.
+- `tests/j2-manage-books.spec.ts` (Story 2.7) — J2: drives the full
+  manage-books journey for `testuser` — adding a book, optimistic
+  status change with reload-survives, edit with replace-then-save,
+  cancel-edit, delete via native confirm (accept + dismiss), client-
+  side validation rendering for `pages=0`, and cross-user isolation
+  between `testuser` and `freshuser`. Relies on Story 2.3's books
+  truncation in `/v1/test/reset` for test isolation.
 
 ## Adding a new spec
 
