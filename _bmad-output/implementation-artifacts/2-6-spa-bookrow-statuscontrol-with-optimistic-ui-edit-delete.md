@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete
 created: 2026-05-17
 ---
@@ -900,3 +900,13 @@ Coordination files:
 | --- | --- |
 | 2026-05-17 | Story created from epic AC + Story 2.5 implementation files. Status: ready-for-dev. |
 | 2026-05-17 | Dev complete. 12 new files, 7 modified, 3 deleted. 105 tests passing (+23 above 82 baseline). Lint clean. Coverage book-form 94.04%/90.74%, book-row 92.3%/91.66%, status-control 90.9%/96.15%. Status: review. |
+| 2026-05-17 | Code review: no must-fix, no should-fix. 2 defers (D62 concurrent-delete double-click, D63 BookList test stub hardening). 4 dismissed (intentional spec choices + lint-driven rename + cosmetic). Status: done. |
+
+### Review Findings
+
+- [x] [Review][Defer] Concurrent delete double-click can dispatch two DELETE requests → phantom 404 on the second [spa/src/app/books/book-row.ts:69-82] — deferred as D62 (same class as Story 2.5 D58 double-submit; Dev Notes explicitly mark out-of-scope).
+- [x] [Review][Defer] `book-list.spec.ts` populated-state stub lacks `delete`/`update`/`setStatus` methods; future tests that click child controls would crash on missing-method [spa/src/app/books/book-list.spec.ts:32-38] — deferred as D63 (current test never clicks; hardening, not bug).
+- [x] [Review][Dismiss] Stale `rowError` persists after a successful status-change retry — intentional per AC9 ("a successful status change does NOT clear via BookRow"). Spec-mandated behavior.
+- [x] [Review][Dismiss] `<select>` value bound via `[value]="status()"` is unconventional vs `[selected]` on `<option>` — Angular property-binds `select.value`; jsdom + 5/5 unit tests confirm the binding works in both directions.
+- [x] [Review][Dismiss] Defensive `if (current === undefined)` in `BookForm.onSubmit` is unreachable given the constructor effect — intentional belt-and-suspenders; no harm.
+- [x] [Review][Dismiss] `BookForm` outputs were renamed `save`/`cancel` → `bookSaved`/`editCancelled` to satisfy `@angular-eslint/no-output-native` (both names collide with native DOM events). Documented in Completion Notes; behaviour unchanged.
