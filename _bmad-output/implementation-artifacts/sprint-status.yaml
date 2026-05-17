@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-16 (story 3.2 done — code-review pass: CR1–CR7 applied (try/finally fixture, require_scope guard, claims.get safety, fetch_call_count assertion, pyjwt <3 pin, frozenset type assertion, scope-shape warning); 7 defers D59–D65; 209 tests, coverage 97.85% (oidc_bearer.py: 100%); all 17 ACs MET)
+last_updated: 2026-05-17 (story 3.3 done — code-review pass: CR1–CR3 applied (extra="forbid" on ReadingSpeedUpsert, float-shape tests for pages_per_hour, created_at==updated_at on INSERT pin); 5 defers D66–D70; 242 tests, coverage 98.06% (api.reading_speed and services.reading_speed_service: 100% each); all 15 ACs MET)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -75,7 +75,7 @@ development_status:
   epic-3: in-progress
   3-1-rs-scaffold-from-archetype-baseline-health-rs-in-compose-default-dev: done
   3-2-rs-oidc-bearer-auth-plugin-jwks-scope-enforcement-synthetic-idp-test-harness: done
-  3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: backlog
+  3-3-rs-reading-speed-model-migration-v1-reading-speed-get-put-scope-gated: done
   3-4-rs-post-v1-test-reset-endpoint: backlog
   3-5-bff-resourceserverclient-refresh-replay-reading-speed-proxy-spa-settingsview-route: backlog
   3-6-e2e-spec-j4-adjust-reading-speed-compose-e2e-profile-killrs-startrs-resetstate-helpers: backlog

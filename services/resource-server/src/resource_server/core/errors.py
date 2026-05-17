@@ -16,8 +16,9 @@ class ErrorCode(enum.Enum):
     # BMAD_books project-specific codes (architecture §C5). Wire values are
     # lower_snake_case per the documented contract; only codes consumed by
     # this story's surface are added now — later stories add their own as
-    # they introduce the consuming handlers (Story 3.3: READING_SPEED_UNSET,
-    # INVALID_INPUT; Story 4.x: RESOURCE_SERVER_UNAVAILABLE on the BFF).
+    # they introduce the consuming handlers (Story 4.x: RESOURCE_SERVER_UNAVAILABLE
+    # on the BFF; BFF-only codes BOOK_NOT_FOUND, AUTH_STATE_INVALID, CSRF_INVALID
+    # already landed in Epic 1).
     SERVICE_UNAVAILABLE = (
         "service_unavailable",
         "A required dependency is unavailable",
@@ -32,6 +33,16 @@ class ErrorCode(enum.Enum):
         "forbidden_scope",
         "Required scope is missing",
         403,
+    )
+    READING_SPEED_UNSET = (
+        "reading_speed_unset",
+        "Reading speed not set for this user",
+        412,
+    )
+    INVALID_INPUT = (
+        "invalid_input",
+        "Request validation failed",
+        422,
     )
 
     def __init__(self, code: str, message: str, http_status: int) -> None:
@@ -67,11 +78,20 @@ async def validation_exception_handler(
     _request: Request, exc: Exception
 ) -> JSONResponse:
     val_exc = cast(RequestValidationError, exc)
+    # Drop the user-supplied `input` value from each error before serializing.
+    # Pydantic includes it verbatim; echoing it back to the client leaks raw
+    # request data (passwords, tokens, PII) into 422 responses. The BFF closed
+    # this in Story 1.3 review patch P3 — mirror exactly here for cross-service
+    # consistency. Project-specific wire value is `invalid_input` per
+    # architecture §C5 (replaces the archetype's `VALIDATION_ERROR`).
+    sanitized = [
+        {k: v for k, v in err.items() if k != "input"} for err in val_exc.errors()
+    ]
     return JSONResponse(
-        status_code=ErrorCode.VALIDATION_ERROR.http_status,
+        status_code=ErrorCode.INVALID_INPUT.http_status,
         content=_build_error_body(
-            ErrorCode.VALIDATION_ERROR.code,
-            ErrorCode.VALIDATION_ERROR.message,
-            str(val_exc.errors()),
+            ErrorCode.INVALID_INPUT.code,
+            ErrorCode.INVALID_INPUT.message,
+            sanitized,
         ),
     )
