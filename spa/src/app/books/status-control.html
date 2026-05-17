@@ -1,0 +1,10 @@
+<select
+  class="status-control-select"
+  [value]="status()"
+  [disabled]="busy()"
+  (change)="onChange($any($event.target).value)"
+>
+  <option value="to-read">to-read</option>
+  <option value="reading">reading</option>
+  <option value="finished">finished</option>
+</select>

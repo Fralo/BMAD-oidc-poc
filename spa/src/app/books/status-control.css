@@ -1,0 +1,13 @@
+.status-control-select {
+  padding: var(--spacing-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: var(--text-body);
+  background: transparent;
+  color: var(--color-text);
+}
+
+.status-control-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

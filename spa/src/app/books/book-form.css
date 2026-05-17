@@ -47,3 +47,23 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.book-form-cancel {
+  align-self: flex-start;
+  padding: var(--spacing-2) 0;
+  background: transparent;
+  color: var(--color-text);
+  border: none;
+  cursor: pointer;
+  font: var(--text-body);
+}
+
+.book-form-cancel:hover {
+  text-decoration: underline;
+}
+
+.book-form-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}

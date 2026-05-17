@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-05-14
-last_updated: 2026-05-17 (story 2.6 created — SPA BookRow + StatusControl optimistic UI + BookForm[variant=edit] + EstimateCell stub + BookRowPlaceholder deletion; spec ready-for-dev. Epic-2 now: 2.1-2.5 done, 2.6 ready-for-dev, 2.7 backlog)
+last_updated: 2026-05-17 (story 2.6 dev complete — SPA BookRow + StatusControl optimistic UI + BookForm[variant=edit] + EstimateCell stub + BookRowPlaceholder deletion; 105 tests passing (+23 above baseline). Status: review)
 project: BMAD_books
 project_key: NOKEY
 tracking_system: file-system
@@ -67,7 +67,7 @@ development_status:
   2-3-bff-extend-v1-test-reset-to-truncate-books: done
   2-4-spa-booksservice-types: done
   2-5-spa-booklist-page-bookform-add-variant-states: done
-  2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: ready-for-dev
+  2-6-spa-bookrow-statuscontrol-with-optimistic-ui-edit-delete: review
   2-7-e2e-spec-j2-manage-books: backlog
   epic-2-retrospective: optional
 

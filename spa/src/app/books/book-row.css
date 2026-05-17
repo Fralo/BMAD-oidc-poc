@@ -1,0 +1,38 @@
+.book-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+}
+
+.book-row:hover {
+  background: var(--color-surface-muted);
+}
+
+.book-row-title {
+  color: var(--color-text);
+  font: var(--text-body);
+  flex: 1;
+}
+
+.book-row-pages {
+  color: var(--color-text-muted);
+  font: var(--text-body);
+}
+
+.book-row-actions {
+  display: flex;
+  gap: var(--spacing-2);
+}
+
+.book-row-action {
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0;
+  font: var(--text-body);
+}
+
+.book-row-action:hover {
+  text-decoration: underline;
+}

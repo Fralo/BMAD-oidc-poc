@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 
 import { ErrorMessage } from '../shared/ui/error-message';
-import { BookRowPlaceholder } from './book-row-placeholder';
+import { BookRow } from './book-row';
 import { BooksService } from './books-service';
 
 export const BOOK_LIST_LOAD_ERROR_COPY = "Couldn't load books — refresh to try again.";
@@ -10,7 +10,7 @@ export const BOOK_LIST_LOADING_COPY = 'Loading…';
 
 @Component({
   selector: 'app-book-list',
-  imports: [BookRowPlaceholder, ErrorMessage],
+  imports: [BookRow, ErrorMessage],
   templateUrl: './book-list.html',
   styleUrl: './book-list.css',
   changeDetection: ChangeDetectionStrategy.OnPush,

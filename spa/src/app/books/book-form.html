@@ -17,8 +17,20 @@
   </label>
   <div class="book-form-actions">
     <button class="book-form-submit" type="submit" [disabled]="submitting()">
-      {{ submitting() ? submittingButtonLabel : idleButtonLabel }}
+      @if (variant() === 'add') {
+        {{ submitting() ? submittingButtonLabel : idleButtonLabel }}
+      } @else {
+        {{ submitting() ? editSubmittingButtonLabel : editIdleButtonLabel }}
+      }
     </button>
+    @if (variant() === 'edit') {
+      <button
+        class="book-form-cancel"
+        type="button"
+        [disabled]="submitting()"
+        (click)="onCancel()"
+      >{{ editCancelLabel }}</button>
+    }
   </div>
   @if (errorMessage(); as msg) {
     <app-error-message [message]="msg" />
