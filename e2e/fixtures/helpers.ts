@@ -44,6 +44,23 @@ export async function resetState(
 }
 
 /**
+ * Drives the SPA-side logout flow from any page where the authenticated
+ * TopChrome is rendered (e.g., /books). Clicks the `Log out` button,
+ * waits for the SPA to land on `/login`. The BFF's /auth/logout call
+ * happens synchronously inside TopChrome.logout() (top-chrome.ts:49);
+ * waiting for the URL transition is sufficient to know the
+ * `bff_session` cookie has been cleared (Story 1.7).
+ *
+ * Counterpart to `logInAs`. Used by the J2 spec's cross-user isolation
+ * case (Story 2.7) and by any future spec that needs a mid-test user
+ * swap.
+ */
+export async function logOut(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.waitForURL(/\/login$/);
+}
+
+/**
  * Placeholder — will be implemented in Story 3.6 once the Resource Server
  * exists and the e2e compose profile knows how to stop/start it.
  */

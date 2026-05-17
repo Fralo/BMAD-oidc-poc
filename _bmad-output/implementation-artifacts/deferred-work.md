@@ -500,3 +500,41 @@ Option (a) is the architecturally clean answer and is the smallest deviation fro
 
 - **D62 — Concurrent `BookRow.onDeleteClick()` double-click dispatches two DELETE requests** — `spa/src/app/books/book-row.ts:69-82`. There is no synchronous in-flight guard on `onDeleteClick`. A user double-clicking "Delete" gets two `window.confirm` dialogs in sequence; if they OK both, two `BooksService.delete(id)` calls fire. The first 204s and removes the row; the second 404s (`book_not_found`) and surfaces a misleading inline "Couldn't delete this book — try again." on a row that is, in fact, already gone. Structurally identical to Story 2.5 D58 (synchronous double-submit guard on `BookForm.onSubmit`) which is also deferred. **Belongs to:** a future UI-hardening pass — add an `if (this.deleting()) return;` early guard or reuse a `busy` signal. **Severity:** low (deferred; not observed during normal use; the browser modal serializes confirms, so the racing window is small).
 - **D63 — `BookList`'s populated-state test stub lacks `delete` / `update` / `setStatus` methods on the `BooksService` mock** — `spa/src/app/books/book-list.spec.ts:32-38` (the `makeBooksServiceStub()` helper). After Story 2.6, `BookRow` (the new populated-state child) injects `BooksService` and calls those three methods. The current test only renders — never clicks — so the stub is sufficient today. A future test that adds a click would crash with `stub.delete is not a function`. **Belongs to:** a future test-hardening pass — extend `makeBooksServiceStub()` with no-op async stubs, or switch the suite to the real-`BooksService` + `HttpTestingController` pattern used in `book-form.spec.ts` / `book-row.spec.ts`. **Severity:** nit (deferred; defensive hardening, not a current-test bug).
+
+## Surfaced during Story 2.7 implementation (2026-05-17)
+
+### W9 — `just e2e-up` (compose-runner path) hangs because the runner-internal Chromium cannot reach `http://localhost:8080` for Keycloak
+
+**Surfaced by:** Story 2.7 dev agent (`COMPOSE_PROJECT_NAME=bmad-2-7-e2e docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up --abort-on-container-exit` → 1 passed / 12 timed out at 60s each; total 12.5 minutes).
+**Files:** `compose/infra.yml:19` (`KC_HOSTNAME: localhost`), `compose/app.yml:60-103` (`playwright` service; no `extra_hosts` wiring), `services/bff/.env.example:38` (`OIDC_AUTHORIZE_URL_BROWSER=http://localhost:8080/...`).
+**Issue:** Keycloak emits browser-facing URLs anchored on `KC_HOSTNAME=localhost` — `http://localhost:8080/realms/bmad-books/protocol/openid-connect/auth?...`. When the BFF 302s a browser navigation to `/auth/login`, it returns this localhost-anchored URL to whatever browser is driving the test. On the **host-side** local-dev workflow that URL is correct (Keycloak's `:8080` is published to the host). But on the **compose-runner** path, the browser lives inside the `playwright` container where `localhost` resolves to the runner's own loopback — Keycloak is unreachable. Every J1/J2/J5 test that performs the OAuth round-trip times out at 60s waiting for the Keycloak login form to load.
+**Why Story 1.13 / 1.14 didn't catch this:** Story 1.14's Completion Notes explicitly state "AC8 (Task 6 live `just e2e-up`): Live `just e2e-up` skipped — requires running Keycloak + full compose stack. Deferred to reviewer." No subsequent story closed that loop. Story 2.7's spec was wholly testable via the local-dev workflow (`docker compose up -d keycloak bff` + `npm test` from the host), so the compose-runner path was not on the critical path for Story 2.7's correctness — but it remains broken for AC13's "13 passed via `just e2e-up`" requirement.
+
+**Concrete fix options:**
+  (a) **`extra_hosts: ["localhost:host-gateway"]`** on the `playwright` service in `compose/app.yml`. Maps `localhost` inside the runner container to the host machine, which then has Keycloak's `:8080` published to it. Requires Docker Engine 20.10+ for `host-gateway` magic (already a prereq). Smallest delta to compose YAML; no env-var plumbing changes.
+  (b) **Separate browser-URL for the in-compose runner**: introduce `OIDC_AUTHORIZE_URL_BROWSER_FROM_E2E_RUNNER=http://keycloak:8080/...` and inject it into the `playwright` service's environment so the SPA (served from BFF) is aware that requests from the runner-side browser should go through the compose network. Requires SPA-side awareness of which-browser-am-I, which is architecturally ugly.
+  (c) **Front Keycloak with a reverse proxy** (e.g., Traefik) that bridges container-network and host-network names. Heavier and out of proportion for the demo project.
+
+Option (a) is the smallest correct fix; (b)/(c) are documented for completeness only.
+
+**Belongs to:** Epic 5 / a compose-hardening story, OR a one-line follow-up commit to Story 1.14 (which originated the gap by deferring AC8). Without W9, the canonical CI command `just e2e-up` cannot succeed end-to-end.
+**Severity:** medium (deferred — the local-dev workflow is fully verified-green for J2; the compose-runner path is the canonical-CI path and is broken, but no production behavior depends on it).
+**Blocks:** Story 1.13 AC6 (originally "deferred to reviewer"), Story 1.14 AC8 ("skipped"), Story 2.7 AC13 (compose-runner half), Story 5.4 final smoke (almost certainly).
+
+### D64 — `tests/j1-first-login.spec.ts:70` asserts `'Books — coming in Epic 2'` placeholder copy that Story 2.5 removed
+
+**Surfaced by:** Story 2.7 dev agent (local-dev `npm test` run — 1 J1 test fails).
+**File:** `e2e/tests/j1-first-login.spec.ts:70` — `await expect(page.getByText('Books — coming in Epic 2')).toBeVisible();`.
+**Issue:** Story 2.5 replaced `BookRowPlaceholder` / the books-page placeholder with the real `BookListPage`. The page now renders `<h1>Books</h1>` + the add form + (empty/loading/list states), not the literal string `'Books — coming in Epic 2'`. Story 2.5's review did not catch the stale E2E assertion; J2's spec is unaffected (Story 2.7 asserts against the current copy `'No books yet. Add one above.'`).
+**Fix:** Replace the assertion with `await expect(page.getByRole('heading', { name: 'Books' })).toBeVisible();` — the post-login `/books` route's authoritative content marker after Story 2.5.
+**Belongs to:** a future E2E-stabilization pass — touch under "fix(2.7-follow-up)" or roll into Story 5.x. Two-line edit; out of scope for Story 2.7 (the parent's task description was explicit about not modifying out-of-scope SPA / earlier-story specs to make new ones pass).
+**Severity:** nit (deferred — pre-existing test-debt, not a behavior regression).
+
+### D65 — `tests/j5-logout.spec.ts:51` uses ambiguous `getByText('Reading Time Estimator')` which matches both the top-chrome brand AND the LoginView heading
+
+**Surfaced by:** Story 2.7 dev agent (local-dev `npm test` run — 1 J5 test fails with strict-mode-violation: 2-element resolution).
+**File:** `e2e/tests/j5-logout.spec.ts:51` — `await expect(page.getByText('Reading Time Estimator')).toBeVisible();`.
+**Issue:** Story 1.10's late patches (`b8c6629 chore(1.10): code review — apply patches P1-P3, mark done`) added an `<h1 class="login-headline">Sign in to Reading Time Estimator</h1>` to LoginView. Playwright's strict-mode locator now sees TWO elements containing the substring `'Reading Time Estimator'` — the brand `<span class="top-chrome-brand">` and the new `<h1>` — and refuses to resolve.
+**Fix:** Tighten to either `page.getByText('Reading Time Estimator', { exact: true })` (the brand `<span>` text is exactly that string, the LoginView heading is `'Sign in to Reading Time Estimator'`), OR scope to a stable container: `page.locator('.top-chrome-brand')`.
+**Belongs to:** same future E2E-stabilization pass as D64. Two-line edit; out of scope for Story 2.7.
+**Severity:** nit (deferred — pre-existing test-debt; not a behavior regression).
