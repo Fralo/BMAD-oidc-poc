@@ -69,7 +69,24 @@ router = APIRouter(prefix="/v1", tags=["Test Reset"])
 
 _TEST_RESET_PATH: Final[str] = "/v1/test/reset"
 _BEARER_PREFIX: Final[str] = "Bearer "
-_PLACEHOLDER_TOKEN: Final[str] = "change-me"
+
+# Set of normalized placeholder tokens that we reject at registration time.
+# Normalization (case-fold + underscore→hyphen) catches operator typos like
+# ``Change-Me`` / ``CHANGE-ME`` / ``change_me`` / ``changeme`` that would
+# otherwise bypass the placeholder-reject defense-in-depth check. CR3 from
+# code review.
+_PLACEHOLDER_TOKENS: Final[frozenset[str]] = frozenset({"change-me", "changeme"})
+
+
+def _is_placeholder(stripped_token: str) -> bool:
+    """Return True if the (already-stripped) token matches a known placeholder.
+
+    Normalizes case + ``_``→``-`` before comparing so trivial typos still
+    trip the gate.
+    """
+    normalized = stripped_token.lower().replace("_", "-")
+    return normalized in _PLACEHOLDER_TOKENS
+
 
 __all__ = ["register_test_reset_router", "router"]
 
@@ -132,7 +149,28 @@ def _classify_auth_failure(auth_header: str | None) -> str | None:
     return None
 
 
-@router.post("/test/reset", status_code=204)
+@router.post(
+    "/test/reset",
+    status_code=204,
+    responses={
+        # CR2: declare the 401 envelope on the OpenAPI surface so generated
+        # SDK clients / contract tests see the full response shape, not just
+        # the happy-path 204. Every auth-failure mode the handler returns
+        # uses this exact body.
+        401: {
+            "description": "Bearer authentication required (env-bearer).",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "errorCode": "session_expired",
+                        "message": "Authentication required",
+                        "detail": None,
+                    }
+                }
+            },
+        },
+    },
+)
 async def test_reset(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
@@ -178,17 +216,33 @@ def register_test_reset_router(app: FastAPI, cfg: AppSettings) -> None:
     """
     if not cfg.enable_test_reset:
         return
-    stripped = cfg.test_reset_token.strip()
+    raw = cfg.test_reset_token
+    stripped = raw.strip()
     if not stripped:
         # Defense-in-depth: empty / whitespace-only token == "not configured".
         logger.warning("test_reset_route_skipped reason=test_reset_token_empty")
         return
-    if stripped == _PLACEHOLDER_TOKEN:
+    if _is_placeholder(stripped):
         # Defense-in-depth: archetype default in .env.example is "change-me";
         # a real production stack must rotate this before enabling the gate.
+        # CR3: case-insensitive + ``_``→``-`` normalized so trivial typos
+        # (``Change-Me``, ``CHANGE-ME``, ``change_me``) still trip the gate.
         logger.warning(
             "test_reset_route_skipped reason=test_reset_token_default_placeholder"
         )
         return
+    if raw != stripped:
+        # CR1: gate uses the stripped form but the runtime bearer compare
+        # uses the RAW env value. If the operator's env has surrounding
+        # whitespace, the route mounts but every legitimate request fails.
+        # Surface this misconfig at startup so it shows in boot logs instead
+        # of leaving an operator to debug mysterious 401s.
+        logger.warning(
+            "test_reset_token_whitespace_padded "
+            "raw_token_len=%s stripped_token_len=%s "
+            "(handler compares the raw value; clients must send the bytes verbatim)",
+            len(raw),
+            len(stripped),
+        )
     app.include_router(router)
     logger.info("test_reset_route_registered path=%s", _TEST_RESET_PATH)

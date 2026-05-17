@@ -40,7 +40,8 @@ from resource_server.api.test_reset import (
     _settings_dep,
     register_test_reset_router,
 )
-from resource_server.core.config import AppSettings, settings as module_settings
+from resource_server.core.config import AppSettings
+from resource_server.core.config import settings as module_settings
 from resource_server.core.database import get_session
 from resource_server.core.errors import (
     AppException,
@@ -200,6 +201,105 @@ async def test_scenario_04_gate_on_placeholder_token_skipped(
         "test_reset_route_skipped reason=test_reset_token_default_placeholder"
         in caplog.text
     )
+
+
+# CR3 patches: normalized placeholder reject also catches typo variants.
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "Change-Me",
+        "CHANGE-ME",
+        "change_me",
+        "Change_Me",
+        "CHANGE_ME",
+        "changeme",
+        "ChangeMe",
+        "CHANGEME",
+        "  change-me  ",
+        "  CHANGE-ME  ",
+    ],
+)
+async def test_cr3_placeholder_variants_rejected(
+    caplog: pytest.LogCaptureFixture, variant: str
+) -> None:
+    """Case + underscore-normalized placeholder reject catches typo variants.
+
+    The dev log's reject was originally case-sensitive on the literal
+    ``"change-me"``; CR3 expanded it to normalize ``.lower()`` and
+    ``_``→``-`` so trivial operator typos still trip the gate.
+    """
+    caplog.set_level(logging.WARNING, logger=_TEST_RESET_LOGGER)
+    ctx = await _build_test_context(enable=True, token=variant)
+    async with _client_for(ctx) as c:
+        response = await c.post("/v1/test/reset")
+    assert response.status_code == 404, f"variant {variant!r} bypassed gate"
+    assert (
+        "test_reset_route_skipped reason=test_reset_token_default_placeholder"
+        in caplog.text
+    )
+
+
+# CR1 patch: startup WARN when token has surrounding whitespace.
+
+
+async def test_cr1_startup_warn_when_token_whitespace_padded(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Operator sets ``TEST_RESET_TOKEN="\\nsecret\\n"`` (accidental newline).
+
+    The gate uses the stripped form (passes), but the handler runtime
+    compare uses the raw value — so any legitimate ``Bearer secret`` call
+    would silently 401. The fix logs a WARN at registration time so the
+    misconfig surfaces in boot logs.
+    """
+    caplog.set_level(logging.WARNING, logger=_TEST_RESET_LOGGER)
+    # Use a token where strip() yields a non-placeholder, non-empty value.
+    raw = "  secret-xyz  "
+    ctx = await _build_test_context(enable=True, token=raw)
+    # The route IS mounted (gate passed) — verify by hitting it with the
+    # RAW token (with whitespace) and confirming the comparison succeeds.
+    async with _client_for(ctx) as c:
+        response = await c.post(
+            "/v1/test/reset", headers={"Authorization": f"Bearer {raw}"}
+        )
+    assert response.status_code == 204
+    # AND the WARN about whitespace padding is captured at startup.
+    assert "test_reset_token_whitespace_padded" in caplog.text
+    assert "raw_token_len=14" in caplog.text  # "  secret-xyz  " = 14 chars
+    assert "stripped_token_len=10" in caplog.text  # "secret-xyz" = 10 chars
+
+
+async def test_cr1_no_warn_when_token_already_stripped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No false-positive WARN when the env token has no surrounding whitespace."""
+    caplog.set_level(logging.WARNING, logger=_TEST_RESET_LOGGER)
+    await _build_test_context(enable=True, token="secret-xyz")
+    assert "test_reset_token_whitespace_padded" not in caplog.text
+
+
+# CR2 patch: OpenAPI schema declares both 204 and 401.
+
+
+async def test_cr2_openapi_declares_401_response() -> None:
+    """The route documents both the 204 happy path and the 401 envelope."""
+    ctx = await _build_test_context(enable=True, token="secret-xyz")
+    async with _client_for(ctx) as c:
+        response = await c.get("/openapi.json")
+    assert response.status_code == 200
+    body = response.json()
+    responses = body["paths"]["/v1/test/reset"]["post"]["responses"]
+    assert "204" in responses
+    assert "401" in responses
+    # 401 carries the canonical envelope example. (Note: FastAPI's OpenAPI
+    # JSON serialization drops keys with ``None`` values, so ``detail`` —
+    # which the handler returns as null — is omitted from the example dict
+    # here even though the runtime envelope DOES contain ``"detail": null``.)
+    example = responses["401"]["content"]["application/json"]["example"]
+    assert example["errorCode"] == "session_expired"
+    assert example["message"] == "Authentication required"
 
 
 # ---------------------------------------------------------------------------

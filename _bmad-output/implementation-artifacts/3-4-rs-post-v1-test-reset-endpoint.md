@@ -1,5 +1,5 @@
 ---
-status: review
+status: done
 story_key: 3-4-rs-post-v1-test-reset-endpoint
 epic: 3
 prerequisites: 3.1 (done — RS scaffolded, `/health`, `ENABLE_TEST_RESET` + `TEST_RESET_TOKEN` already declared in `AppSettings` at `services/resource-server/src/resource_server/core/config.py:93-94`, project-specific `ErrorCode.SESSION_EXPIRED` at 401 lives in `core/errors.py:27-31`, `app_exception_handler` wired in `main.py:65`); 3.2 (done — `oidc_bearer` plugin per-route `Depends` model, NOT middleware — so the test-reset route's `oidc_bearer` non-application is just an absence of `Depends(require_scope(...))`); 3.3 (done — `ReadingSpeed` SQLModel at `models/entities/reading_speed.py`, `0001_init_init_reading_speeds.py` migration, `__all__ = ["ReadingSpeed"]` in `models/entities/__init__.py` so `SQLModel.metadata` picks it up)
@@ -8,7 +8,7 @@ specLoopIteration: 1
 
 # Story 3.4: RS — `POST /v1/test/reset` endpoint
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -440,7 +440,15 @@ Python 3.14 is the project floor (`services/resource-server/pyproject.toml:9` `r
 
 ### Review Findings
 
-(populated by code-review phase after dev-story)
+- [x] [Review][Patch] CR1 [Med] Startup-time WARN missing when `TEST_RESET_TOKEN` has surrounding whitespace [services/resource-server/src/resource_server/api/test_reset.py:181-194] — registration uses `cfg.test_reset_token.strip()` for the gate while the handler runtime compare uses the raw `cfg.test_reset_token`. Operator sets `TEST_RESET_TOKEN="\nsecret\n"` → route IS registered (strip non-empty + not placeholder) but every legitimate `Bearer secret` request silently 401s with `token_mismatch`. Fix: when `stripped != cfg.test_reset_token`, emit a startup WARN log `test_reset_token_whitespace_padded` so operators see the misconfig at boot instead of debugging 401s. Found by: Blind + Edge.
+- [x] [Review][Patch] CR2 [Med] OpenAPI surface declares only 204; 401 envelope not documented [services/resource-server/src/resource_server/api/test_reset.py:124] — `@router.post("/test/reset", status_code=204)` declares only the 204 path; the handler also returns a 401 `JSONResponse` for every auth-failure mode but the OpenAPI schema generated for this route lists no `401` response. SDK generators consuming `/openapi.json` treat the 401 as an unspecified surprise. Fix: add `responses={401: {"description": "Authentication required (env-bearer)", "content": {"application/json": {"example": {"errorCode": "session_expired", "message": "Authentication required", "detail": None}}}}}` to the decorator. Found by: Blind + Edge.
+- [x] [Review][Patch] CR3 [Med] Placeholder reject is case-sensitive and bypassed by trivial casing/typo [services/resource-server/src/resource_server/api/test_reset.py:62, 188-192] — `stripped == _PLACEHOLDER_TOKEN` only matches the exact string `"change-me"`. `Change-Me`, `CHANGE-ME`, `change_me`, `changeme` all bypass the defense-in-depth check while still being recognizably derived from the public template default. Fix: normalize before compare — `stripped.lower().replace("_", "-")` and expand `_PLACEHOLDER_TOKENS: Final[frozenset[str]] = frozenset({"change-me", "changeme"})`. Add scenarios covering `Change-Me` and `CHANGE-ME` to ensure the reject fires. Found by: Blind + Edge.
+- [x] [Review][Defer] D74 [Med] `_classify_auth_failure` does not detect multi-bearer concat per RFC 9110 §5.3 [services/resource-server/src/resource_server/api/test_reset.py:127-132] — deferred to Story 5.2 (security review document); cross-service issue (BFF has same pattern).
+- [x] [Review][Defer] D75 [Med] Module-level `router` exposed via `__all__` enables gate bypass [services/resource-server/src/resource_server/api/test_reset.py:69,76] — deferred; cross-service hardening pass needed (BFF Story 1.12 has the same export shape; coordinated fix belongs to Story 5.2).
+- [x] [Review][Defer] D76 [Low] `assert auth_header is not None` could be stripped under `PYTHONOPTIMIZE=1` [services/resource-server/src/resource_server/api/test_reset.py:138] — deferred to a code-quality cleanup pass (`PYTHONOPTIMIZE` is not used in any project Dockerfile / CI invocation today).
+- [x] [Review][Defer] D77 [Low] `# type: ignore[arg-type]` on `**_OIDC_STUBS` hides typo signal [services/resource-server/tests/api/test_test_reset.py:84] — deferred to test-quality cleanup pass (typed-dict refactor of `_OIDC_STUBS`).
+- [x] [Review][Defer] D78 [Low] `register_test_reset_router` not idempotent (double-call mounts route twice) [services/resource-server/src/resource_server/api/test_reset.py:181-194] — deferred to defensive-coding pass (no current call site invokes it more than once per app instance).
+- [x] [Review][Defer] D79 [Low] Non-`AppException` exceptions (e.g., DB driver `OperationalError`) bypass the project envelope and surface as default 500 [services/resource-server/src/resource_server/api/test_reset.py:157-166] — deferred to Story 5.2 (security review document); broader project-wide concern, not specific to this route.
 
 ### Git intelligence summary
 
