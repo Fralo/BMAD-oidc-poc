@@ -1,4 +1,11 @@
 import { APIRequestContext, Page, expect } from '@playwright/test';
+
+import {
+  isRsRunning,
+  startRs as startRsService,
+  stopRs,
+  waitForRsHealthy,
+} from './services';
 import { SeededUser } from './users';
 
 /**
@@ -22,23 +29,57 @@ export async function logInAs(page: Page, user: SeededUser): Promise<void> {
 }
 
 /**
- * Truncates the BFF's auth-related tables via the test-reset endpoint
- * (Story 1.12). Story 3.4 extends this helper to also hit the RS-side
- * `/v1/test/reset` (reading_speeds). The `opts` parameter shape is forward-
- * compatible: extra fields may be added in Story 3.4 without breaking
- * existing call sites that pass only `{ resetToken }`.
+ * Truncates auth-related tables on both the BFF (Story 1.12 — books,
+ * sessions, auth_states) and the RS (Story 3.4 — reading_speeds) via
+ * their respective test-reset endpoints. Story 3.6 wired the RS side in.
+ *
+ * The `opts` parameter shape is forward-compatible: extra fields may be
+ * added without breaking existing call sites that pass only
+ * `{ resetToken }`. The bearer token is shared across both services per
+ * architecture.md §"Operational Details" line 1359.
+ *
+ * The compose runner reaches the RS at `http://resource-server:8000`;
+ * for host-side workflows the RS has no published port (see
+ * `e2e/README.md` "RS killswitch (J4 + J6)") — override with
+ * `RS_BASE_URL` if needed, otherwise the helper throws clearly when the
+ * RS POST fails.
  */
 export async function resetState(
   request: APIRequestContext,
   opts: { resetToken: string },
 ): Promise<void> {
-  const response = await request.post('/v1/test/reset', {
+  // BFF reset — truncates books, sessions, auth_states (Story 1.12 / 2.3).
+  //
+  // The Playwright `request` fixture uses Node's networking, not Chromium's;
+  // it does NOT honor the chromium `--host-resolver-rules` that remap
+  // `localhost:8000` → `bff:8000` for browser navigation. Inside the compose
+  // runner, Node would resolve `localhost:8000` to its own loopback (no
+  // listener → ECONNREFUSED). Setting `BFF_BASE_URL=http://bff:8000` on the
+  // playwright service routes the reset through compose DNS. Host-side
+  // workflows leave it unset → the helper falls back to the request's
+  // baseURL (typically `http://localhost:8000` per playwright.config.ts).
+  const bffBaseUrl = process.env.BFF_BASE_URL ?? '';
+  const bffResp = await request.post(`${bffBaseUrl}/v1/test/reset`, {
     headers: { Authorization: `Bearer ${opts.resetToken}` },
   });
-  if (response.status() !== 204) {
-    const body = await response.text();
+  if (bffResp.status() !== 204) {
+    const body = await bffResp.text();
     throw new Error(
-      `resetState: expected HTTP 204 from POST /v1/test/reset, got ${response.status()}. Body: ${body}`,
+      `resetState: BFF expected HTTP 204 from POST ${bffBaseUrl}/v1/test/reset, got ${bffResp.status()}. Body: ${body}`,
+    );
+  }
+
+  // RS reset — truncates reading_speeds (Story 3.4). Story 3.6 wires this in.
+  // Compose runner reaches RS at http://resource-server:8000; host-side
+  // workflow targets the RS's published port (set RS_BASE_URL accordingly).
+  const rsBaseUrl = process.env.RS_BASE_URL ?? 'http://resource-server:8000';
+  const rsResp = await request.post(`${rsBaseUrl}/v1/test/reset`, {
+    headers: { Authorization: `Bearer ${opts.resetToken}` },
+  });
+  if (rsResp.status() !== 204) {
+    const body = await rsResp.text();
+    throw new Error(
+      `resetState: RS expected HTTP 204 from POST ${rsBaseUrl}/v1/test/reset, got ${rsResp.status()}. Body: ${body}`,
     );
   }
 }
@@ -61,16 +102,27 @@ export async function logOut(page: Page): Promise<void> {
 }
 
 /**
- * Placeholder — will be implemented in Story 3.6 once the Resource Server
- * exists and the e2e compose profile knows how to stop/start it.
+ * Stops the resource-server container via the host docker daemon
+ * (socket-bound). Idempotent: if the container is already stopped, no-op.
+ *
+ * Used by J4's "RS down" tests (Story 3.6) and J6 (Story 4.4).
  */
-export function killRs(): never {
-  throw new Error('RS not yet present (Epic 3)');
+export async function killRs(): Promise<void> {
+  if (!(await isRsRunning())) return;
+  await stopRs();
 }
 
 /**
- * Placeholder — see `killRs`.
+ * Starts the resource-server container and waits for its /health probe to
+ * report 200. Idempotent: if the container is already running, just waits
+ * for healthy (cheap if already there) and returns.
+ *
+ * The J4 spec uses this in an `afterEach` to guard against a previous test
+ * having left the RS stopped.
  */
-export function startRs(): never {
-  throw new Error('RS not yet present (Epic 3)');
+export async function startRs(): Promise<void> {
+  if (!(await isRsRunning())) {
+    await startRsService();
+  }
+  await waitForRsHealthy();
 }

@@ -95,6 +95,14 @@ class AppSettings(BaseSettings):
     enable_test_reset: bool = False
     test_reset_token: str = ""
 
+    # BFF → Resource Server base URL (Story 3.5). Compose-internal default
+    # matches the `resource-server` service name in `compose/app.yml`; in dev
+    # (host runs), override to the local RS port. Required-fail-fast validation
+    # at startup (`_validate_rs_base_url`) closes the misconfig hole where a
+    # silent default could direct traffic at `localhost` or an attacker-controlled
+    # URL.
+    rs_base_url: str = "http://resource-server:8000"
+
     # OIDC discovery probe timeouts (architecture §C6: BFF→Keycloak 5s/10s, no
     # retries). The discovery fetch uses these.
     oidc_discovery_connect_timeout: float = 5.0
@@ -105,6 +113,32 @@ class AppSettings(BaseSettings):
         if self.cors_allow_credentials and "*" in self.cors_allow_origins_list:
             msg = (
                 "CORS_ALLOW_ORIGINS cannot include '*' when CORS_ALLOW_CREDENTIALS=true"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oidc_issuer_url(self) -> AppSettings:
+        # CR9 (Story 3.5 review): the BFF→Keycloak refresh-token call in
+        # ``ResourceServerClient._refresh_access_token`` constructs the token
+        # endpoint as ``oidc_issuer_url.rstrip("/") +
+        # "/protocol/openid-connect/token"``. If the env var is missing, the
+        # resulting URL is the relative path ``/protocol/...`` and httpx
+        # raises ``UnsupportedProtocol`` on every refresh attempt → every
+        # BFF→RS 401 cycle classifies as ``transport_error`` → cookie-
+        # clearing 401 → silent logout loop. Fail-fast at startup.
+        val = self.oidc_issuer_url.strip()
+        if not val:
+            msg = (
+                "OIDC_ISSUER_URL is required and must be non-empty "
+                "(the BFF↔IdP back-channel issuer URL — typically "
+                "http://keycloak:8080/realms/<realm> in compose)"
+            )
+            raise ValueError(msg)
+        if not val.startswith(("http://", "https://")):
+            msg = (
+                "OIDC_ISSUER_URL must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)
         return self
@@ -127,6 +161,46 @@ class AppSettings(BaseSettings):
             msg = (
                 "OIDC_AUTHORIZE_URL_BROWSER must start with 'http://' or 'https://' "
                 f"(got: '{val[:40]}...')"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rs_base_url(self) -> AppSettings:
+        # Story 3.5: BFF→RS base URL is required-fail-fast. Mirrors the
+        # `_validate_oidc_authorize_url_browser` pattern. A silent default
+        # could direct production traffic at `localhost` (which would not
+        # resolve to the RS in compose) or, worse, an attacker-controlled URL
+        # if a typo'd env var lands in the deployment config.
+        #
+        # CR5: also reject values that are well-formed strings but produce
+        # a URL with no netloc (e.g., ``http://`` alone, ``http:///foo``) —
+        # the original check accepted these and the BFF would only fail at
+        # first request with a confusing transport-level error.
+        val = self.rs_base_url.strip()
+        if not val:
+            msg = (
+                "RS_BASE_URL is required and must be non-empty "
+                "(the BFF→Resource Server base URL — typically "
+                "http://resource-server:8000 in compose, "
+                "http://localhost:8001 in dev)"
+            )
+            raise ValueError(msg)
+        if not val.startswith(("http://", "https://")):
+            msg = (
+                "RS_BASE_URL must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
+            )
+            raise ValueError(msg)
+        # urlparse picks up only the host the URL claims; require it
+        # non-empty so the BFF can never silently target a path-only URL.
+        from urllib.parse import urlparse
+
+        parsed = urlparse(val)
+        if not parsed.netloc:
+            msg = (
+                "RS_BASE_URL must include a host "
+                f"(got: '{val[:40]}'; expected e.g. http://resource-server:8000)"
             )
             raise ValueError(msg)
         return self

@@ -104,6 +104,47 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
   `e2e` compose profile sets it automatically. Required for the J5
   refresh-token revocation POST (the runner cannot resolve
   `localhost:8080` to Keycloak from inside a container).
+- `RS_BASE_URL` — base URL of the Resource Server from the runner's
+  perspective. Defaults to `http://resource-server:8000` (correct for the
+  `e2e` compose profile, where the runner reaches the RS via the compose
+  network). Consumed by `resetState`'s RS-side `POST /v1/test/reset`
+  (Story 3.6 extension of the Story 1.12 helper). Host-side workflow
+  cannot easily reach the RS — see "RS killswitch (J4 + J6)" below.
+- `COMPOSE_PROJECT_NAME` — Compose v2 project-name prefix. Defaults to
+  `bmad-books` and is set by the `e2e` profile on the playwright service
+  via `${COMPOSE_PROJECT_NAME:-bmad-books}`. Pinned so the runner's
+  `docker compose stop|start resource-server` (issued via the bound docker
+  socket) targets the right container — without this pin the runner's
+  working directory `/e2e` would derive project name `e2e` and the lookup
+  would resolve to nothing.
+
+## RS killswitch (J4 + J6)
+
+Story 3.6's `killRs` / `startRs` helpers (`fixtures/helpers.ts` thin facade
+over `fixtures/services.ts`) shell out to `docker compose stop|start
+resource-server`. Inside the playwright runner container, the host docker
+daemon is reachable via the `/var/run/docker.sock` bind defined on the
+playwright service in `compose/app.yml`. From the host, `npm test` shells
+out to the same daemon (Docker Desktop on macOS / Linux), so the helpers
+work in both workflows without modification.
+
+The compose-network `RS_BASE_URL=http://resource-server:8000` is the
+canonical target. The host-side workflow has a known constraint: the RS has
+NO `ports:` block in `compose/app.yml` (architecture §F3 / §I6 — only the
+BFF exposes a user-facing port), so `resetState`'s RS-side POST cannot
+reach the RS from the host on `http://localhost:<port>`.
+
+Workarounds:
+
+1. **Run via compose (canonical):** `just e2e-up` from the repo root. The
+   runner is in the compose network and reaches the RS via DNS at
+   `http://resource-server:8000`. This is the workflow `just e2e-up` exists
+   to support and the one the close gate (AC16, Story 3.6) requires.
+2. **Temporary host port (ad-hoc):** add `ports: ["8001:8000"]` to the
+   `resource-server` block in your local `compose/app.yml` (do NOT commit)
+   and export `RS_BASE_URL=http://localhost:8001` before running `npm test`
+   from `e2e/`. Useful for fast-iteration debugging; not a documented
+   long-term workflow.
 
 ## Specs in this directory
 
@@ -123,6 +164,9 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
   side validation rendering for `pages=0`, and cross-user isolation
   between `testuser` and `freshuser`. Relies on Story 2.3's books
   truncation in `/v1/test/reset` for test isolation.
+- `tests/j4-adjust-speed.spec.ts` (Story 3.6) — J4: adjust reading speed,
+  including freshuser unset state, Saved pulse, validation, and
+  RS-unavailable error variants.
 
 ## Adding a new spec
 
@@ -136,11 +180,19 @@ that without rewriting the test-reset contract.
 
 ## RS test-reset extension
 
-The `resetState` helper currently only hits the BFF's `POST /v1/test/reset`
-endpoint. Story 3.4 will land the equivalent RS endpoint and extend
-`resetState` to also POST to it (the second argument is an options object so
-new fields can be added without breaking call sites). Story 3.6 will replace
-the `killRs` / `startRs` stubs in `fixtures/helpers.ts` with real
-implementations that drive `docker compose stop resource-server` /
-`docker compose start resource-server` (or an equivalent compose-CLI
-mechanism).
+Story 3.6 replaced the `killRs` / `startRs` `: never` stubs in
+`fixtures/helpers.ts` with real implementations that drive
+`docker compose stop|start resource-server` via the host docker daemon
+(socket-bound from the runner). The compose-CLI plumbing lives in
+`fixtures/services.ts` (thin facade pattern); `helpers.ts` re-exports
+`killRs` / `startRs` with idempotent guards (no-op when already in the
+target state).
+
+Story 3.6 also extended `resetState` to POST `/v1/test/reset` against
+**both** services — the BFF (Story 1.12 — books, sessions, auth_states)
+and the RS (Story 3.4 — reading_speeds) — using the same
+`TEST_RESET_TOKEN` bearer. The signature is unchanged from Story 1.11/2.3
+(`request, opts: { resetToken }`) so existing call sites in
+`j1-first-login.spec.ts` / `j5-logout.spec.ts` continue to work without
+edits. The RS URL is configurable via `RS_BASE_URL` (defaults to
+`http://resource-server:8000` — the compose-network value).

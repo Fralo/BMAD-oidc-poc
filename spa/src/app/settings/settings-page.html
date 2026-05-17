@@ -1,0 +1,32 @@
+<section class="settings-page">
+  <h1 class="settings-heading">Reading speed</h1>
+  <form (submit)="onSubmit($event)" novalidate>
+    <label for="pages-per-hour" class="settings-label">Pages per hour</label>
+    <input
+      id="pages-per-hour"
+      type="number"
+      min="1"
+      class="settings-input"
+      [value]="inputValue()"
+      (input)="onInput($event)"
+      [disabled]="loading() || saving()"
+    />
+    <p class="settings-helper">e.g., 30</p>
+    @if (validationError(); as msg) {
+      <app-error-message [message]="msg" />
+    }
+    @if (loadErrorMessage(); as msg) {
+      <app-error-message [message]="msg" />
+    }
+    @if (saveErrorMessage(); as msg) {
+      <app-error-message [message]="msg" />
+    }
+    <button
+      type="submit"
+      class="settings-save"
+      [disabled]="loading() || saving()"
+    >
+      {{ saveButtonLabel() }}
+    </button>
+  </form>
+</section>

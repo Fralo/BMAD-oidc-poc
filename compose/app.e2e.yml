@@ -1,11 +1,21 @@
 # compose/app.e2e.yml
 # Story 1.12 — `e2e` profile override for the BFF service.
+# Story 3.6 — same overlay pattern extended to the Resource Server:
+# `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` activate `POST /v1/test/reset`
+# (Story 3.4 RS endpoint) and `AUTH_TYPE=oidc_bearer` activates the JWKS-
+# validated bearer-token plugin (Story 3.2) so the J4 spec's scope-enforcement
+# coverage is real instead of degrading to the archetype's synthetic-admin
+# default (`AUTH_TYPE=none`, per `services/resource-server/.env.example` lines
+# 40-52).
 #
 # Applies the `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` env-var pair
 # that activates the `POST /v1/test/reset` route (mounted conditionally
-# by `bff.api.test_reset.register_test_reset_router`). The Playwright
-# `resetState(...)` fixture (Story 1.11) authenticates against the
-# endpoint via `Authorization: Bearer ${TEST_RESET_TOKEN}`.
+# by `bff.api.test_reset.register_test_reset_router` on the BFF, and by
+# the equivalent registrar on the RS). The Playwright `resetState(...)`
+# fixture (Story 1.11, extended by Story 3.6) authenticates against both
+# endpoints via `Authorization: Bearer ${TEST_RESET_TOKEN}` — single token
+# reused, no separate `RS_TEST_RESET_TOKEN` (architecture.md §"Operational
+# Details" line 1359).
 #
 # Usage (the `-f` form is required because compose's top-level
 # `include:` directive is unconditional — its nominal `profiles:` field
@@ -30,3 +40,14 @@ services:
     environment:
       ENABLE_TEST_RESET: "true"
       TEST_RESET_TOKEN: "${TEST_RESET_TOKEN:?TEST_RESET_TOKEN is required when the e2e profile is up}"
+
+  resource-server:
+    environment:
+      ENABLE_TEST_RESET: "true"
+      TEST_RESET_TOKEN: "${TEST_RESET_TOKEN:?TEST_RESET_TOKEN is required when the e2e profile is up}"
+      # Story 3.6 activates oidc_bearer end-to-end (the RS .env.example notes
+      # this at line 50-52: "the actual wiring flips in Story 3.3 / 3.6").
+      # Without this, the RS runs in AUTH_TYPE=none and treats every caller as
+      # an unauthenticated synthetic admin — J4's scope-enforcement coverage
+      # would silently degrade.
+      AUTH_TYPE: oidc_bearer

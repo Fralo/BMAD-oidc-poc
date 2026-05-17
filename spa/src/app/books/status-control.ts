@@ -72,6 +72,12 @@ export class StatusControl {
       case 'network':
       case 'unknown':
       case 'session_expired':
+      // Epic-3 added these AppError variants for the BFF→RS proxy path.
+      // BooksService never makes RS-routed calls, so they aren't surfaced
+      // here in practice, but the switch must be exhaustive against the
+      // unified AppError type.
+      case 'reading_speed_unset':
+      case 'resource_server_unavailable':
         return STATUS_CONTROL_FAILURE_COPY;
       default: {
         const _exhaustive: never = err;

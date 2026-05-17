@@ -212,6 +212,11 @@ export class BookForm {
       case 'book_not_found':
       case 'auth_state_invalid':
       case 'unknown':
+      // Epic-3 added these AppError variants for the BFF→RS proxy path.
+      // BooksService never makes RS-routed calls, so they aren't surfaced
+      // here in practice — but the switch must remain exhaustive.
+      case 'reading_speed_unset':
+      case 'resource_server_unavailable':
         return BOOK_FORM_SERVER_GENERIC;
       default: {
         const _exhaustive: never = err;

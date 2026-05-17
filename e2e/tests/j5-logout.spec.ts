@@ -67,19 +67,24 @@ test.describe('J5: logout and re-protection', () => {
 
   test('refresh token is revoked at Keycloak after logout', async ({ page, request }) => {
     // 1. Capture the refresh_token BEFORE logout via the test-only
-    //    `GET /v1/test/session-debug` endpoint. The test-level `request`
-    //    fixture is an **isolated** APIRequestContext (per Playwright's
-    //    type doc: "Isolated APIRequestContext instance for each test")
-    //    and does NOT share the browser-context cookie jar. Use
-    //    `page.request` instead — that one IS bound to `page.context()`
-    //    so the `bff_session` cookie set by `logInAs` is forwarded.
-    const debugResp = await page.request.get('/v1/test/session-debug', {
-      headers: { Authorization: `Bearer ${requireEnv('TEST_RESET_TOKEN')}` },
-    });
-    expect(debugResp.status()).toBe(200);
-    const debugBody = (await debugResp.json()) as { refresh_token: string; sub: string };
-    expect(debugBody.refresh_token).toBeTruthy();
-    const capturedRefreshToken = debugBody.refresh_token;
+    //    `GET /v1/test/session-debug` endpoint. Both Playwright `request`
+    //    fixtures (test-level and `page.request`) use Node networking, not
+    //    Chromium — Node does not honor the chromium `--host-resolver-rules`
+    //    (e2e/playwright.config.ts) that route `localhost:8000` → `bff:8000`,
+    //    so a Node-side GET to `http://localhost:8000/...` is ECONNREFUSED
+    //    inside the compose runner. Issue the fetch from inside the page
+    //    instead — the browser DOES honor resolver-rules AND auto-attaches
+    //    the same-origin `bff_session` cookie.
+    const captured = await page.evaluate(async (token: string) => {
+      const resp = await fetch('/v1/test/session-debug', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await resp.json()) as { refresh_token?: string };
+      return { status: resp.status, refresh_token: body.refresh_token ?? '' };
+    }, requireEnv('TEST_RESET_TOKEN'));
+    expect(captured.status).toBe(200);
+    expect(captured.refresh_token).toBeTruthy();
+    const capturedRefreshToken = captured.refresh_token;
 
     // 2. Click Log out and wait for the SPA to land on /login (same shape
     //    as the first J5 test).

@@ -29,10 +29,26 @@ default-config:
 e2e-config:
     docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e config
 
-# Bring up the e2e stack. The `--abort-on-container-exit` flag is the
-# Playwright runner's expected lifecycle (Story 1.11 / 1.12).
+# Bring up the e2e stack and run the test suite.
+#
+# Two-phase orchestration (revised in Story 3.6): bring infra services up
+# detached + healthy, THEN run the playwright runner as a one-shot.
+# Story 3.6's J4 tests stop and restart the `resource-server` container
+# mid-test via the bound docker socket (`killRs()` / `startRs()`). The
+# original `up --abort-on-container-exit` form interpreted that intentional
+# stop as a service crash and SIGTERM'd the playwright runner before the
+# test could call `startRs()`, masking the AC10-AC14 results.
+#
+# `set -e` + `trap … EXIT` runs the `down` cleanup on any failure path —
+# the previous three-line `&&`-chain left services running when `up` or
+# the playwright run failed, breaking the next invocation on
+# `container_name: playwright` collisions (review patch P1).
 e2e-up:
-    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up --abort-on-container-exit
+    #!/usr/bin/env bash
+    set -e
+    trap 'docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e down' EXIT
+    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up -d --wait keycloak bff resource-server
+    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm playwright
 
 # Tear down the e2e stack and remove volumes (idempotent).
 e2e-down:

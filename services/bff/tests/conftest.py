@@ -20,6 +20,10 @@ os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
 # a stable default here so the test settings instance — built when `bff.main`
 # is imported below — validates successfully.
 os.environ.setdefault("OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/test")
+# Story 3.5 review CR9: OIDC_ISSUER_URL is required-fail-fast so the
+# BFF→Keycloak refresh-token call (ResourceServerClient._refresh_access_token)
+# cannot silently emit a relative URL on a misconfigured deployment.
+os.environ.setdefault("OIDC_ISSUER_URL", "http://keycloak:8080/realms/test")
 
 from bff.core.config import settings
 from bff.core.database import get_session
