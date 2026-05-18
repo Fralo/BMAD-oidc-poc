@@ -36,7 +36,8 @@ The `repr=False` flag on the four cryptographic columns (`access_token`, `refres
 The session cookie is set at `/auth/callback` time after a successful token exchange and verified at every subsequent BFF request via the cookie-session dependency on `/v1/*` and `/api/*` routes:
 
 ```python
-# services/bff/src/bff/api/auth.py:297–305 (set), 285–295 (clear at logout)
+# services/bff/src/bff/api/auth.py:298–305 (session-cookie set at /auth/callback)
+# services/bff/src/bff/api/auth.py:347–355 (session-cookie clear at /auth/logout)
 redirect.set_cookie(
     key=cfg.bff_session_cookie_name,
     value=session_row.id,
@@ -50,12 +51,13 @@ redirect.set_cookie(
 **Transport between BFF ↔ Resource Server.** `Authorization: Bearer <access_token>` header set by the `ResourceServerClient` on every RS call (`services/bff/src/bff/services/resource_server_client.py`). On a `401 invalid_token` from the RS the client refreshes the access token at Keycloak's `/token` endpoint using the refresh token, then replays the original request **exactly once**:
 
 ```python
-# services/bff/src/bff/services/resource_server_client.py:178–224 (refresh-and-replay path)
+# services/bff/src/bff/services/resource_server_client.py:230–279 (_call_with_refresh)
+# services/bff/src/bff/services/resource_server_client.py:359–410 (_refresh_access_token)
 ```
 
 A second 401 after refresh is treated as a hard authentication failure: the session row is deleted, the session cookie is cleared, and the SPA's next request receives the `SESSION_EXPIRED` envelope, prompting a fresh login. There is no second refresh attempt — the contract is one refresh per in-flight request.
 
-**Why this isolation matters.** The architectural constraint "Token isolation" — `_bmad-output/planning-artifacts/architecture.md:76` and PRD §8 — mandates that "access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage." The browser holds zero credential material that XSS or a malicious extension could exfiltrate. The cost of a compromised browser session is bounded to "an attacker can use the browser for as long as the current session cookie is valid"; the refresh token — the long-lived credential — never reaches the browser.
+**Why this isolation matters.** The architectural constraint "Token isolation" — `_bmad-output/planning-artifacts/architecture.md:36` and PRD §8 — mandates that "access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage." The browser holds zero credential material that XSS or a malicious extension could exfiltrate. The cost of a compromised browser session is bounded to "an attacker can use the browser for as long as the current session cookie is valid"; the refresh token — the long-lived credential — never reaches the browser.
 
 **Implementing code paths:**
 - [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — Authorization Code + PKCE flow (`build_authorize_url`, `exchange_code`), id-token verification (`verify_id_token`), refresh (`exchange_code` is reused), revocation (`revoke_refresh_token`), end-session (`end_session`).
@@ -72,7 +74,7 @@ A second 401 after refresh is treated as a hard authentication failure: the sess
 
 ## 2. Session cookie attributes
 
-The session cookie carries the following attributes, set verbatim at `services/bff/src/bff/api/auth.py:298–305` (the session cookie at `/auth/callback`) and mirrored at lines 119–127 (the cookie-clearing response at logout):
+The session cookie carries the following attributes, set verbatim at `services/bff/src/bff/api/auth.py:298–305` (the session cookie at `/auth/callback`) and mirrored — with matching attributes per RFC 6265bis — at lines 347–355 (the session cookie cleared at `/auth/logout`):
 
 | Attribute | Value | Authority |
 |-----------|-------|-----------|
@@ -118,7 +120,7 @@ redirect.set_cookie(
 ```
 
 **Implementing code paths:**
-- [`services/bff/src/bff/api/auth.py`](../services/bff/src/bff/api/auth.py) — all cookie set/clear call sites (lines 119–129 clear at logout, 158–166 state cookie at login, 285–305 session cookie + state-cookie clear at callback, 307–314 CSRF cookie).
+- [`services/bff/src/bff/api/auth.py`](../services/bff/src/bff/api/auth.py) — all cookie set/clear call sites: lines 120–127 clear the state cookie on the `auth_state_invalid` error response; 158–166 set the state cookie at `/auth/login`; 288–295 clear the state cookie at successful `/auth/callback`; 298–305 set the session cookie at `/auth/callback`; 307–314 set the CSRF cookie at `/auth/callback`; 347–355 + 356–364 clear the session and CSRF cookies at `/auth/logout`.
 - [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — `state_id_serializer`, `sign_state_id`, `verify_state_id` (lines 51–88).
 
 **Pin-test references:**
@@ -182,7 +184,7 @@ if not observed_match:
     return self._reject()
 ```
 
-The `_origin_matches` helper (lines 159–173) explicitly rejects URLs that carry userinfo (`http://attacker@host/`) — `urlsplit` silently strips userinfo and would otherwise let an attacker craft a same-origin-looking value. Path / query / fragment are not security-relevant; `Referer` headers legitimately carry the path and the tuple comparison ignores it.
+The `_origin_matches` helper (lines 159–173) explicitly rejects URLs that carry userinfo (`http://attacker@host/`) by checking `parts.username or parts.password` on the parsed `urlsplit` result — a downstream hostname-based comparison would otherwise drop the userinfo (via `urlsplit(...).hostname`) and let an attacker craft a same-origin-looking value. Path / query / fragment are not security-relevant; `Referer` headers legitimately carry the path and the tuple comparison ignores it.
 
 **Failure envelope.** Every rejection emits the canonical envelope built by `services/bff/src/bff/core/errors.py`:
 
@@ -238,11 +240,11 @@ The validation performs, in this order:
 3. **Audience claim.** `audience=settings.oidc_audience` — set to `bmad-books-resource-server`. The Keycloak realm includes a hardcoded protocol mapper (`aud-resource-server`) that injects this value into every access token issued to the `bmad-books-bff` client.
 4. **Issuer claim.** `issuer=settings.oidc_issuer_url` — pinned to the deployment's Keycloak realm URL.
 5. **Expiry.** PyJWT verifies `exp` ≥ now (no `leeway` is configured today; see Known Gaps for the small-but-real clock-skew implication).
-6. **Required-claims gate.** `options={"require": ["iss", "aud", "exp", "sub"]}` enforces that the token actually carries all four claims — a forged token that elided the audience claim would fail this check even before signature verification ran on a valid key.
+6. **Required-claims gate.** `options={"require": ["iss", "aud", "exp", "sub"]}` enforces that the token actually carries all four claims — a forged token that elided the audience claim would fail this check even before signature verification ran on a valid key. Note this is a **presence-only** check: PyJWT does not enforce non-empty values, so a token carrying an empty-string `sub` would pass this gate and surface downstream as `412 reading_speed_unset`. See Known Gap #5 (D67) for the empty-`sub` consequence.
 
 Signature verification is performed by `jwt.decode` against the public key returned by the JWKS client. Tokens signed by any key not present in the JWKS endpoint are rejected with `jwt.InvalidTokenError`, which the handler maps to a `401 session_expired` envelope.
 
-**Why JWKS, not a hardcoded public key.** Architecture line 80: "Public keys are not hardcoded." Key rotation at the IdP must not require redeploying the RS. The `_get_jwks_client` cache (line 52) holds a `PyJWKClient` per JWKS URL across the process lifetime; `cache_keys=True` keeps successfully-fetched keys until a `kid` miss triggers a single re-fetch. This matches architecture line 415's "TTL 24h with `kid`-rotation single-re-fetch" envelope, modulo the implementation note at `oidc_bearer.py:42–48` that PyJWKClient does not expose a numeric TTL knob — the `kid`-miss re-fetch path satisfies the underlying invariant.
+**Why JWKS, not a hardcoded public key.** Architecture line 40: "JWKS-based JWT validation. Public keys fetched and cached from the Authorization Server; no hardcoded keys." Key rotation at the IdP must not require redeploying the RS. The `_get_jwks_client` cache (line 52) holds a `PyJWKClient` per JWKS URL across the process lifetime; `cache_keys=True` keeps successfully-fetched keys until a `kid` miss triggers a single re-fetch. The **key-rotation half** of architecture line 415's "TTL 24h, key-rotation on `kid` miss (single re-fetch)" envelope is satisfied by this `kid`-miss re-fetch; the **24h time-based TTL half is not enforced** by PyJWKClient — a successfully-cached key with no intervening traffic is held indefinitely, not for 24h. See the implementation note at `oidc_bearer.py:42–48`. For the project's threat model this is acceptable because `kid` rotation is Keycloak's signal for "use new keys"; a key compromise would manifest as a `kid` change triggering re-fetch on the next traffic. Deployments that need a hard time-based bound would wrap `PyJWKClient` in a TTL-aware decorator or replace it with a manual cache.
 
 **The BFF id-token parallel.** During `/auth/callback`, the BFF runs a structurally similar PyJWT validation on the id-token returned from `/token`:
 
@@ -276,7 +278,7 @@ Two notable differences from the RS validation:
 
 ## 5. Scope enforcement
 
-**Enforcement happens at the Resource Server.** This is a load-bearing architectural rule (PRD §8 "Scope-enforced computation" / architecture line 82): the BFF forwards the user's bearer token unchanged; the BFF does not consult the scope claim; the RS — the resource owner — makes every authorization decision. A reviewer should be able to verify scope behavior by issuing a bearer to the RS directly and confirming the matrix below; no BFF involvement is required.
+**Enforcement happens at the Resource Server.** This is a load-bearing architectural rule (PRD §8 "Scope-enforced computation" / architecture line 42): the BFF forwards the user's bearer token unchanged; the BFF does not consult the scope claim; the RS — the resource owner — makes every authorization decision. A reviewer should be able to verify scope behavior by issuing a bearer to the RS directly and confirming the matrix below; no BFF involvement is required.
 
 **The two domain scopes.**
 
@@ -365,7 +367,7 @@ Directive-by-directive:
 | `base-uri 'self'` | `<base>` tag restricted | prevents an injected `<base href="https://attacker.example/">` from re-routing relative URLs |
 | `form-action 'self'` | form submissions only to same origin | defends against form-action hijacking via injected `<form action="...">` |
 
-**Attachment rule.** CSP is attached only when the request carries `Accept: text/html` AND the response is on an SPA path (not `/auth/*`, `/api/*`, `/v1/*`, `/health`). The trigger is the request `Accept` header rather than the response `Content-Type` — a deliberate choice tested byte-for-byte by [`services/bff/tests/middleware/test_security_headers.py`](../services/bff/tests/middleware/test_security_headers.py). A future SSR migration would prefer the response-`Content-Type`-driven approach; that is tracked as D369 under Known Gaps.
+**Attachment rule.** CSP is attached only when the request carries `Accept: text/html` AND the response is on an SPA path (not `/auth/*`, `/api/*`, `/v1/*`, `/health`). The trigger is the request `Accept` header rather than the response `Content-Type` — a deliberate choice tested byte-for-byte by [`services/bff/tests/middleware/test_security_headers.py`](../services/bff/tests/middleware/test_security_headers.py). A future SSR migration would prefer the response-`Content-Type`-driven approach; that is tracked as D369 in [`deferred-work.md`](../_bmad-output/implementation-artifacts/deferred-work.md).
 
 The `style-src 'unsafe-inline'` carve-out is the one knowingly-relaxed directive. The architecture A8 decision (lines 350–354) accepts it as the cost of using Tailwind v4 without a build-time nonce-injector. Future hardening (D371) could remove the carve-out by computing a per-request nonce for the inlined Tailwind style block and threading it through the Angular bootstrap. This story does not undertake that work.
 
@@ -373,7 +375,7 @@ The `style-src 'unsafe-inline'` carve-out is the one knowingly-relaxed directive
 
 ### No tokens reachable from JavaScript
 
-Restating §1's contract from the SPA perspective: the session cookie is `HttpOnly`; the only browser-readable cookie is the CSRF token (intentionally — it is not a secret); no access / refresh / id token ever reaches the browser. The architectural constraint "Token isolation" (architecture line 76) is the load-bearing rule and the §"Threat Model Summary" XSS entry below explains why this matters even when XSS is the assumed-compromised case.
+Restating §1's contract from the SPA perspective: the session cookie is `HttpOnly`; the only browser-readable cookie is the CSRF token (intentionally — it is not a secret); no access / refresh / id token ever reaches the browser. The architectural constraint "Token isolation" (architecture line 36) is the load-bearing rule and the §"Threat Model Summary" XSS entry below explains why this matters even when XSS is the assumed-compromised case.
 
 ### Output escaping (XSS at the template layer)
 
@@ -448,7 +450,7 @@ The architecture explicitly accepts the following risks for the educational refe
 
 **Risk.** Today the session row expires when its `expires_at` (set from the id-token's `exp` claim at callback time) is reached. There is no separate idle-timeout tracking — a session that has been quiet for 8 hours but whose refresh token is still valid will silently come back to life on the next request.
 
-**Mitigation in this implementation.** The refresh-token max lifespan is the practical bound — Keycloak's realm default is 30 days. When the session row is consulted on a request whose access token has expired, the refresh-and-replay path runs once; if Keycloak rejects the refresh (token revoked, refresh-token absolute lifespan exceeded), the session is deleted and the cookie is cleared. Logout (`/auth/logout`) revokes the refresh token at Keycloak, then ends the SSO session, then clears the local session — the chain is documented in §9 threat 6 below.
+**Mitigation in this implementation.** The refresh-token max lifespan is the practical bound — Keycloak's realm default is 30 days. When the session row is consulted on a request whose access token has expired, the refresh-and-replay path runs once; if Keycloak rejects the refresh (token revoked, refresh-token absolute lifespan exceeded), the session is deleted and the cookie is cleared. Logout (`/auth/logout`) revokes the refresh token at Keycloak, then ends the SSO session, then clears the local session — the chain is documented in T6 of the Threat Model Summary below.
 
 **Production-deployment alternative.** Add explicit idle-timeout tracking — for example, persist a `last_activity_at` column on `sessions`, update it on each authenticated request, and reject sessions with `now - last_activity_at > IDLE_TIMEOUT` (typical values: 15 minutes to 4 hours depending on the threat model). Combine with a tighter absolute timeout (typical: 8 hours to 24 hours) instead of relying on the refresh-token lifespan.
 
@@ -482,7 +484,7 @@ Mitigations are layered. Keycloak's default access-token lifetime is short (5 mi
 
 An attacker presents a valid bearer token directly to the RS, skipping the SPA / BFF flow entirely.
 
-This is **intentionally accepted**. The RS is a stateless OAuth resource server: anyone holding a valid bearer JWT with the correct `aud` (`bmad-books-resource-server`) and the required scope can call it. The trust boundary is the JWT validation pipeline (§4) plus the scope enforcement (§5), not "did the request come from the SPA". This is the canonical OAuth contract — `architecture.md:83` ("BFF does not bypass the resource server") makes the same point in the inverse direction. Any client that obtains a token through a valid OAuth flow with the appropriate scopes is a legitimate caller; the system has no per-client allowlist on top of scopes. Architectural authority: PRD §8 + architecture line 82.
+This is **intentionally accepted**. The RS is a stateless OAuth resource server: anyone holding a valid bearer JWT with the correct `aud` (`bmad-books-resource-server`) and the required scope can call it. The trust boundary is the JWT validation pipeline (§4) plus the scope enforcement (§5), not "did the request come from the SPA". This is the canonical OAuth contract — `architecture.md:43` ("BFF does not bypass the RS. No local fallback computation when the RS is unavailable.") makes the same point in the inverse direction. Any client that obtains a token through a valid OAuth flow with the appropriate scopes is a legitimate caller; the system has no per-client allowlist on top of scopes. Architectural authority: PRD §8 + architecture line 42.
 
 ### T5 — Scope escalation: a `reading-speed:read`-scoped token calls `PUT /v1/reading-speed`
 
@@ -518,7 +520,7 @@ Items below are real concerns the project has chosen not to address, captured he
 
 5. **Empty `sub` claim surfaces as 412 not 401.** RFC 7519 permits a literal empty-string `sub` (Keycloak does not emit one, but a non-Keycloak IdP could). The RS's `_principal_from_claims` defensively defaults `claims.get("sub", "")`, and the downstream `get_for_user(session, "")` path returns `412 reading_speed_unset` instead of failing authentication. Architecturally an empty `sub` should fail at the auth boundary. Authority: D67. Severity: low (theoretical; no current IdP triggers it).
 
-6. **Refresh-token rotation race under concurrent BFF calls.** Two concurrent BFF requests for the same session that both receive `401 invalid_token` from the RS will both call `_refresh_access_token`; Keycloak's single-use refresh-token rotation accepts the first; the second receives `400 invalid_grant`, which the client maps to session termination — clobbering the freshly-rotated tokens. A user making 2+ concurrent requests around the token-expiry boundary gets logged out. Real production risk under HTTP/2 multiplexing or slow networks. Fix: per-session `asyncio.Lock` (or DB-level `SELECT … FOR UPDATE` with re-read). Authority: D80. Severity: medium.
+6. **Refresh-token rotation race under concurrent BFF calls.** Two concurrent BFF requests for the same session that both receive `401 invalid_token` from the RS will both call `_refresh_access_token`; Keycloak's single-use refresh-token rotation accepts the first; the second receives `400 invalid_grant`, which the client maps to session termination — clobbering the freshly-rotated tokens. A user making 2+ concurrent requests around the token-expiry boundary gets logged out. Real production risk under HTTP/2 multiplexing or slow networks. Fix: DB-level `SELECT … FOR UPDATE` with re-read on the `sessions` row — this coordinates correctly across horizontally scaled BFF replicas. A per-process `asyncio.Lock` keyed by `session_id` is sufficient for a single-replica deployment but does not coordinate across replicas (each process has its own lock table), so the DB-level approach is preferred. Authority: D80. Severity: medium.
 
 7. **`httpx.AsyncClient` defaults — `follow_redirects=False` and per-call client.** The BFF's RS / Keycloak callers do not follow redirects; an intermediary that 301s `http://` to `https://` would surface as `_RefreshFailed("malformed_response")` → session deletion. Each call also constructs and tears down a fresh `AsyncClient`, defeating keep-alive. Authority: D83 (`follow_redirects=False`) + D82 (per-call clients; performance-relevant, security-relevant under sustained load). Severity: low (D83) / medium (D82).
 
