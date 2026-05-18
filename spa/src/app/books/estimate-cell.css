@@ -1,12 +1,60 @@
-.estimate-cell-button {
-  background: transparent;
+/* Primary affordance — mirrors `.book-form-submit` for visual parity with
+ * other primary buttons (Save in BookForm / SettingsPage). UX-DR8 / UX-DR14. */
+.estimate-cell-button--primary {
+  padding: var(--spacing-2) var(--spacing-3);
+  background: var(--color-accent);
+  color: #ffffff;
   border: none;
-  color: var(--color-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
   font: var(--text-body);
-  cursor: not-allowed;
-  padding: 0;
 }
 
-.estimate-cell-button:disabled {
+.estimate-cell-button--primary:hover {
+  background: var(--color-accent-hover);
+}
+
+.estimate-cell-button--primary:disabled {
   opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Formatted result — rendered verbatim from the wire `formatted` field. */
+.estimate-cell-result {
+  color: var(--color-text);
+  font: var(--text-body);
+  margin-right: var(--spacing-2);
+}
+
+/* Secondary text affordance — mirrors `.book-row-action` (Edit/Delete). */
+.estimate-cell-reestimate {
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 0;
+  font: var(--text-body);
+}
+
+.estimate-cell-reestimate:hover {
+  text-decoration: underline;
+}
+
+/* `reading_speed_unset` inline error with embedded `Settings` link. The
+ * shared `<app-error-message>` cannot project links — render this variant
+ * inline so we can host the `RouterLink`. Match the error-message visual
+ * style (color + font) so the two error variants look identical. */
+.estimate-cell-error {
+  margin: 0 0 var(--spacing-2) 0;
+  color: var(--color-error);
+  font: var(--text-small);
+}
+
+.estimate-cell-error-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.estimate-cell-error-link:hover {
+  text-decoration: underline;
 }
