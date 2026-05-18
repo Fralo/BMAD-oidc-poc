@@ -314,10 +314,22 @@ class ResourceServerClient:
             )
             raise RsUnavailable("rs_5xx_response", http_status=response.status_code)
 
-        # Parse body lazily; some statuses (rare here, but defensive)
-        # may return an empty body.
+        # An empty body is malformed for every RS endpoint we wire EXCEPT
+        # 401: OAuth 2.0 / RFC 6750 challenges legitimately omit a body, and
+        # the refresh-and-replay logic in ``_call_with_refresh`` consumes
+        # the bare (401, None) tuple. For 2xx / 412 / 403 / 422 the contract
+        # always carries either the success payload or the typed error
+        # envelope, so an empty body there is treated the same way CR10
+        # treats a non-dict 2xx body — an honest FR-ERROR-01 503 so the SPA
+        # never sees a JSON ``null`` from us.
         if not response.content:
-            return response.status_code, None
+            if response.status_code == 401:
+                return response.status_code, None
+            logger.warning(
+                "resource_server_unavailable cause=rs_empty_body http_status=%s",
+                response.status_code,
+            )
+            raise RsUnavailable("rs_empty_body", http_status=response.status_code)
         try:
             parsed = response.json()
         except ValueError:

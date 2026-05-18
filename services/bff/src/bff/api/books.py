@@ -256,8 +256,9 @@ async def estimate_for_book(
       2. Look up the book by `(sub, id)` BEFORE any RS call — cross-user
          and missing both collapse to 404 ``book_not_found``, and the RS
          is never called in that path (existence-leak guard + no fanout).
-      3. Forward ``pages`` to ``compute_estimate``. The RS body is then
-         forwarded verbatim (200 / 412 / 403 / 422).
+      3. Forward ``book.pages`` (from the row owned by the session sub —
+         the request body is intentionally ignored) to ``compute_estimate``.
+         The RS body is then forwarded verbatim (200 / 412 / 403 / 422).
       4. ``RsUnavailable`` → 503 ``resource_server_unavailable``;
          ``RsSessionTerminated`` → 401 with cookies optionally cleared.
     """

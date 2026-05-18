@@ -688,7 +688,52 @@ async def test_cr3_refresh_invalid_expires_in_treated_as_malformed(
 
 
 # CR10: RS 2xx with non-dict body → RsUnavailable (FR-ERROR-01 honest failure)
-# rather than forwarding `null` to the SPA.
+# rather than forwarding `null` to the SPA. The empty-body sibling tests are
+# below — empty body on 2xx / 412 / 403 / 422 is treated the same way; only
+# 401 is allowed to carry an empty body (RFC 6750 challenges).
+
+
+@respx.mock
+async def test_rs_200_with_empty_body_emits_rs_unavailable(
+    rsc: ResourceServerClient, session: AsyncSession
+) -> None:
+    session_row = _build_session(
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        access_token="fresh-at",
+    )
+    session.add(session_row)
+    await session.commit()
+
+    rs_url = settings.rs_base_url.rstrip("/") + "/v1/reading-speed"
+    # 200 with zero bytes — contract regression sibling to CR10's non-dict case.
+    respx.get(rs_url).mock(return_value=httpx.Response(200, content=b""))
+
+    with pytest.raises(RsUnavailable) as exc_info:
+        await rsc.get_reading_speed(session, session_row)
+    assert exc_info.value.cause == "rs_empty_body"
+    assert exc_info.value.http_status == 200
+
+
+@respx.mock
+async def test_rs_412_with_empty_body_emits_rs_unavailable(
+    rsc: ResourceServerClient, session: AsyncSession
+) -> None:
+    session_row = _build_session(
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        access_token="fresh-at",
+    )
+    session.add(session_row)
+    await session.commit()
+
+    rs_url = settings.rs_base_url.rstrip("/") + "/v1/reading-speed"
+    # 4xx with empty body — the contract envelope is missing; treat as
+    # honest 503 rather than forwarding `null` (errorCode would be lost).
+    respx.get(rs_url).mock(return_value=httpx.Response(412, content=b""))
+
+    with pytest.raises(RsUnavailable) as exc_info:
+        await rsc.get_reading_speed(session, session_row)
+    assert exc_info.value.cause == "rs_empty_body"
+    assert exc_info.value.http_status == 412
 
 
 @respx.mock
@@ -801,7 +846,7 @@ async def test_compute_estimate_happy_200_forwards_body(
 ) -> None:
     row = await _seed_session(session)
     client = _build_client()
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         rs_route = mock.post(_RS_ESTIMATE_URL).mock(
             return_value=httpx.Response(
                 200, json={"minutes": 1376, "formatted": "≈ 22 h 56 m"}
@@ -823,7 +868,7 @@ async def test_compute_estimate_rs_412_forwarded(
         "message": "Reading speed not set for this user",
         "detail": None,
     }
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         rs_route = mock.post(_RS_ESTIMATE_URL).mock(
             return_value=httpx.Response(412, json=envelope)
         )
@@ -843,7 +888,7 @@ async def test_compute_estimate_rs_403_forwarded(
         "message": "Required scope is missing",
         "detail": None,
     }
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(
             return_value=httpx.Response(403, json=envelope)
         )
@@ -862,7 +907,7 @@ async def test_compute_estimate_rs_422_forwarded(
         "message": "Request validation failed",
         "detail": [{"loc": ["body", "pages"], "msg": "ge", "type": "value_error"}],
     }
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(
             return_value=httpx.Response(422, json=envelope)
         )
@@ -877,7 +922,7 @@ async def test_compute_estimate_rs_5xx_raises_unavailable(
 ) -> None:
     row = await _seed_session(session)
     client = _build_client()
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         rs_route = mock.post(_RS_ESTIMATE_URL).mock(
             return_value=httpx.Response(rs_status)
         )
@@ -905,7 +950,7 @@ async def test_compute_estimate_transport_error_raises_unavailable(
 ) -> None:
     row = await _seed_session(session)
     client = _build_client()
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         rs_route = mock.post(_RS_ESTIMATE_URL).mock(side_effect=exc_factory())  # type: ignore[operator]
         with pytest.raises(RsUnavailable) as exc_info:
             await client.compute_estimate(session, row, pages=100)
@@ -928,7 +973,7 @@ async def test_compute_estimate_refresh_and_replay_happy(
             return httpx.Response(401, json={"errorCode": "session_expired"})
         return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
 
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(side_effect=_rs)
         token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
             return_value=httpx.Response(
@@ -954,7 +999,7 @@ async def test_compute_estimate_refresh_failure_terminates_session(
 ) -> None:
     row = await _seed_session(session)
     client = _build_client()
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
         mock.post(_KEYCLOAK_TOKEN_URL).mock(
             return_value=httpx.Response(400, json={"error": "invalid_grant"})
@@ -973,7 +1018,7 @@ async def test_compute_estimate_refresh_succeeds_retry_still_401(
 ) -> None:
     row = await _seed_session(session)
     client = _build_client()
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         rs_route = mock.post(_RS_ESTIMATE_URL).mock(return_value=httpx.Response(401))
         token_route = mock.post(_KEYCLOAK_TOKEN_URL).mock(
             return_value=httpx.Response(
@@ -990,18 +1035,23 @@ async def test_compute_estimate_refresh_succeeds_retry_still_401(
     assert exc_info.value.clear_cookies is False
     assert rs_route.call_count == 2
     assert token_route.call_count == 1
-    # Session row NOT deleted.
+    # Session row NOT deleted, and AC9 step 3a (rotated tokens persisted)
+    # holds even though the retry then 401'd.
     found = (
         await session.execute(select(SessionRow).where(SessionRow.id == row.id))
     ).first()
     assert found is not None
+    await session.refresh(row)
+    assert row.access_token == "new-at"
+    assert row.refresh_token == "new-rt"
 
 
 async def test_compute_estimate_no_sub_in_url_query_or_body(
     session: AsyncSession, rs_settings: None
 ) -> None:
-    """NFR6: ``sub`` MUST NOT appear in URL path, query, or body."""
-    row = await _seed_session(session, access_token="bearer-xyz")
+    """NFR6: ``sub`` MUST NOT appear in URL path, query, body, or headers."""
+    sub = "user-a"  # matches _seed_session default
+    row = await _seed_session(session, sub=sub, access_token="bearer-xyz")
     client = _build_client()
     captured: list[httpx.Request] = []
 
@@ -1009,7 +1059,7 @@ async def test_compute_estimate_no_sub_in_url_query_or_body(
         captured.append(request)
         return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
 
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
         await client.compute_estimate(session, row, pages=688)
 
@@ -1021,7 +1071,9 @@ async def test_compute_estimate_no_sub_in_url_query_or_body(
 
     parsed_body = _json.loads(request.content)
     assert parsed_body == {"pages": 688}
-    assert "sub" not in parsed_body
+    # NFR6: sub MUST NOT leak via any header value either. Body equality
+    # above already pins "sub not in body".
+    assert not any(sub in v for v in request.headers.values())
     assert request.headers["authorization"] == "Bearer bearer-xyz"
 
 
@@ -1039,7 +1091,7 @@ async def test_compute_estimate_post_body_pages_is_int(
         captured.append(request.content)
         return httpx.Response(200, json={"minutes": 100, "formatted": "≈ 1 h 40 m"})
 
-    with respx.mock(assert_all_called=False) as mock:
+    with respx.mock() as mock:
         mock.post(_RS_ESTIMATE_URL).mock(side_effect=_capture)
         await client.compute_estimate(session, row, pages=600)
 
