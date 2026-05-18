@@ -17,17 +17,17 @@ Before starting, confirm:
 
 ## Known setup workarounds (apply before step 4)
 
-Story 5.4's Mode-B smoke surfaced three doc-vs-code drifts that an operator following the bare epic AC + README setup will trip over. Apply these before running step 4. All three are captured as defers in `_bmad-output/implementation-artifacts/deferred-work.md` — D136 / D137 / D138.
+Story 5.4's Mode-B smoke surfaced three doc-vs-code drifts that an operator following the bare epic AC + README setup will trip over. Apply these before running step 4. All three are captured as defers in `_bmad-output/implementation-artifacts/deferred-work.md` — D140 / D141 / D142.
 
-1. **D136** — Bare `docker compose up` does not start the default profile. All three services declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. Use the explicit form for step 4: `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). Same for step 13's `docker compose stop|start resource-server` — prefix with `--profile default`.
-2. **D137** — Per-service `.env` files are required in addition to the repo-root `.env`. Step 2 must include:
+1. **D140** — Bare `docker compose up` does not start the default profile. All three services declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. Use the explicit form for step 4: `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). Same for step 13's `docker compose stop|start resource-server` — prefix with `--profile default`.
+2. **D141** — Per-service `.env` files are required in addition to the repo-root `.env`. Step 2 must include:
    ```bash
    cp .env.example .env
    cp services/bff/.env.example services/bff/.env
    cp services/resource-server/.env.example services/resource-server/.env
    ```
    Without the second and third copies, Compose errors with `env file ../services/bff/.env not found` before any service starts.
-3. **D138** — Default profile leaves `AUTH_TYPE=none` on the Resource Server. `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only the e2e overlay activates it. Without flipping it on for the default profile, RS scope enforcement is bypassed (synthetic admin) — J3 / J4 / J6 journeys would functionally pass but the prod-shaped auth surface is auth-degraded. Workaround:
+3. **D142** — Default profile leaves `AUTH_TYPE=none` on the Resource Server. `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only the e2e overlay activates it. Without flipping it on for the default profile, RS scope enforcement is bypassed (synthetic admin) — J3 / J4 / J6 journeys would functionally pass but the prod-shaped auth surface is auth-degraded. Workaround:
    ```bash
    sed -i.bak 's/^#AUTH_TYPE=oidc_bearer/AUTH_TYPE=oidc_bearer/' services/resource-server/.env
    ```
@@ -62,12 +62,12 @@ before step 4 (or steps 4 and 13 will fail / silently auth-degrade).**
 - **Mode chosen:** **Mode B** (programmatic agent with operator follow-up for browser-required steps). Reason: dev agent has no desktop-browser capability; cannot click through the OAuth round-trip or interact with SPA controls.
 - **Anomalies:**
   - **PENDING — operator browser walk-through required:** steps 6, 7 (J1), 8 (J2), 9 (J4), 10 (J3 happy), 11 (J3 precondition), 12 (J5), 13 (J6). The dev agent verified the SPA bundle is served end-to-end (step 6 surrogate probe), the OAuth redirect is wired (J1 surrogate — full PKCE params visible in the 302 Location), unauthenticated `/api/me` returns 401 with the project error envelope, and the RS killswitch path used by step 13 works (`docker compose stop resource-server` + healthcheck-recovery on `docker compose start resource-server` in ~6 s). The eight pending steps require an operator with a real desktop browser at `http://localhost:8000`.
-  - **D136 — Bare `docker compose up` does not start the default profile.** All three services in `compose/infra.yml` + `compose/app.yml` declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. The architecture (`_bmad-output/planning-artifacts/architecture.md:1294`), the README (this file's neighbor, lines 4 + 30), and the epic AC for Story 5.4 step 4 all say `docker compose up` (no flag). Actual behavior on this host: bare `docker compose up` exits with `no service selected`. The canonical form is `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). The smoke checklist above pins the explicit form. See deferred-work.md → D136.
-  - **D137 — Per-service `.env` files are required, not just the repo-root `.env`.** `compose/app.yml` declares `env_file: ../services/bff/.env` and `../services/resource-server/.env` on the BFF and RS services. Bringing up the default profile with only the repo-root `.env` (the model `.env.example`'s header describes) errors out with `env file ../services/bff/.env not found`. Operator must additionally `cp services/bff/.env.example services/bff/.env` and `cp services/resource-server/.env.example services/resource-server/.env`. See deferred-work.md → D137.
-  - **D138 — Default profile leaves `AUTH_TYPE=none` on the Resource Server.** `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only `compose/app.e2e.yml` flips it on. Under the default profile, RS runs in `AUTH_TYPE=none` (archetype synthetic-admin mode — JWT signature / scope / issuer / audience NOT validated). J3 / J4 / J6 journeys would functionally pass but the **scope-enforcement surface that PRD §8 + Story 5.2 §5 attest to is not exercised** — the prod-shaped smoke is auth-degraded vs. e2e profile. See deferred-work.md → D138.
-  - **D139 — `/api/me` 401 envelope `message` wording.** Actual: `Session expired or not present`. Acceptable as a 401 surface; minor wording drift from Story 5.2's documented envelope semantics. Not a defect; logged for documentation consistency only. See deferred-work.md → D139.
+  - **D140 — Bare `docker compose up` does not start the default profile.** All three services in `compose/infra.yml` + `compose/app.yml` declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. The architecture (`_bmad-output/planning-artifacts/architecture.md:1294`), the README (this file's neighbor, lines 4 + 30), and the epic AC for Story 5.4 step 4 all say `docker compose up` (no flag). Actual behavior on this host: bare `docker compose up` exits with `no service selected`. The canonical form is `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). The smoke checklist above pins the explicit form. See deferred-work.md → D140.
+  - **D141 — Per-service `.env` files are required, not just the repo-root `.env`.** `compose/app.yml` declares `env_file: ../services/bff/.env` and `../services/resource-server/.env` on the BFF and RS services. Bringing up the default profile with only the repo-root `.env` (the model `.env.example`'s header describes) errors out with `env file ../services/bff/.env not found`. Operator must additionally `cp services/bff/.env.example services/bff/.env` and `cp services/resource-server/.env.example services/resource-server/.env`. See deferred-work.md → D141.
+  - **D142 — Default profile leaves `AUTH_TYPE=none` on the Resource Server.** `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only `compose/app.e2e.yml` flips it on. Under the default profile, RS runs in `AUTH_TYPE=none` (archetype synthetic-admin mode — JWT signature / scope / issuer / audience NOT validated). J3 / J4 / J6 journeys would functionally pass but the **scope-enforcement surface that PRD §8 + Story 5.2 §5 attest to is not exercised** — the prod-shaped smoke is auth-degraded vs. e2e profile. See deferred-work.md → D142.
+  - **D143 — `/api/me` 401 envelope `message` wording.** Actual: `Session expired or not present`. Acceptable as a 401 surface; minor wording drift from Story 5.2's documented envelope semantics. Not a defect; logged for documentation consistency only. See deferred-work.md → D143.
 - **Optional screenshots:** none captured (Mode B has no browser surface to screenshot).
-- **Verdict:** **PASS WITH ANOMALIES** — Mode-B partial-smoke close. Steps 1–5 + the 3 HTTP probes + the RS killswitch surrogate are all green at baseline `fb751ec`. Steps 6–13 require operator follow-up via real desktop browser before the story moves to `done`. Four new defers (D136-D139) logged; D136 + D137 + D138 will block a clean Mode-A walk-through unless the operator applies the workarounds above (which mirror what the smoke checklist now spells out explicitly).
+- **Verdict:** **PASS WITH ANOMALIES** — Mode-B partial-smoke close. Steps 1–5 + the 3 HTTP probes + the RS killswitch surrogate are all green at baseline `fb751ec`. Steps 6–13 require operator follow-up via real desktop browser before the story moves to `done`. Four new defers (D140-D143) logged; D140 + D141 + D142 will block a clean Mode-A walk-through unless the operator applies the workarounds above (which mirror what the smoke checklist now spells out explicitly).
 
 ### Mode-B HTTP-probe transcript (steps 1–5 + 3 probes + J6 surrogate)
 
@@ -78,12 +78,12 @@ fb751ec7f67b866450754997e449f79efbd763cb
 $ docker compose down -v
 Warning: No resource found to remove for project "e5s4".
 
-$ # Setup step (D137 workaround): copy per-service .env files in addition to the root .env.
+$ # Setup step (D141 workaround): copy per-service .env files in addition to the root .env.
 $ cp .env.example .env
 $ cp services/bff/.env.example services/bff/.env
 $ cp services/resource-server/.env.example services/resource-server/.env
 
-$ # Setup step (D138 workaround): enable oidc_bearer on the RS for the default profile.
+$ # Setup step (D142 workaround): enable oidc_bearer on the RS for the default profile.
 $ sed -i.bak 's/^#AUTH_TYPE=oidc_bearer/AUTH_TYPE=oidc_bearer/' services/resource-server/.env
 
 $ docker compose --profile default up --build -d
