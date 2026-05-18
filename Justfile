@@ -1,23 +1,28 @@
 # Top-level task runner for the Reading Time Estimator stack.
 # Usage: just <recipe>   (requires https://github.com/casey/just)
 #
-# This Justfile owns the multi-file compose invocations that operators
-# must NOT forget. The classic foot-gun (Story 1.12 Patch P1) is that
-# `docker compose --profile e2e up` runs WITHOUT `compose/app.e2e.yml`
-# because compose's top-level `include:` directive is unconditional —
-# the `${TEST_RESET_TOKEN:?...}` fail-fast in app.e2e.yml would fire on
-# every default-profile invocation. Compose's `include:` accepts a
-# `profiles:` field but it is silently ignored (verified against
-# compose v5.1.3) so we cannot make the overlay self-activating; the
-# next-smallest correct fix is to put the `-f compose/app.e2e.yml`
-# pattern behind a named recipe so it's impossible to forget.
+# Profile model (D140 follow-up): bare `docker compose up` brings up the
+# baseline stack (Keycloak + BFF + RS). Only the `e2e` profile scopes its
+# own service — the Playwright runner. The Justfile owns the multi-file
+# compose invocations operators must NOT forget. The classic foot-gun
+# (Story 1.12 Patch P1) is that `docker compose --profile e2e up` runs
+# WITHOUT `compose/app.e2e.yml` because compose's top-level `include:` is
+# unconditional — the `${TEST_RESET_TOKEN:?...}` fail-fast in app.e2e.yml
+# would fire on every invocation. Compose's `include:` accepts a
+# `profiles:` field but it is silently ignored, so we cannot make the
+# overlay self-activating; the smallest correct fix is to put the
+# `-f compose/app.e2e.yml` pattern behind a named recipe so it's
+# impossible to forget.
 
 default:
     @just --list
 
-# Validate the default profile stack (Keycloak + BFF + RS + SPA).
-default-config:
-    docker compose --profile default config
+# Validate the baseline stack (Keycloak + BFF + RS; SPA baked into BFF image).
+# D140 follow-up: no `--profile default` flag needed — the retired profiles
+# folded into the unconditional baseline; only the `e2e` profile still scopes
+# its own service (the playwright runner).
+config:
+    docker compose config
 
 # Validate the e2e profile stack with the test-reset endpoint enabled.
 # TEST_RESET_TOKEN must be set in the environment or the repo-root .env.

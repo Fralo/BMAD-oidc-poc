@@ -132,8 +132,8 @@ class AppSettings(BaseSettings):
             if not value or not value.strip():
                 msg = (
                     f"{env_name} is required and must be non-empty "
-                    "(set it in services/resource-server/.env or the "
-                    "deployment env)"
+                    "(set it in compose/app.yml's resource-server "
+                    "`environment:` block or the deployment env)"
                 )
                 raise ValueError(msg)
         return self

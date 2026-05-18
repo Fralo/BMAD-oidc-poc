@@ -1,7 +1,7 @@
-# Smoke Run — default profile (SPA-in-BFF production build)
+# Smoke Run — baseline stack (SPA-in-BFF production build)
 
-**Profile:** `default` (full topology: Keycloak + BFF [SPA baked in] + Resource Server)
-**Build form:** `docker compose --profile default up --build` (no `-f` overlay, no `--profile e2e`; the explicit `--profile default` flag is required — see "Known setup workarounds" → D140 for the rationale, but in short: on Compose v5.1.3 (this host's `docker compose version` reading), bare `docker compose up` returns `no service selected` despite Story 5.3's README claim that the `default` profile auto-activates)
+**Profile:** none — baseline stack is unconditional (Keycloak + BFF [SPA baked in] + Resource Server). The D140/D141 follow-up (baseline `5f9b0f7`) retired the `default` / `dev` profile names.
+**Build form:** `docker compose up --build` (no `--profile` flag, no `-f` overlay).
 **Browser:** any modern desktop browser (Chrome, Firefox, Safari, Edge). No mobile / responsive testing — PRD §4 explicitly excludes responsive layout.
 **Reference:** PRD §10 J1–J6 (`_bmad-output/planning-artifacts/PRD.md` lines 95–102); epic AC at `_bmad-output/planning-artifacts/epics.md` lines 1892–1933.
 
@@ -12,37 +12,35 @@ Before starting, confirm:
 - Docker + Docker Compose v2.20+ installed (verify: `docker compose version`).
 - The repo is cloned locally; `cd` is the repo root.
 - `tools/fastapi-archetype/` exists (the BFF and RS reference the archetype's directory structure; gitignored).
-- `.env` exists at the repo root (copied from `.env.example`); `KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `TEST_RESET_TOKEN` are set. The last is unused by the default profile but must still be present because Compose may parse the overlay file for variable interpolation on some invocations.
+- `.env` exists at the repo root (copied from `.env.example`); `KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `TEST_RESET_TOKEN` are set. The last is unused by the baseline stack but must still be present because Compose may parse the overlay file for variable interpolation on some invocations.
 - No prior stack is running on ports 8000 / 8080 / 9000 (verify: `lsof -iTCP:8000,8080,9000 -sTCP:LISTEN` returns empty).
 
 ## Known setup workarounds (apply before step 4)
 
-Story 5.4's Mode-B smoke surfaced three doc-vs-code drifts that an operator following the bare epic AC + README setup will trip over. Apply these before running step 4. All three are captured as defers in `_bmad-output/implementation-artifacts/deferred-work.md` — D140 / D141 / D142.
+D140 and D141 (originally surfaced by Story 5.4's Mode-B smoke) were closed by the D140/D141 follow-up at baseline `5f9b0f7`. Only D142 remains live for this smoke procedure.
 
-1. **D140** — Bare `docker compose up` does not start the default profile. All three services declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. Use the explicit form for step 4: `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). Same for step 13's `docker compose stop|start resource-server` — prefix with `--profile default`.
-2. **D141** — Per-service `.env` files are required in addition to the repo-root `.env`. Step 2 must include:
+1. **D140 — CLOSED.** Bare `docker compose up` now activates the baseline stack (Keycloak + BFF + RS). The retired `default` / `dev` profile names were dropped; only the `e2e` profile remains, scoping the Playwright runner.
+2. **D141 — CLOSED.** The root `.env` is now the single canonical entry point. Per-service `services/<svc>/.env` files were retired; topology constants moved into per-service `environment:` blocks in `compose/app.yml`.
+3. **D142 — LIVE.** Baseline stack leaves `AUTH_TYPE=none` on the Resource Server (no `AUTH_TYPE` in the RS `environment:` block in `compose/app.yml`, defaulting to the archetype's `none`); only the `compose/app.e2e.yml` overlay activates `oidc_bearer`. Under the baseline stack, RS scope enforcement is bypassed (synthetic admin) — J3 / J4 / J6 journeys functionally pass but the prod-shaped auth surface is auth-degraded. Workaround until D142 is closed:
    ```bash
-   cp .env.example .env
-   cp services/bff/.env.example services/bff/.env
-   cp services/resource-server/.env.example services/resource-server/.env
-   ```
-   Without the second and third copies, Compose errors with `env file ../services/bff/.env not found` before any service starts.
-3. **D142** — Default profile leaves `AUTH_TYPE=none` on the Resource Server. `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only the e2e overlay activates it. Without flipping it on for the default profile, RS scope enforcement is bypassed (synthetic admin) — J3 / J4 / J6 journeys would functionally pass but the prod-shaped auth surface is auth-degraded. Workaround:
-   ```bash
-   sed -i.bak 's/^#AUTH_TYPE=oidc_bearer/AUTH_TYPE=oidc_bearer/' services/resource-server/.env
+   # In compose/app.yml, in the resource-server `environment:` block, add:
+   #   AUTH_TYPE: oidc_bearer
+   # Then re-up the stack.
    ```
 
 ## Checklist
 
 The 13 steps below are the operator-driven walk-through. Each is a single `[ ]`
 checkbox the developer flips to `[x]` after completing it against a real
-desktop browser at `http://localhost:8000`. **Apply the three workarounds above
-before step 4 (or steps 4 and 13 will fail / silently auth-degrade).**
+desktop browser at `http://localhost:8000`. **Apply the D142 workaround above
+before step 4 to exercise real scope enforcement (otherwise the stack runs
+auth-degraded — still functionally green but the security review's
+attestations are not actually exercised).**
 
 1. [x] Fresh clone of the repo (or `git clean -xdf` from the repo root to mimic a clean tree — careful: this wipes ignored files). *(Mode-B dev-pass: verified at baseline `fb751ec`.)*
-2. [x] Setup per README: archetype clone (`tools/fastapi-archetype/`), `.env` from `.env.example` with the four required keys populated. *(Mode-B dev-pass: per-service `.env` files also copied per the D141 workaround.)*
+2. [x] Setup per README: archetype clone (`tools/fastapi-archetype/`), `.env` from `.env.example` with the four required keys populated. *(Mode-B dev-pass at `fb751ec`: per-service `.env` files also copied per the then-live D141 workaround — no longer needed at `5f9b0f7+`.)*
 3. [x] `docker compose down -v` to clear any prior `bff_data` / `rs_data` named volumes (idempotent — exits 0 even when nothing was running). *(Mode-B dev-pass: idempotent return — no prior project state.)*
-4. [x] `docker compose --profile default up --build` (default profile — explicit `--profile default` flag per D140, no `-f` overlay). Run in foreground OR `-d` for detached. *(Mode-B dev-pass: `-d` detached.)*
+4. [x] `docker compose up --build` (baseline stack — no `--profile` flag, no `-f` overlay). Run in foreground OR `-d` for detached. *(Mode-B dev-pass at `fb751ec`: used `docker compose --profile default up --build -d`, the then-live D140 workaround.)*
 5. [x] Wait for all healthchecks. Verify via `docker compose ps`: `keycloak`, `bff`, `resource-server` all show `(healthy)`. Start period 30s; observed warm-cache healthy-time on this host was 32–42 s post-start (well inside the 90–120 s "typical" envelope previously documented). *(Mode-B dev-pass: poll loop until all three healthy; transcript below.)*
 6. [ ] Open `http://localhost:8000` in a desktop browser. The SPA bootstraps; an unauthenticated user lands on `/login` (the auth guard bounces from `/books`).
 7. [ ] **J1 — First-time login.** Click "Log in" → browser is redirected to `http://localhost:8080/realms/bmad-books/protocol/openid-connect/auth?...` (Keycloak login form). Enter `testuser` / `testpassword` → Keycloak submits → returns to `http://localhost:8000/books` with the identity visible in the top chrome (username or initial visible).
@@ -54,6 +52,8 @@ before step 4 (or steps 4 and 13 will fail / silently auth-degrade).**
 13. [ ] **J6 — Resource server unavailable.** Log in again as `testuser` / `testpassword` (Keycloak may have an active SSO session and skip the password prompt; that is acceptable). On `/books`, in another terminal run `docker compose stop resource-server` → the RS container goes down (`docker compose ps` shows `resource-server` as `Exited`). Back in the browser on `/books`, click "Estimate" on any book (a fresh row if needed) → the row shows the error copy `Service unavailable — try again shortly` (rendered in the error color — typically a red-ish foreground per the SPA's error-message component; the byte string is exported as `ESTIMATE_CELL_J6_COPY` at `estimate-cell.ts:27`). Run `docker compose start resource-server` → wait for the RS healthcheck to flip back to `(healthy)` (`docker compose ps`). Back in the browser, click "Estimate" again on the same row → a real formatted duration appears (the prior error state clears).
 
 ## Run Record
+
+> **Historical record — frozen at commit `fb751ec`.** This Run Record captures the Mode-B smoke at the moment it was performed. D140 and D141 cited below as anomalies have since been closed by the D140/D141 follow-up at baseline `5f9b0f7`; D142 remains live. The transcript and command forms below reflect the then-current per-service-`.env` + `--profile default` model, not today's baseline-stack model.
 
 - **Run date:** 2026-05-18
 - **Commit SHA:** `fb751ec` (full SHA `fb751ec7f67b866450754997e449f79efbd763cb`; merge commit for Story 5.2; `git rev-parse HEAD` at smoke time).
@@ -146,7 +146,7 @@ $ docker compose --profile default down
 
 When an operator completes the browser walk-through:
 
-1. Bring the stack back up with the same `docker compose --profile default up --build` form (volumes were preserved at tear-down so a re-`down -v` is recommended for a true fresh-state walk-through).
+1. Bring the stack back up with bare `docker compose up --build` (post-D140/D141 follow-up at baseline `5f9b0f7`+; the historical `--profile default --build` form above was the `fb751ec` workaround, now retired). Volumes were preserved at tear-down so a re-`down -v` is recommended for a true fresh-state walk-through.
 2. Walk through each `[ ]` step 6–13 in a desktop browser at `http://localhost:8000`.
 3. For each completed step, flip `[ ]` → `[x]` in the Checklist section above.
 4. If a step deviates from the documented behavior, add a per-step entry under Anomalies with the observed deviation and any defer ID logged.

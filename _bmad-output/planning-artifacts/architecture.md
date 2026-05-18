@@ -1280,18 +1280,18 @@ bmad-books/                                      # repo root (monorepo)
 
 ```bash
 # Terminal 1 — backend + infra
-docker compose --profile dev up
+docker compose up
 
 # Terminal 2 — frontend with HMR
 cd spa && npm ci && ng serve  # :4200, proxies /auth, /api, /v1 → BFF :8000
 ```
 
-`docker compose --profile dev up` brings up Keycloak + BFF + RS; the SPA is excluded so `ng serve` provides HMR. Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation.
+`docker compose up` brings up Keycloak + BFF + RS (the baseline stack — D140 follow-up retired the `dev` / `default` profile names). The BFF also serves the baked SPA at `/`, but the dev workflow ignores it in favor of `ng serve` on `:4200` for HMR. Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation.
 
 **Full stack (production-shaped):**
 
 ```bash
-docker compose up   # default profile — full stack including SPA in BFF image
+docker compose up   # full stack — Keycloak + BFF + RS; SPA baked into the BFF image
 ```
 
 The BFF's multi-stage Dockerfile builds the SPA in a Node stage and copies `dist/` into the BFF image. Only the BFF container exposes the user-facing port.

@@ -2,9 +2,11 @@
 # Included from the top-level docker-compose.yml via the `include:` directive.
 # This file owns infrastructure-tier services.
 #
-# Story 1.2 introduces Keycloak with its realm-as-code baked in. The service is
-# attached to all three profiles (default, dev, e2e) — `dev` only excludes the
-# SPA per AR26, not the auth server.
+# Story 1.2 introduces Keycloak with its realm-as-code baked in. D140 (smoke
+# follow-up): no `profiles:` field — keycloak is part of the unconditional
+# baseline stack so bare `docker compose up` brings it up. The retired
+# `default` / `dev` profiles produced identical containers; only the `e2e`
+# profile still scopes its own service (the playwright runner in app.yml).
 services:
   keycloak:
     build:
@@ -54,5 +56,4 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    profiles: [default, dev, e2e]
     restart: unless-stopped

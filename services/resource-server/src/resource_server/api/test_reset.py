@@ -14,7 +14,7 @@ The route is registered ONLY when ALL THREE gates pass:
    ``"True"`` / ``"1"`` / ``"yes"`` / ``"on"`` to ``True``).
 2. ``TEST_RESET_TOKEN`` is non-empty after ``.strip()``.
 3. ``TEST_RESET_TOKEN.strip() != "change-me"`` — the archetype default
-   in ``services/resource-server/.env.example`` ships as ``"change-me"``;
+   in the repo-root ``.env.example`` ships as ``"change-me"``;
    accepting that as a real token would let a misconfigured production
    stack be hosed by anyone reading the public template. This is the
    RS-specific defense-in-depth step on top of the BFF Story 1.12 gate.

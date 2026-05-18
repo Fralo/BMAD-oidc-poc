@@ -6,15 +6,24 @@
 # multi-stage Dockerfile (Node build stage → Python runtime stage); there is
 # no separate `spa` service.
 #
-# Story 1.12: the `e2e` profile flips `ENABLE_TEST_RESET=true` for this
-# service via the `compose/app.e2e.yml` OVERRIDE file, applied with the
+# D140/D141 (smoke follow-up): `bff` and `resource-server` have no `profiles:`
+# field — they are part of the unconditional baseline so bare
+# `docker compose up` brings them up. The retired `default` / `dev` profiles
+# produced identical containers. The dev workflow (`ng serve` on the host
+# alongside this stack) does not need its own compose profile. Only the `e2e`
+# profile still scopes a service — the `playwright` runner below.
+# D141: per-service `services/<svc>/.env` files retired; both services now
+# load `../.env` (the repo-root single source) and bake topology constants
+# (OIDC URLs, base URLs, DB paths, APP_NAME) into `environment:` blocks here.
+#
+# Story 1.12: the `e2e` profile flips `ENABLE_TEST_RESET=true` for these
+# services via the `compose/app.e2e.yml` OVERRIDE file, applied with the
 # explicit `-f` flag pattern. That override is NOT in `include:` because
 # compose's `include:` is unconditional (its nominal `profiles:` field
 # is silently ignored — verified against compose v5.1.3) so an unconditional
-# include would interpolate `${TEST_RESET_TOKEN:?...}` even on the
-# `default` profile and also leak `ENABLE_TEST_RESET=true` into the
-# non-e2e stack. The repo-root `Justfile` wraps the `-f`-flag invocation
-# behind `just e2e-up` / `just e2e-config` so operators cannot forget it.
+# include would interpolate `${TEST_RESET_TOKEN:?...}` even outside the e2e
+# profile. The repo-root `Justfile` wraps the `-f`-flag invocation behind
+# `just e2e-up` / `just e2e-config` so operators cannot forget it.
 services:
   bff:
     build:
@@ -29,10 +38,33 @@ services:
     # the `compose/app.e2e.yml` overlay (applied with `-f` flag, NOT via
     # `include:` — see file header for rationale). The `resetState` helper
     # from Story 1.11 authenticates against POST /v1/test/reset using that
-    # token; calls to the endpoint on the default/dev profiles return 404
+    # token; calls to the endpoint outside the e2e profile return 404
     # (route not mounted when ENABLE_TEST_RESET is absent/false).
     env_file:
-      - ../services/bff/.env
+      - ../.env
+    environment:
+      # D141: topology constants previously in services/bff/.env now live
+      # here. The root `.env` carries only operator-edited values (secrets +
+      # overrides); compose-network URLs, ports, and archetype defaults are
+      # not operator-tunable so they belong with the service definition.
+      APP_NAME: bff
+      DEBUG: "false"
+      BFF_DATABASE_URL: sqlite+aiosqlite:////data/bff.db
+      BFF_BASE_URL: http://localhost:8000
+      RS_BASE_URL: http://resource-server:8000
+      # BFF's OIDC_ISSUER_URL is the back-channel URL used by Authlib for
+      # token exchange against Keycloak via compose DNS. The RS service uses
+      # a different (host-facing) value below — same env var name, different
+      # correct value per consumer, because Keycloak's KC_HOSTNAME=localhost
+      # makes the signed `iss` claim host-facing while back-channel calls
+      # need the compose-DNS hostname.
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/bmad-books
+      OIDC_JWKS_URL: http://keycloak:8080/realms/bmad-books/protocol/openid-connect/certs
+      OIDC_AUDIENCE: bmad-books-resource-server
+      OIDC_CLIENT_ID: bmad-books-bff
+      OIDC_AUTHORIZE_URL_BROWSER: http://localhost:8080/realms/bmad-books
+      BFF_SESSION_COOKIE_NAME: bff_session
+      BFF_CSRF_COOKIE_NAME: csrf_token
     ports:
       # Expose :8000 to the host. Required for the browser-side OIDC redirect
       # (Story 1.5) to land on the BFF at http://localhost:8000/auth/callback
@@ -54,21 +86,19 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    profiles: [default, dev, e2e]
     restart: unless-stopped
 
   resource-server:
     # Story 3.1: Resource Server. Internal-only — the BFF reaches it at
     # http://resource-server:8000 via Docker DNS. NO `ports:` block is
     # published to the host (architecture §F3 + §I6: only the BFF container
-    # exposes a user-facing port). Story 3.6 widened the profiles list to
-    # `[default, dev, e2e]`; under the e2e profile the `compose/app.e2e.yml`
-    # overlay activates `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` (for
-    # `POST /v1/test/reset`, Story 3.4) and flips `AUTH_TYPE=oidc_bearer`
-    # (Story 3.2 plugin). The real `killRs`/`startRs` helper implementations
-    # live in `e2e/fixtures/services.ts` and shell out to `docker compose
-    # stop|start resource-server` via the host docker socket bound into the
-    # playwright runner.
+    # exposes a user-facing port). Under the `e2e` profile the
+    # `compose/app.e2e.yml` overlay activates `ENABLE_TEST_RESET=true` +
+    # `TEST_RESET_TOKEN` (for `POST /v1/test/reset`, Story 3.4) and flips
+    # `AUTH_TYPE=oidc_bearer` (Story 3.2 plugin). The real `killRs`/`startRs`
+    # helper implementations live in `e2e/fixtures/services.ts` and shell out
+    # to `docker compose stop|start resource-server` via the host docker
+    # socket bound into the playwright runner.
     #
     # The BFF's existing `depends_on` is intentionally NOT modified — per
     # FR-ERROR-01 / J6, when the RS is down the BFF must surface
@@ -84,7 +114,22 @@ services:
       dockerfile: services/resource-server/Dockerfile
     container_name: resource-server
     env_file:
-      - ../services/resource-server/.env
+      - ../.env
+    environment:
+      # D141: topology constants previously in services/resource-server/.env
+      # now live here. RS's OIDC_ISSUER_URL is the host-facing value (matches
+      # the `iss` claim Keycloak signs into tokens under KC_HOSTNAME=localhost
+      # — see compose/infra.yml:19). OIDC_JWKS_URL is back-channel because
+      # JWKS is fetched server-side via compose DNS. AUTH_TYPE is left at the
+      # archetype default (none); the `e2e` overlay flips it to `oidc_bearer`
+      # for scope-enforcement coverage. D142 is the deferred follow-up for
+      # flipping AUTH_TYPE=oidc_bearer on the default stack.
+      APP_NAME: resource-server
+      DEBUG: "false"
+      RS_DATABASE_URL: sqlite+aiosqlite:////data/rs.db
+      OIDC_ISSUER_URL: http://localhost:8080/realms/bmad-books
+      OIDC_JWKS_URL: http://keycloak:8080/realms/bmad-books/protocol/openid-connect/certs
+      OIDC_AUDIENCE: bmad-books-resource-server
     volumes:
       - rs_data:/data
     depends_on:
@@ -99,7 +144,6 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
-    profiles: [default, dev, e2e]
     restart: unless-stopped
 
   playwright:

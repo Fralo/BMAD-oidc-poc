@@ -79,7 +79,7 @@ The session cookie carries the following attributes, set verbatim at `services/b
 | Attribute | Value | Authority |
 |-----------|-------|-----------|
 | `HttpOnly` | `True` | architecture A4 (line 350) — prevents JavaScript / XSS read |
-| `Secure` | environment-controlled by `BFF_SESSION_COOKIE_SECURE` | architecture A4 — `True` in prod; `False` under the dev profile to allow `http://localhost` |
+| `Secure` | environment-controlled by `BFF_SESSION_COOKIE_SECURE` | architecture A4 — `True` in prod; `False` for the local baseline stack to allow `http://localhost` |
 | `SameSite` | `Lax` | architecture A4 — `Strict` would block the Keycloak post-callback redirect from carrying the cookie |
 | `Path` | `/` | architecture A4 — entire BFF origin |
 | Value form | opaque 256-bit token (`secrets.token_urlsafe(32)`) | architecture A4 — "not a JWT"; the row is the source of truth |

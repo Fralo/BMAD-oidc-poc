@@ -9,21 +9,21 @@ A personal reading-list application that lets users track books they want to rea
 - **[`uv`](https://docs.astral.sh/uv/)** — backend dependency manager (the FastAPI archetype this project is built on uses `uv`; see [architecture.md § Backend Starter](_bmad-output/planning-artifacts/architecture.md#backend-starter--locked-no-evaluation)).
 - **Docker** + **Docker Compose v2.20+** — the top-level `docker-compose.yml` uses the `include:` directive, stabilized in Compose v2.20.
 - **`npx`** — ships with Node ≥20; needed for Playwright invocations.
-- **[`just`](https://github.com/casey/just)** — task runner. Optional for the default and dev profiles; **required for the E2E profile** because the `-f compose/app.e2e.yml` overlay is not self-activating (Story 1.12 P1; see the `Justfile` preamble for the full rationale).
+- **[`just`](https://github.com/casey/just)** — task runner. Optional for the baseline stack; **required for the E2E profile** because the `-f compose/app.e2e.yml` overlay is not self-activating (Story 1.12 P1; see the `Justfile` preamble for the full rationale).
 - **`ng` CLI** — optional; required only for SPA HMR development (`ng serve`).
 
 ## Setup
 
 1. **Clone this repository** and `cd` into it.
 2. **Clone the FastAPI archetype** into `tools/fastapi-archetype/` (gitignored). The archetype lives at `https://github.com/tommaso-meledina/fastapi-archetype`; Stories 1.3 and 3.1 establish the canonical AR1 scaffold invocation. The repo ships `tools/` empty as a placeholder — the archetype is intentionally kept out of the working tree so it can be updated independently and so the project's own diffs stay focused on the BFF/RS extensions rather than archetype churn.
-3. **Copy `.env.example` to `.env`** at the repo root and fill in values. Never commit a real `.env` — it is `.gitignored`. At minimum the operator must provide values for these env-var **names** (see `.env.example` for the full inventory and inline comments):
+3. **Copy `.env.example` to `.env`** at the repo root and fill in values. The single root `.env` is the canonical entry point — there are no per-service `.env` files. It carries only operator-edited values (secrets + overrides); topology constants (OIDC URLs, base URLs, DB paths) live in `compose/app.yml` and `compose/infra.yml` `environment:` blocks. Never commit a real `.env` — it is `.gitignored`. At minimum:
    - `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` — Keycloak admin console credentials.
    - `BFF_CLIENT_SECRET` — the OAuth client secret shared with Keycloak's `bmad-books-bff` confidential client. Must match the secret in the realm JSON or the OIDC token exchange will fail.
    - `TEST_RESET_TOKEN` — bearer token gating `POST /v1/test/reset` on the BFF and RS. Required only when running with the `e2e` profile; the `${TEST_RESET_TOKEN:?...}` directive in `compose/app.e2e.yml` fails compose-up early if it's unset.
-   - `OIDC_ISSUER_URL` / `OIDC_AUTHORIZE_URL_BROWSER` / `OIDC_JWKS_URL` — already filled in `.env.example` with the compose-local Keycloak URLs; only override if you point at a non-default Keycloak.
-4. **First bring-up:** `docker compose up` (default profile — full topology with the SPA baked into the BFF image). The Keycloak realm at `keycloak/realm-bmad-books.json` is pre-imported on container start; two end-user accounts are seeded: `testuser` / `testpassword` and `freshuser` / `freshpassword`. The latter has no reading-speed value set, intentionally exercising the J3 412 "Set your reading speed in Settings to enable estimates" path (Epic 4).
+   - `BFF_SESSION_COOKIE_SECURE` — keep `false` for local http; flip to `true` behind HTTPS.
+4. **First bring-up:** `docker compose up` — full topology (Keycloak + BFF + RS) with the SPA baked into the BFF image. The Keycloak realm at `keycloak/realm-bmad-books.json` is pre-imported on container start; two end-user accounts are seeded: `testuser` / `testpassword` and `freshuser` / `freshpassword`. The latter has no reading-speed value set, intentionally exercising the J3 412 "Set your reading speed in Settings to enable estimates" path (Epic 4).
 5. **Verify the stack is healthy:** `docker compose ps` should show every service with status `healthy`. The Keycloak admin console is at `http://localhost:8080/admin/` using `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD`.
-6. **Open the app** at `http://localhost:8000` in a desktop browser. In the default profile the SPA is served same-origin from the BFF — there is no `:4200` to navigate to. Click **Log in**, authenticate at the Keycloak prompt as `testuser` / `testpassword`, and you should land on `/books` with the user's identity rendered in the top-right of the chrome.
+6. **Open the app** at `http://localhost:8000` in a desktop browser. The BFF serves the SPA same-origin in the baseline stack — there is no `:4200` to navigate to (that's the dev workflow with `ng serve`). Click **Log in**, authenticate at the Keycloak prompt as `testuser` / `testpassword`, and you should land on `/books` with the user's identity rendered in the top-right of the chrome.
 7. **Reset between runs (optional):** to wipe the BFF and RS databases (`books`, `sessions`, `auth_states` on the BFF; `reading_speeds` on the RS), run `docker compose down -v && docker compose up --build`. The `-v` flag drops the `bff_data` and `rs_data` named volumes (the SQLite database files live there). Keycloak runs without a persistent volume in this stack, so the realm at `keycloak/realm-bmad-books.json` is re-imported on every container (re-)creation — `docker compose down` alone is enough to reseed the realm users; `-v` is needed only for the BFF/RS data volumes.
 
 **Troubleshooting** (the most common first-run trips):
@@ -83,8 +83,9 @@ For the OAuth/OIDC security review (PRD §9 envelope: token storage, cookie attr
 The dev workflow is the iterative loop for SPA work with HMR while the BFF, RS, and Keycloak run in compose. The SPA is **not** baked into the BFF image in this mode.
 
 ```bash
-# Terminal 1 — backend stack (Keycloak + BFF + RS; no SPA container)
-docker compose --profile dev up
+# Terminal 1 — full stack (Keycloak + BFF + RS; SPA is also served by the BFF
+# but the dev workflow ignores it in favor of ng serve in Terminal 2)
+docker compose up
 
 # Terminal 2 — SPA on the host with HMR (uses spa/package.json's `start` script,
 # which runs `ng serve` without requiring a global @angular/cli install)
@@ -123,7 +124,7 @@ This wraps a two-phase invocation: `docker compose -f docker-compose.yml -f comp
 
 ```bash
 # Bring the backend up under the e2e overlay so /v1/test/reset is mounted.
-# (The bare `--profile dev` stack does NOT enable the reset endpoint —
+# (The bare `docker compose up` stack does NOT enable the reset endpoint —
 # ENABLE_TEST_RESET=true is only set by compose/app.e2e.yml.)
 docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e \
     up -d --wait keycloak bff resource-server
@@ -159,9 +160,9 @@ docker compose down -v
 docker compose up --build
 ```
 
-Services declare `profiles: [default, dev, e2e]` in `compose/app.yml` and `compose/infra.yml`, so the default profile activates automatically — there is no `--profile default` flag required (though it is accepted for explicitness). (The Playwright runner is the only service scoped to `[e2e]` only.)
+Keycloak, the BFF, and the Resource Server are part of the unconditional baseline stack — no compose `profiles:` field — so bare `docker compose up` brings them all up. The Playwright runner is the only service scoped behind a profile (`profiles: [e2e]`), and the `compose/app.e2e.yml` overlay applies its env-var overrides only when invoked via `just e2e-up` (the `-f`-flag pattern; see the [E2E workflow](#e2e-workflow) section for why a bare `docker compose --profile e2e up` is wrong).
 
-What's different from the dev profile: the SPA container is replaced by the BFF static-serving the built bundle at `/`. No `ng serve`. No port `:4200`. Single origin everywhere (`http://localhost:8000`).
+What's different from the dev workflow: the operator opens `http://localhost:8000` (the BFF-served SPA bundle) instead of running `ng serve` on `:4200`. The containers are identical — bare `docker compose up` brings the same baseline stack regardless of which workflow the operator follows.
 
 See [`docs/smoke-run.md`](docs/smoke-run.md) for the manual smoke checklist that verifies all six journeys (J1–J6) against this build path. The Run Record at the bottom of that file captures the submission-state evidence (date, commit SHA, per-step checkbox results, anomalies); Story 5.4 documents two execution modes — operator-driven (canonical PASS path) and programmatic-agent partial-smoke (PASS WITH ANOMALIES, with the browser-required journey steps left for an operator follow-up).
 
@@ -182,7 +183,7 @@ For local iteration, the terse-output forms below are the right speed-of-iterati
 - **BFF / RS single-test focus:** `uv run pytest tests/auth/test_csrf.py::test_post_header_cookie_mismatch_returns_403 -xvs` — fail-fast + capture print output for fast debug.
 - **SPA terse run:** `npm test` runs Vitest 4 against the Angular 21 unit tree with the Vite-driven incremental file watcher; `npm test -- --coverage` produces `spa/coverage/spa/index.html`.
 - **SPA single-file focus:** `cd spa && npx vitest run src/app/books/estimate-cell.spec.ts` — runs one spec file without watch mode.
-- **E2E base run:** `cd e2e && npm test` expects a backend stack already running under `--profile dev`; the canonical full-suite run is the compose `just e2e-up` invocation above.
+- **E2E base run:** `cd e2e && npm test` expects a backend stack already running (`docker compose up`); the canonical full-suite run is the compose `just e2e-up` invocation above.
 
 ## Project structure
 

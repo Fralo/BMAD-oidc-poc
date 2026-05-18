@@ -5,8 +5,8 @@
 # (Story 3.4 RS endpoint) and `AUTH_TYPE=oidc_bearer` activates the JWKS-
 # validated bearer-token plugin (Story 3.2) so the J4 spec's scope-enforcement
 # coverage is real instead of degrading to the archetype's synthetic-admin
-# default (`AUTH_TYPE=none`, per `services/resource-server/.env.example` lines
-# 40-52).
+# default (`AUTH_TYPE=none`, the unset default on the baseline stack — D142
+# deferred follow-up tracks flipping this default).
 #
 # Applies the `ENABLE_TEST_RESET=true` + `TEST_RESET_TOKEN` env-var pair
 # that activates the `POST /v1/test/reset` route (mounted conditionally
