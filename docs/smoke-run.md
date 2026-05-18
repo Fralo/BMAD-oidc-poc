@@ -1,7 +1,7 @@
 # Smoke Run — default profile (SPA-in-BFF production build)
 
 **Profile:** `default` (full topology: Keycloak + BFF [SPA baked in] + Resource Server)
-**Build form:** `docker compose up --build` (no `-f` overlay, no `--profile e2e`)
+**Build form:** `docker compose --profile default up --build` (no `-f` overlay, no `--profile e2e`; the explicit `--profile default` flag is required — see "Known setup workarounds" → D140 for the rationale, but in short: on Compose v5.1.3 (this host's `docker compose version` reading), bare `docker compose up` returns `no service selected` despite Story 5.3's README claim that the `default` profile auto-activates)
 **Browser:** any modern desktop browser (Chrome, Firefox, Safari, Edge). No mobile / responsive testing — PRD §4 explicitly excludes responsive layout.
 **Reference:** PRD §10 J1–J6 (`_bmad-output/planning-artifacts/PRD.md` lines 95–102); epic AC at `_bmad-output/planning-artifacts/epics.md` lines 1892–1933.
 
@@ -39,11 +39,11 @@ checkbox the developer flips to `[x]` after completing it against a real
 desktop browser at `http://localhost:8000`. **Apply the three workarounds above
 before step 4 (or steps 4 and 13 will fail / silently auth-degrade).**
 
-1. [ ] Fresh clone of the repo (or `git clean -xdf` from the repo root to mimic a clean tree — careful: this wipes ignored files).
-2. [ ] Setup per README: archetype clone (`tools/fastapi-archetype/`), `.env` from `.env.example` with the four required keys populated.
-3. [ ] `docker compose down -v` to clear any prior `bff_data` / `rs_data` named volumes (idempotent — exits 0 even when nothing was running).
-4. [ ] `docker compose up --build` (default profile — no `--profile`, no `-f` overlay). Run in foreground OR `-d` for detached.
-5. [ ] Wait for all healthchecks. Verify via `docker compose ps`: `keycloak`, `bff`, `resource-server` all show `(healthy)`. Start period 30s; typical wall time on warm cache is 90–120 s; cold cache is dominated by the SPA `npm ci && npm run build` step in the BFF's multi-stage Dockerfile and can run 5–8 min the first time.
+1. [x] Fresh clone of the repo (or `git clean -xdf` from the repo root to mimic a clean tree — careful: this wipes ignored files). *(Mode-B dev-pass: verified at baseline `fb751ec`.)*
+2. [x] Setup per README: archetype clone (`tools/fastapi-archetype/`), `.env` from `.env.example` with the four required keys populated. *(Mode-B dev-pass: per-service `.env` files also copied per the D141 workaround.)*
+3. [x] `docker compose down -v` to clear any prior `bff_data` / `rs_data` named volumes (idempotent — exits 0 even when nothing was running). *(Mode-B dev-pass: idempotent return — no prior project state.)*
+4. [x] `docker compose --profile default up --build` (default profile — explicit `--profile default` flag per D140, no `-f` overlay). Run in foreground OR `-d` for detached. *(Mode-B dev-pass: `-d` detached.)*
+5. [x] Wait for all healthchecks. Verify via `docker compose ps`: `keycloak`, `bff`, `resource-server` all show `(healthy)`. Start period 30s; observed warm-cache healthy-time on this host was 32–42 s post-start (well inside the 90–120 s "typical" envelope previously documented). *(Mode-B dev-pass: poll loop until all three healthy; transcript below.)*
 6. [ ] Open `http://localhost:8000` in a desktop browser. The SPA bootstraps; an unauthenticated user lands on `/login` (the auth guard bounces from `/books`).
 7. [ ] **J1 — First-time login.** Click "Log in" → browser is redirected to `http://localhost:8080/realms/bmad-books/protocol/openid-connect/auth?...` (Keycloak login form). Enter `testuser` / `testpassword` → Keycloak submits → returns to `http://localhost:8000/books` with the identity visible in the top chrome (username or initial visible).
 8. [ ] **J2 — Manage books.** Add a book (`Dune`, `688` pages, status `to-read`) → row appears at the top of the list. Change status to `reading` via the inline select → change is visible immediately (optimistic UI). Edit the title to `Dune Messiah` → row updates after PUT round-trip. Click "Delete" → native browser confirm dialog → confirm → row removed.
@@ -61,7 +61,7 @@ before step 4 (or steps 4 and 13 will fail / silently auth-degrade).**
 - **Host environment:** macOS (darwin 25.4.0) / Docker 29.4.3 / Docker Compose v5.1.3.
 - **Mode chosen:** **Mode B** (programmatic agent with operator follow-up for browser-required steps). Reason: dev agent has no desktop-browser capability; cannot click through the OAuth round-trip or interact with SPA controls.
 - **Anomalies:**
-  - **PENDING — operator browser walk-through required:** steps 6, 7 (J1), 8 (J2), 9 (J4), 10 (J3 happy), 11 (J3 precondition), 12 (J5), 13 (J6). The dev agent verified the SPA bundle is served end-to-end (step 6 surrogate probe), the OAuth redirect is wired (J1 surrogate — full PKCE params visible in the 302 Location), unauthenticated `/api/me` returns 401 with the project error envelope, and the RS killswitch path used by step 13 works (`docker compose stop resource-server` + healthcheck-recovery on `docker compose start resource-server` in ~6 s). The eight pending steps require an operator with a real desktop browser at `http://localhost:8000`.
+  - **PENDING — operator browser walk-through required:** steps 6-13 (8 steps total — step 6 "open browser at http://localhost:8000" + J1 step 7 + J2 step 8 + J4 step 9 + J3 happy step 10 + J3 precondition step 11 + J5 step 12 + J6 step 13). The dev agent verified the SPA bundle is served end-to-end (step 6 surrogate probe), the OAuth redirect is wired (J1 surrogate — full PKCE params visible in the 302 Location), unauthenticated `/api/me` returns 401 with the project error envelope, and the RS killswitch path used by step 13 works (`docker compose stop resource-server` + healthcheck-recovery on `docker compose start resource-server` in ~6 s). The eight pending steps require an operator with a real desktop browser at `http://localhost:8000`.
   - **D140 — Bare `docker compose up` does not start the default profile.** All three services in `compose/infra.yml` + `compose/app.yml` declare `profiles: [default, dev, e2e]`; Compose v2/v5 with `include:` excludes profiled services unless `--profile <name>` is set. The architecture (`_bmad-output/planning-artifacts/architecture.md:1294`), the README (this file's neighbor, lines 4 + 30), and the epic AC for Story 5.4 step 4 all say `docker compose up` (no flag). Actual behavior on this host: bare `docker compose up` exits with `no service selected`. The canonical form is `docker compose --profile default up --build` (or `COMPOSE_PROFILES=default docker compose up --build`). The smoke checklist above pins the explicit form. See deferred-work.md → D140.
   - **D141 — Per-service `.env` files are required, not just the repo-root `.env`.** `compose/app.yml` declares `env_file: ../services/bff/.env` and `../services/resource-server/.env` on the BFF and RS services. Bringing up the default profile with only the repo-root `.env` (the model `.env.example`'s header describes) errors out with `env file ../services/bff/.env not found`. Operator must additionally `cp services/bff/.env.example services/bff/.env` and `cp services/resource-server/.env.example services/resource-server/.env`. See deferred-work.md → D141.
   - **D142 — Default profile leaves `AUTH_TYPE=none` on the Resource Server.** `services/resource-server/.env.example:57` has `#AUTH_TYPE=oidc_bearer` commented out; only `compose/app.e2e.yml` flips it on. Under the default profile, RS runs in `AUTH_TYPE=none` (archetype synthetic-admin mode — JWT signature / scope / issuer / audience NOT validated). J3 / J4 / J6 journeys would functionally pass but the **scope-enforcement surface that PRD §8 + Story 5.2 §5 attest to is not exercised** — the prod-shaped smoke is auth-degraded vs. e2e profile. See deferred-work.md → D142.
@@ -144,11 +144,9 @@ $ docker compose --profile default down
 
 ### Operator follow-up checklist
 
-### Operator follow-up checklist
-
 When an operator completes the browser walk-through:
 
-1. Bring the stack back up with the same `docker compose up --build` form (volumes were preserved at tear-down so a re-`down -v` is recommended for a true fresh-state walk-through).
+1. Bring the stack back up with the same `docker compose --profile default up --build` form (volumes were preserved at tear-down so a re-`down -v` is recommended for a true fresh-state walk-through).
 2. Walk through each `[ ]` step 6–13 in a desktop browser at `http://localhost:8000`.
 3. For each completed step, flip `[ ]` → `[x]` in the Checklist section above.
 4. If a step deviates from the documented behavior, add a per-step entry under Anomalies with the observed deviation and any defer ID logged.
