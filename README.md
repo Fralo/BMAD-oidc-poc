@@ -163,7 +163,7 @@ Services declare `profiles: [default, dev, e2e]` in `compose/app.yml` and `compo
 
 What's different from the dev profile: the SPA container is replaced by the BFF static-serving the built bundle at `/`. No `ng serve`. No port `:4200`. Single origin everywhere (`http://localhost:8000`).
 
-See [`docs/smoke-run.md`](docs/smoke-run.md) for the manual smoke checklist that verifies all six journeys (J1–J6) against this build path. The smoke run is captured at submission state by Story 5.4; **this file lands when Story 5.4 ships** — a reviewer reading this README before then will see a dangling link, which is intentional.
+See [`docs/smoke-run.md`](docs/smoke-run.md) for the manual smoke checklist that verifies all six journeys (J1–J6) against this build path. The Run Record at the bottom of that file captures the submission-state evidence (date, commit SHA, per-step checkbox results, anomalies); Story 5.4 documents two execution modes — operator-driven (canonical PASS path) and programmatic-agent partial-smoke (PASS WITH ANOMALIES, with the browser-required journey steps left for an operator follow-up).
 
 ## Per-surface test commands
 
@@ -254,6 +254,6 @@ The build deliberately ran without a GitHub Actions CI pipeline (PRD §4 / archi
 - [`_bmad-output/planning-artifacts/epics.md`](_bmad-output/planning-artifacts/epics.md) — Epics + stories breakdown.
 - [`docs/security-review.md`](docs/security-review.md) — OAuth/OIDC security review (Story 5.2).
 - [`docs/coverage-report.md`](docs/coverage-report.md) — Per-surface coverage snapshot (Story 5.1).
-- [`docs/smoke-run.md`](docs/smoke-run.md) — Final default-profile smoke run (Story 5.4 — file lands when 5.4 ships).
+- [`docs/smoke-run.md`](docs/smoke-run.md) — Final default-profile smoke run (Story 5.4).
 - [`fastapi-archetype`](https://github.com/tommaso-meledina/fastapi-archetype) — the backend archetype the BFF and RS are built from.
 - [`just` task runner](https://github.com/casey/just) — required for the E2E workflow.
