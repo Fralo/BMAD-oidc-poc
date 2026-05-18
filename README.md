@@ -25,6 +25,8 @@ See [`_bmad-output/planning-artifacts/architecture.md`](_bmad-output/planning-ar
 
 See [`docs/coverage-report.md`](docs/coverage-report.md) for the per-surface coverage snapshot and thresholds.
 
+See [`docs/security-review.md`](docs/security-review.md) for the OAuth/OIDC security review (PRD §9 envelope: token storage, cookie attributes, CSRF, JWT validation, scope enforcement, SPA concerns).
+
 ## AI integration log
 
 This section is populated by Story 5.3 and will capture how AI tooling (BMAD agents, Claude Code) was used across planning, implementation, and review.
