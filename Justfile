@@ -43,12 +43,22 @@ e2e-config:
 # the previous three-line `&&`-chain left services running when `up` or
 # the playwright run failed, breaking the next invocation on
 # `container_name: playwright` collisions (review patch P1).
+#
+# `--build` on the `run` step is LOAD-BEARING for spec iteration (Story 4.4
+# dev discovery): `e2e/Dockerfile` does `COPY . .` so specs are baked into
+# the runner image at build time. Without `--build`, `docker compose run`
+# reuses the cached image and silently runs the old spec set — manifested
+# during Story 4.4 dev as `Running 18 tests` (Epic-3 image) instead of the
+# expected 26 (after J3 + J6 specs landed). The `--build` flag forces
+# Compose to rebuild only when files copied into the runner image have
+# changed; layer caching keeps the typical edit cycle fast (~0.1s rebuild
+# when only spec files changed).
 e2e-up:
     #!/usr/bin/env bash
     set -e
     trap 'docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e down' EXIT
     docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e up -d --wait keycloak bff resource-server
-    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm playwright
+    docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e run --rm --build playwright
 
 # Tear down the e2e stack and remove volumes (idempotent).
 e2e-down:

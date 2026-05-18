@@ -167,6 +167,16 @@ Workarounds:
 - `tests/j4-adjust-speed.spec.ts` (Story 3.6) — J4: adjust reading speed,
   including freshuser unset state, Saved pulse, validation, and
   RS-unavailable error variants.
+- `tests/j3-estimate.spec.ts` (Story 4.4) — J3: reading-time estimate happy
+  path (default speed), J4↔J3 coupling (speed change yields different
+  estimate), freshuser 412 precondition with link to /settings, in-place
+  re-estimate, generic non-J6 failure with the generic copy ("Couldn’t get
+  an estimate — try again"). Pessimistic UI throughout — no silent retry.
+- `tests/j6-rs-unavailable.spec.ts` (Story 4.4) — J6: estimate while RS is
+  down renders the named J6 error in the row's estimate cell, retry-after-
+  RS-recovery succeeds (proving manual-retry rule), and settings save while
+  RS is down renders the same copy (pinning the uniform 503 surface across
+  estimate and settings).
 
 ## Adding a new spec
 
@@ -177,6 +187,20 @@ to `/v1/test/reset`. The seeded users (`testuser`, `freshuser`) are exported
 from `fixtures/users.ts`. The harness runs sequentially (`workers: 1`) because
 every spec is expected to call `resetState` in a `beforeEach`; do not change
 that without rewriting the test-reset contract.
+
+**Compose-runner gotcha (`docker compose run` cached image):** the playwright
+runner image is built from `e2e/Dockerfile`, which does `COPY . .` — specs
+are baked into the image at build time. `docker compose run` reuses the
+cached image, so a freshly-added spec file will NOT appear in the runner
+until the image is rebuilt. The canonical `just e2e-up` recipe passes
+`--build` to the `run` step for exactly this reason (Story 4.4 dev
+discovery: an unflagged `run` silently executed only the pre-Story-4.4 spec
+set). If you invoke compose directly instead of through `just`, pass
+`--build` on the `run` step or pre-build with
+`docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e build playwright`.
+Layer caching keeps the typical rebuild fast (~0.1s when only specs
+changed). The host-side workflow (`npm test` from `e2e/`) is immune — it
+reads specs directly from disk.
 
 ## RS test-reset extension
 
