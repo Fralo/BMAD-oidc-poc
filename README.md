@@ -27,6 +27,8 @@ See [`docs/coverage-report.md`](docs/coverage-report.md) for the per-surface cov
 
 See [`docs/security-review.md`](docs/security-review.md) for the OAuth/OIDC security review (PRD §9 envelope: token storage, cookie attributes, CSRF, JWT validation, scope enforcement, SPA concerns).
 
+See [`docs/smoke-run.md`](docs/smoke-run.md) for the operator-driven smoke checklist + Run Record against the default-profile (SPA-in-BFF prod build) topology.
+
 ## AI integration log
 
 This section is populated by Story 5.3 and will capture how AI tooling (BMAD agents, Claude Code) was used across planning, implementation, and review.
