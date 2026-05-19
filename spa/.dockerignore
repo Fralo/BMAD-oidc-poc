@@ -1,0 +1,51 @@
+# spa/.dockerignore
+# Story 6.2: first per-service .dockerignore live in the repo. The SPA's
+# Docker build context is `../spa` (set in compose/app.yml), so this file
+# is the only ignore file consulted for the SPA image — the repo-root
+# .dockerignore covers the BFF + RS root-context builds and does not
+# apply here.
+#
+# Goal: keep the build context to ~5 MB. Without this, sending the SPA's
+# live working tree (with node_modules + .angular cache) would push ~250 MB
+# through the Docker daemon socket on every build.
+
+# Dependencies — Stage 0 `deps` runs `npm ci` from a clean state, so the
+# host's node_modules is wasted bandwidth.
+node_modules
+
+# Build output — Stage 1 `build` regenerates this; never copy stale local
+# builds in.
+dist
+
+# Test / cache artefacts
+coverage
+.angular
+
+# Logs
+*.log
+npm-debug.log*
+
+# VCS — build context already excludes the parent .git, but keep the safety
+# net for nested .git directories or accidental copies.
+.git
+.gitignore
+
+# IDE / editor / OS cruft
+.vscode
+.idea
+.DS_Store
+
+# Story 6.2 code-review P3: defense-in-depth against secret leakage. Angular
+# projects don't normally carry `.env`-style files but if a developer creates
+# `spa/.env.local` (common Angular pattern from other ecosystems), it would
+# otherwise be copied into the build context and baked into the build stage's
+# filesystem layer.
+.env
+.env.*
+
+# Story 6.2 code-review P4: Vitest specs are not bundled into the SSR
+# output (Angular's `@angular/build:application` only includes files
+# reachable from the build entry points). Excluding them from the build
+# context is purely a context-size optimization; nothing in the build
+# pipeline reads `.spec.ts` files. Matches both top-level and nested specs.
+**/*.spec.ts

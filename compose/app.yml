@@ -1,17 +1,24 @@
 # compose/app.yml
 # Included from the top-level docker-compose.yml via the `include:` directive.
 # This file owns application-tier services. Story 1.3 lands the BFF; the
-# Resource Server arrives in Story 3.1.
-# Story 1.14 (AR24): the SPA bundle is compiled inside the BFF image via a
-# multi-stage Dockerfile (Node build stage → Python runtime stage); there is
-# no separate `spa` service.
+# Resource Server arrives in Story 3.1; Story 6.2 splits the SPA out of the
+# BFF image into its own `spa` SSR-edge service (Angular 21 SSR on Node 22
+# via Express, with `http-proxy-middleware` reverse-proxying `/auth /api /v1`
+# to the BFF on the compose network); Story 6.3 finalizes the split by
+# deleting the BFF's Story-1.14 static-serve code path and reverting the BFF
+# build context to per-service — the BFF is now API-only.
 #
-# D140/D141 (smoke follow-up): `bff` and `resource-server` have no `profiles:`
-# field — they are part of the unconditional baseline so bare
-# `docker compose up` brings them up. The retired `default` / `dev` profiles
-# produced identical containers. The dev workflow (`ng serve` on the host
-# alongside this stack) does not need its own compose profile. Only the `e2e`
-# profile still scopes a service — the `playwright` runner below.
+# Post-Epic-6 topology: the browser-facing host port is `:${SPA_HOST_PORT:-4000}`
+# (the SPA edge); the BFF has NO host port and is reachable only on the
+# compose network as `http://bff:8000`.
+#
+# D140/D141 (smoke follow-up): `bff`, `resource-server`, and now `spa` have
+# no `profiles:` field — they are part of the unconditional baseline so
+# bare `docker compose up` brings them up. The retired `default` / `dev`
+# profiles produced identical containers. Host-side `cd spa && npm start`
+# was retired with Story 6.1's deletion of `spa/proxy.conf.json`; the
+# containerized SPA edge is the documented dev path. Only the `e2e` profile
+# still scopes a service — the `playwright` runner below.
 # D141: per-service `services/<svc>/.env` files retired; both services now
 # load `../.env` (the repo-root single source) and bake topology constants
 # (OIDC URLs, base URLs, DB paths, APP_NAME) into `environment:` blocks here.
@@ -27,12 +34,11 @@
 services:
   bff:
     build:
-      # Story 1.14 (closes D4): build context is the repo root so the Node
-      # builder stage can COPY spa/ (sibling of services/bff/).
-      # The root .dockerignore applies; services/bff/.dockerignore is unused
-      # with a root context but kept as documentation.
-      context: ..
-      dockerfile: services/bff/Dockerfile
+      # Story 6.3: per-service context restored — the front-end build stage
+      # was removed and the BFF no longer needs to reach a sibling directory.
+      # The repo-root `.dockerignore` is no longer consulted for this build;
+      # `services/bff/.dockerignore` becomes load-bearing again.
+      context: ../services/bff
     container_name: bff
     # Story 1.12 wired ENABLE_TEST_RESET=true and TEST_RESET_TOKEN via
     # the `compose/app.e2e.yml` overlay (applied with `-f` flag, NOT via
@@ -50,7 +56,15 @@ services:
       APP_NAME: bff
       DEBUG: "false"
       BFF_DATABASE_URL: sqlite+aiosqlite:////data/bff.db
-      BFF_BASE_URL: http://localhost:8000
+      # Story 6.2: BFF_BASE_URL is the BROWSER-facing URL. The BFF reads it
+      # at `services/bff/src/bff/api/auth.py:149,232` to construct the OAuth
+      # `redirect_uri` Keycloak echoes to the browser; `services/bff/src/bff/
+      # auth/csrf.py:102` anchors the CSRF Origin check on it. Both must use
+      # the SPA edge URL because the browser only ever sees `:${SPA_HOST_PORT:-4000}`
+      # after this story — it never connects directly to the BFF. Do NOT
+      # change this to `http://bff:8000`; that's what the SPA proxy uses
+      # internally (set via `BFF_INTERNAL_URL` on the `spa` service below).
+      BFF_BASE_URL: http://localhost:${SPA_HOST_PORT:-4000}
       RS_BASE_URL: http://resource-server:8000
       # BFF's OIDC_ISSUER_URL is the back-channel URL used by Authlib for
       # token exchange against Keycloak via compose DNS. The RS service uses
@@ -65,12 +79,11 @@ services:
       OIDC_AUTHORIZE_URL_BROWSER: http://localhost:8080/realms/bmad-books
       BFF_SESSION_COOKIE_NAME: bff_session
       BFF_CSRF_COOKIE_NAME: csrf_token
-    ports:
-      # Expose :8000 to the host. Required for the browser-side OIDC redirect
-      # (Story 1.5) to land on the BFF at http://localhost:8000/auth/callback
-      # and for `dev`-profile workflows where the SPA's ng-serve proxy
-      # forwards /auth, /api, /v1 to http://localhost:8000.
-      - "8000:8000"
+    # Story 6.2: the BFF no longer publishes a host port. The browser-facing
+    # `redirect_uri` now lands on the SPA SSR edge (`:${SPA_HOST_PORT:-4000}`),
+    # which reverse-proxies `/auth/callback` to the BFF on the compose network
+    # via `http://bff:8000`. Story 6.3 deleted the Story-1.14 SPA static-serve
+    # code path from the BFF image; the BFF is now API-only.
     volumes:
       - bff_data:/data
     depends_on:
@@ -146,6 +159,68 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  spa:
+    # Story 6.2: SPA SSR edge. Angular 21 SSR Express server (Story 6.1's
+    # `dist/spa/server/server.mjs`) running on Node 22, owning the browser-
+    # facing host port. Mounts `http-proxy-middleware` at `/auth /api /v1`
+    # so the BFF stays internal-only on the compose network. The SPA's
+    # `provideAppInitializer` issues an SSR-side `/api/me` call that
+    # rewrites to `${BFF_INTERNAL_URL}/api/me` and forwards the inbound
+    # `Cookie` header — see Story 6.1 §"SSR /api/me chain" for the full
+    # composition. No CSP middleware here at 6.2 close; Story 6.4 moves
+    # CSP source BFF → SPA per architecture A8 amendment.
+    build:
+      # Per-service context — keeps the SPA build context to ~5 MB after
+      # spa/.dockerignore (vs ~250 MB for a root context). Story 6.2 Dev
+      # Notes §"Why the SPA build context is `../spa`" rationale.
+      context: ../spa
+      dockerfile: Dockerfile
+    container_name: spa
+    # Story 6.2 code-review P2: Node-as-PID-1 footgun. The ENTRYPOINT
+    # `node dist/spa/server/server.mjs` makes Node PID 1; Node has no
+    # default SIGTERM handler, so `docker stop` waits the full 10 s grace
+    # before SIGKILL and in-flight SSR streams are aborted. `init: true`
+    # makes compose run the container with `--init` (Docker's tini-style
+    # PID-1) which reaps zombies and forwards SIGTERM to Node. Cheaper
+    # than wiring a custom signal handler in `spa/src/server.ts`, and
+    # doesn't reach into Story 6.1's territory.
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      # Compose-DNS URL the SSR Express proxy forwards `/auth /api /v1` to
+      # AND the absolute base the SSR `ssr-api-url.interceptor.ts` rewrites
+      # browser-relative `/api/me` paths to during render. NOT host-facing.
+      BFF_INTERNAL_URL: http://bff:8000
+      # Browser-facing origin — right-hand side of Angular's
+      # `HTTP_TRANSFER_CACHE_ORIGIN_MAP` (Story 6.1 `app.config.server.ts:13`)
+      # so the SSR transfer cache key (absolute) matches the browser-side
+      # key (relative). Must equal `BFF_BASE_URL` on the BFF service.
+      SPA_PUBLIC_ORIGIN: http://localhost:${SPA_HOST_PORT:-4000}
+    ports:
+      # `SPA_HOST_PORT` defaults to 4000; override via repo-root `.env`
+      # (see `.env.example`). Container port is fixed at 4000 (matches
+      # `PORT` env + Dockerfile EXPOSE + healthcheck probe URL).
+      - "${SPA_HOST_PORT:-4000}:4000"
+    depends_on:
+      # SPA only needs the BFF reachable to start serving. The BFF already
+      # transitively gates on Keycloak (`bff.depends_on.keycloak`), so the
+      # SPA inherits the full ordering without adding a direct Keycloak
+      # dependency.
+      bff:
+        condition: service_healthy
+    healthcheck:
+      # Node 22's global `fetch` against `/_health` (Story 6.1
+      # `spa/src/server.ts:34–36`). Single-line CMD list form mirrors the
+      # BFF healthcheck pattern per Story 1.3 review patch P11 — folded-
+      # scalar YAML form is forbidden in this project.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/_health').then(r => process.exit(r.ok ? 0 : 1)).catch(e => { console.error('healthcheck:', e && e.message || e); process.exit(1); })"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
   playwright:
     # Story 1.11: Playwright runner for the `e2e` compose profile.
     # One-shot container that executes the E2E specs against the live stack
@@ -168,22 +243,35 @@ services:
         condition: service_healthy
       resource-server:
         condition: service_healthy
+      # Story 6.4: the browser-facing origin is the SPA SSR edge, not the BFF.
+      # Without this dependency the playwright runner can start before the SPA
+      # container is healthy and J1's first navigation to ${E2E_BASE_URL}/login
+      # would race against the SPA container's startup (the SPA's `/_health`
+      # healthcheck flips green within ~15s of start; see compose/app.yml
+      # `spa.healthcheck`).
+      spa:
+        condition: service_healthy
     environment:
-      # Keep the BFF reachable from the browser under its registered hostname
-      # `localhost:8000` (the value baked into the BFF's `BFF_BASE_URL` /
-      # OIDC redirect_uri and Keycloak's client config). Cookies are domain-
-      # scoped, so the state cookie set on the SPA load must be sent on the
-      # OAuth callback — both must hit the same hostname. The chromium
-      # `--host-resolver-rules` (e2e/playwright.config.ts) remap
-      # `localhost:8000` → `bff:8000` at DNS time, so this URL works from
-      # inside the playwright container without changing the BFF's
-      # registered redirect URI or breaking cookie-domain symmetry.
-      E2E_BASE_URL: http://localhost:8000
-      # Playwright's `request` fixture uses Node networking, NOT Chromium —
-      # so it does not honor `--host-resolver-rules`. Override the BFF reset
-      # URL to compose-DNS for the helper's Node-side POST (see
-      # `e2e/fixtures/helpers.ts` `resetState`). Browser-side requests
-      # continue to use E2E_BASE_URL (above).
+      # Story 6.4 / Epic-6 close: the browser-facing origin is the SPA SSR
+      # edge (`spa:4000` on the compose network, `localhost:4000` from the
+      # browser's perspective after the chromium `--host-resolver-rules`
+      # remap). The SPA SSR Express server reverse-proxies `/auth /api /v1`
+      # to the BFF over compose DNS via `http-proxy-middleware`; the BFF no
+      # longer publishes a host port (Story 6.2 dropped it) and is internal-
+      # only. Cookies stay domain-scoped on `localhost:4000` — the state
+      # cookie set on the SPA load and the BFF-set `bff_session` / `csrf_token`
+      # cookies (forwarded byte-for-byte by the SSR proxy) all share that
+      # browser-facing host. Keycloak's registered redirect_uri for the
+      # `bmad-books-bff` client is `http://localhost:${SPA_HOST_PORT:-4000}/auth/callback`
+      # (Story 6.2 realm flip), so the OAuth callback also lands at `:4000`.
+      E2E_BASE_URL: http://localhost:4000
+      # Playwright's `request` fixture uses Node networking, NOT Chromium — so
+      # it does not honor `--host-resolver-rules`. The Node-side `resetState`
+      # helper POSTs `/v1/test/reset` directly at the BFF via compose DNS,
+      # sidestepping the SPA edge entirely (the SPA proxy WOULD forward `/v1`
+      # paths, but `resetState` is test-state plumbing and we want a direct
+      # back-channel that doesn't depend on the edge being up). Keep this
+      # value at `http://bff:8000` regardless of the browser-side flip.
       BFF_BASE_URL: http://bff:8000
       # Forwarded from the root `.env`; used by `resetState` helper. Story
       # 1.12 will register the BFF-side /v1/test/reset endpoint that this

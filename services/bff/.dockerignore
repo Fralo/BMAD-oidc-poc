@@ -8,6 +8,7 @@ __pycache__/
 .ruff_cache/
 .pytest_cache/
 .coverage
+htmlcov/
 .bmad/
 _bmad/
 tests/
@@ -17,6 +18,8 @@ dist/
 build/
 compose
 .DS_Store
+.githooks/
+.gitignore
 
 # NOTE: README.md is intentionally NOT excluded because pyproject.toml
 # declares `readme = "README.md"`; uv_build reads it during `uv sync`.

@@ -10,7 +10,7 @@ A personal reading-list application that lets users track books they want to rea
 - **Docker** + **Docker Compose v2.20+** — the top-level `docker-compose.yml` uses the `include:` directive, stabilized in Compose v2.20.
 - **`npx`** — ships with Node ≥20; needed for Playwright invocations.
 - **[`just`](https://github.com/casey/just)** — task runner. Optional for the baseline stack; **required for the E2E profile** because the `-f compose/app.e2e.yml` overlay is not self-activating (Story 1.12 P1; see the `Justfile` preamble for the full rationale).
-- **`ng` CLI** — optional; required only for SPA HMR development (`ng serve`).
+- **`ng` CLI** — not required. Post-Epic-6 the SPA dev loop runs inside the `spa` compose service container (Angular SSR Express server with the `serve:ssr:spa` script); no host Node toolchain is needed beyond what `docker compose` provides.
 
 ## Setup
 
@@ -21,9 +21,9 @@ A personal reading-list application that lets users track books they want to rea
    - `BFF_CLIENT_SECRET` — the OAuth client secret shared with Keycloak's `bmad-books-bff` confidential client. Must match the secret in the realm JSON or the OIDC token exchange will fail.
    - `TEST_RESET_TOKEN` — bearer token gating `POST /v1/test/reset` on the BFF and RS. Required only when running with the `e2e` profile; the `${TEST_RESET_TOKEN:?...}` directive in `compose/app.e2e.yml` fails compose-up early if it's unset.
    - `BFF_SESSION_COOKIE_SECURE` — keep `false` for local http; flip to `true` behind HTTPS.
-4. **First bring-up:** `docker compose up` — full topology (Keycloak + BFF + RS) with the SPA baked into the BFF image. The Keycloak realm at `keycloak/realm-bmad-books.json` is pre-imported on container start; two end-user accounts are seeded: `testuser` / `testpassword` and `freshuser` / `freshpassword`. The latter has no reading-speed value set, intentionally exercising the J3 412 "Set your reading speed in Settings to enable estimates" path (Epic 4).
+4. **First bring-up:** `docker compose up` — full topology (Keycloak + BFF + Resource Server + SPA SSR edge). Post-Epic-6 the SPA is its own compose service (`spa`) running Angular SSR on Node 22 via `@angular/ssr`'s Express adapter (Story 6.2); the SPA SSR edge takes host port `:${SPA_HOST_PORT:-4000}` and is the only browser-facing port (the BFF is internal-only on the compose network). The Keycloak realm at `keycloak/realm-bmad-books.json` is pre-imported on container start; two end-user accounts are seeded: `testuser` / `testpassword` and `freshuser` / `freshpassword`. The latter has no reading-speed value set, intentionally exercising the J3 412 "Set your reading speed in Settings to enable estimates" path (Epic 4).
 5. **Verify the stack is healthy:** `docker compose ps` should show every service with status `healthy`. The Keycloak admin console is at `http://localhost:8080/admin/` using `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD`.
-6. **Open the app** at `http://localhost:8000` in a desktop browser. The BFF serves the SPA same-origin in the baseline stack — there is no `:4200` to navigate to (that's the dev workflow with `ng serve`). Click **Log in**, authenticate at the Keycloak prompt as `testuser` / `testpassword`, and you should land on `/books` with the user's identity rendered in the top-right of the chrome.
+6. **Open the app** at `http://localhost:4000` in a desktop browser. The SPA SSR edge proxies the BFF same-origin — the Angular Express server SSR-renders the HTML and reverse-proxies `/auth /api /v1` to the BFF over compose DNS (Story 6.1 + 6.2). Click **Log in**, authenticate at the Keycloak prompt as `testuser` / `testpassword`, and you should land on `/books` with the user's identity rendered in the top-right of the chrome.
 7. **Reset between runs (optional):** to wipe the BFF and RS databases (`books`, `sessions`, `auth_states` on the BFF; `reading_speeds` on the RS), run `docker compose down -v && docker compose up --build`. The `-v` flag drops the `bff_data` and `rs_data` named volumes (the SQLite database files live there). Keycloak runs without a persistent volume in this stack, so the realm at `keycloak/realm-bmad-books.json` is re-imported on every container (re-)creation — `docker compose down` alone is enough to reseed the realm users; `-v` is needed only for the BFF/RS data volumes.
 
 **Troubleshooting** (the most common first-run trips):
@@ -31,39 +31,39 @@ A personal reading-list application that lets users track books they want to rea
 - **Realm import failure** — confirm the admin password matches `KEYCLOAK_ADMIN_PASSWORD` in `.env`, then `docker compose down && docker compose up` to recreate the Keycloak container. Keycloak runs without a persistent volume in this stack, so the realm at `keycloak/realm-bmad-books.json` is re-imported on every container (re-)creation; you do **not** need `-v` to force a re-import.
 - **BFF cannot reach OIDC** — confirm `OIDC_ISSUER_URL` and `OIDC_AUTHORIZE_URL_BROWSER` resolve correctly. The first is consumed inside the BFF container and uses the compose service name `keycloak`; the second is the browser-facing URL and uses `localhost`. The split is intentional — the browser cannot resolve compose service names, and the BFF cannot use `localhost` from inside its container.
 - **`/v1/test/reset` returns 404** — that endpoint is gated by `ENABLE_TEST_RESET=true`, which is only set in the E2E profile overlay (`compose/app.e2e.yml`). Use `just e2e-up`, not `docker compose --profile e2e up`, or the overlay won't be applied.
-- **Port conflict on `:8000`, `:8080`, `:9000`, or `:4200`** — another process on the host is bound. Stop the conflicting process or remap the port in `compose/infra.yml` / `compose/app.yml`. (The Resource Server has no host-published port in any profile — `:8001` only matters when running the RS directly on the host outside compose, e.g. for `uv run pytest`.)
+- **Port conflict on `:4000` or `:8080`** — another process on the host is bound. Stop the conflicting process or remap the port in `compose/infra.yml` / `compose/app.yml` (the SPA edge's host port is overridable via `SPA_HOST_PORT` in the repo-root `.env`). Post-Epic-6 the BFF has no host port (internal-only on the compose network) and the legacy `ng serve` host workflow on `:4200` is retired — the SPA SSR edge container is the only browser-facing process. The Resource Server has no host-published port either; `:8001` only matters when running the RS directly on the host outside compose (e.g. for `uv run pytest`).
 
 ## Architecture overview
 
-The Reading Time Estimator is built from four cooperating components. The **SPA** (Angular 21, Tailwind v4) is the only browser-facing surface; in the prod-shaped deployment it is served same-origin by the BFF, in dev it runs locally via `ng serve` and proxies API calls to the BFF. The **BFF** (FastAPI cookie-session OIDC client; built from the `fastapi-archetype`) owns the books domain, holds session state in SQLite, and never bypasses the RS for J6's degrade-honestly contract. The **Resource Server** (FastAPI; bearer-JWT validated against Keycloak's JWKS) owns the reading-speed value and the estimate computation; scope enforcement (`reading-speed:read`, `reading-speed:write`) lives here. **Keycloak** runs the `bmad-books` realm imported from `keycloak/realm-bmad-books.json`.
+The Reading Time Estimator is built from five cooperating components. The **SPA** (Angular 21, Tailwind v4) is the user-facing application, deployed as an **Angular SSR Express server** (the "SPA SSR edge") that is the only browser-facing process on the public network. The edge SSR-renders HTML on Node 22, serves the browser bundle + static assets, and reverse-proxies `/auth /api /v1` to the BFF over compose DNS via `http-proxy-middleware` v3 (same-origin from the browser's perspective). The **BFF** (FastAPI cookie-session OIDC client; built from the `fastapi-archetype`) owns the books domain, holds session state in SQLite, and never bypasses the RS for J6's degrade-honestly contract. The **Resource Server** (FastAPI; bearer-JWT validated against Keycloak's JWKS) owns the reading-speed value and the estimate computation; scope enforcement (`reading-speed:read`, `reading-speed:write`) lives here. **Keycloak** runs the `bmad-books` realm imported from `keycloak/realm-bmad-books.json`. The Epic-6 split (Sprint Change Proposal 2026-05-19) gave the SPA its own deployable container and made the BFF API-only; same-origin is preserved through the SPA edge's transparent in-network proxy.
 
-The load-bearing concepts are: Authorization Code + PKCE; HttpOnly server-side token storage (no browser-readable tokens); JWKS-cached signature validation; scope-enforced RS computation; and `sub`-keyed identity propagation (no shared DB between services).
+The load-bearing concepts are: Authorization Code + PKCE; HttpOnly server-side token storage (no browser-readable tokens); JWKS-cached signature validation; scope-enforced RS computation; and `sub`-keyed identity propagation (no shared DB between services). CSP attachment lives on the SPA SSR edge's Express middleware (Story 6.4 / architecture A8 amendment); the BFF is API-only and emits JSON without CSP.
 
 ```text
-┌──────────────┐   cookie-authenticated REST   ┌──────────────────────────┐
-│              │ ───────────────────────────►  │                          │
-│     SPA      │       (HttpOnly, CSRF)        │           BFF            │
-│  (Angular)   │ ◄───────────────────────────  │     (FastAPI, books)     │
-│              │       JSON snake_case          │                          │
-└──────────────┘                                │  ┌─────────────────────┐ │
-                                                │  │  cookie-session     │ │
-                                                │  │  OIDC client        │ │
-                                                │  │  (Authlib)          │ │
-                                                │  └─────────────────────┘ │
-                                                └────┬─────────────┬────────┘
-                                                     │             │
-                                  Auth Code + PKCE   │             │ Bearer JWT
-                                  refresh, end-sess  │             │ (forward user
-                                  (Authlib)          │             │  access token)
-                                                     ▼             ▼
-                                          ┌──────────────┐   ┌──────────────────┐
-                                          │              │   │                  │
-                                          │   Keycloak   │   │  Resource Server │
-                                          │   (realm     │   │  (FastAPI; JWKS  │
-                                          │   imported)  │◄──┤   validation;    │
-                                          │              │   │   scope enforce) │
-                                          └──────────────┘   └──────────────────┘
-                                              JWKS fetch (RS → Keycloak, cached 24h)
+┌──────────────┐   HTML + assets (SSR)   ┌──────────────────────┐   reverse-proxy   ┌──────────────────────────┐
+│              │ ◄─────────────────────  │                      │ ────────────────► │                          │
+│   Browser    │   :4000 (SPA host port) │  SPA SSR edge        │   /auth /api /v1  │           BFF            │
+│              │ ─────────────────────►  │  (Angular SSR Node;  │ ◄──────────────── │     (FastAPI, books)     │
+│              │   cookies, CSRF header  │   Express + proxy    │   JSON responses  │                          │
+└──────────────┘                         │   middleware)        │                   │  ┌─────────────────────┐ │
+                                         └──────────────────────┘                   │  │  cookie-session     │ │
+                                                                                    │  │  OIDC client        │ │
+                                                                                    │  │  (Authlib)          │ │
+                                                                                    │  └─────────────────────┘ │
+                                                                                    └────┬─────────────┬────────┘
+                                                                                         │             │
+                                                                      Auth Code + PKCE   │             │ Bearer JWT
+                                                                      refresh, end-sess  │             │ (forward user
+                                                                      (Authlib)          │             │  access token)
+                                                                                         ▼             ▼
+                                                                              ┌──────────────┐   ┌──────────────────┐
+                                                                              │              │   │                  │
+                                                                              │   Keycloak   │   │  Resource Server │
+                                                                              │   (realm     │   │  (FastAPI; JWKS  │
+                                                                              │   imported)  │◄──┤   validation;    │
+                                                                              │              │   │   scope enforce) │
+                                                                              └──────────────┘   └──────────────────┘
+                                                                                  JWKS fetch (RS → Keycloak, cached 24h)
 ```
 
 A few things to call out from the diagram:
@@ -80,25 +80,27 @@ For the OAuth/OIDC security review (PRD §9 envelope: token storage, cookie attr
 
 ## Dev workflow
 
-The dev workflow is the iterative loop for SPA work with HMR while the BFF, RS, and Keycloak run in compose. The SPA is **not** baked into the BFF image in this mode.
+The dev workflow runs the full stack — including the SPA SSR edge — in compose. The two-terminal `docker compose up` + host-side `ng serve` model was retired by Story 6.1 (deletion of `spa/proxy.conf.json` and the legacy `ng serve` proxy harness); the canonical dev path is now single-terminal.
 
 ```bash
-# Terminal 1 — full stack (Keycloak + BFF + RS; SPA is also served by the BFF
-# but the dev workflow ignores it in favor of ng serve in Terminal 2)
+# Full stack including the SPA SSR edge (Keycloak + BFF + RS + spa).
+# Bare `docker compose up` brings up the unconditional baseline; the
+# `e2e` profile is the only profile-scoped service (the playwright runner).
 docker compose up
-
-# Terminal 2 — SPA on the host with HMR (uses spa/package.json's `start` script,
-# which runs `ng serve` without requiring a global @angular/cli install)
-cd spa && npm start
 ```
 
-The SPA's `spa/proxy.conf.json` proxies `/v1`, `/api`, and `/auth` from the dev server (`http://localhost:4200`) to the BFF (`http://localhost:8000`). To the browser, every API call appears to come from the same origin as the SPA, so the existing HttpOnly + `SameSite=Lax` cookies and double-submit CSRF tokens flow without cross-origin CORS gymnastics.
+Open the app at `http://localhost:4000` (the SPA SSR edge). The Angular SSR Express server (`spa/src/server.ts`) SSR-renders the HTML, serves the browser bundle + static assets, and reverse-proxies `/auth /api /v1` to the BFF over compose DNS — to the browser every API call appears to come from the same origin as the SPA, so the existing HttpOnly + `SameSite=Lax` cookies and double-submit CSRF tokens flow without cross-origin CORS gymnastics.
 
-| Service | Port | Notes |
-|---------|------|-------|
-| SPA (`ng serve`) | `4200` | Local dev only; not in the prod build path |
-| BFF | `8000` | Cookie-session OIDC client; owns `/api/*`, `/v1/books*`, `/auth/*` |
-| Resource Server | `8001` | Bearer-JWT; reached from the BFF (in compose) or `localhost` (on host) |
+**Iteration loops on the SPA side:**
+
+- **Recompose-on-change** (the simplest loop): edit a file under `spa/src/`, then `docker compose up -d --build spa` to rebuild + restart the SPA container with the new bundle. Slow first build (~30s); fast incremental rebuilds because the Angular CLI caches inside the container.
+- **Containerized SSR smoke-run** (validate the production bundle without a rebuild): `docker compose run --rm --service-ports spa` starts the pre-built SSR server (`node dist/spa/server/server.mjs`) from the `runtime` stage — the same binary the compose service runs. This is NOT HMR; source edits are not reflected without a rebuild. For a live-reload iteration loop, use the recompose-on-change workflow above. A `docker compose watch` dev-loop is out of scope for this project's current setup.
+
+| Service | Host port | Notes |
+|---------|-----------|-------|
+| SPA SSR edge | `4000` (overridable via `SPA_HOST_PORT`) | Public-facing origin; Angular SSR Express server; reverse-proxies `/auth /api /v1` to the BFF over compose DNS |
+| BFF | (internal-only) | Cookie-session OIDC client; owns `/api/*`, `/v1/books*`, `/auth/*`. Reachable only at `http://bff:8000` on the compose network. No host port — Story 6.2 dropped it. |
+| Resource Server | (internal-only) | Bearer-JWT; reached from the BFF (in compose) only; no host port. `:8001` only matters when running the RS directly on the host outside compose (e.g. `uv run pytest`). |
 | Keycloak | `8080` | Admin console at `/admin/`, realm at `/realms/bmad-books` |
 
 Seeded end-user credentials (version-controlled in `keycloak/realm-bmad-books.json` — these are test fixtures, not secrets):
@@ -133,7 +135,7 @@ docker compose -f docker-compose.yml -f compose/app.e2e.yml --profile e2e \
 cd e2e && npm test
 ```
 
-Playwright runs on the host against the backend in compose. Two env vars must be set on the BFF before this mode works: `ENABLE_TEST_RESET=true` mounts the `/v1/test/reset` route (it is not exposed in the default or `dev` profiles), and `TEST_RESET_TOKEN` is the bearer the `resetState` helper authenticates with (the same token must also be in the Playwright host env). The overlay-driven bring-up above sets both. This mode is the right iteration loop when authoring a new spec — you get instant Playwright re-runs (`npx playwright test --ui` for the inspector, or `npx playwright test e2e/tests/j3-estimate.spec.ts:42 --debug` to step through one test) without rebuilding the compose runner image each time. Use `cd spa && npm start` in a third terminal if the spec depends on local SPA changes; the SPA's proxy config forwards `/v1`, `/api`, `/auth` to the compose BFF so the auth flow still works.
+Playwright runs on the host against the backend in compose. Two env vars must be set on the BFF before this mode works: `ENABLE_TEST_RESET=true` mounts the `/v1/test/reset` route (it is not exposed on the baseline stack — only the `e2e` overlay activates it), and `TEST_RESET_TOKEN` is the bearer the `resetState` helper authenticates with (the same token must also be in the Playwright host env). The overlay-driven bring-up above sets both. This mode is the right iteration loop when authoring a new spec — you get instant Playwright re-runs (`npx playwright test --ui` for the inspector, or `npx playwright test e2e/tests/j3-estimate.spec.ts:42 --debug` to step through one test) without rebuilding the compose runner image each time. If the spec depends on local SPA changes, the recompose-on-change loop above (`docker compose up -d --build spa`) picks up the new bundle without leaving the compose network — the host-side `ng serve` workflow with `spa/proxy.conf.json` was retired by Story 6.1.
 
 The six journey specs:
 
@@ -150,21 +152,21 @@ On failure, Playwright retains traces and screenshots under `e2e/test-results/`;
 
 ## Prod-shaped workflow
 
-The prod-shaped workflow is the **default** compose profile: full topology with the SPA baked into the BFF image via the multi-stage `services/bff/Dockerfile` (Story 1.14). This is the deployment path the final smoke checklist (Story 5.4) verifies.
+The prod-shaped workflow is the baseline compose stack: full topology including the SPA SSR edge as its own deployable container (Story 6.2 / Epic 6). This is the deployment path the final smoke checklist verifies — Story 5.4 against the Story-1.14 SPA-in-BFF baked-build topology, and Story 6.4 against the post-Epic-6 SPA-SSR-edge topology (two side-by-side Run Records in `docs/smoke-run.md`).
 
 ```bash
 # Clean reset (optional but recommended for a fresh evaluation)
 docker compose down -v
 
-# Bring up the full topology with the SPA-in-BFF baked build
+# Bring up the full topology (Keycloak + BFF + RS + SPA SSR edge)
 docker compose up --build
 ```
 
-Keycloak, the BFF, and the Resource Server are part of the unconditional baseline stack — no compose `profiles:` field — so bare `docker compose up` brings them all up. The Playwright runner is the only service scoped behind a profile (`profiles: [e2e]`), and the `compose/app.e2e.yml` overlay applies its env-var overrides only when invoked via `just e2e-up` (the `-f`-flag pattern; see the [E2E workflow](#e2e-workflow) section for why a bare `docker compose --profile e2e up` is wrong).
+Keycloak, the BFF, the Resource Server, and the SPA SSR edge are part of the unconditional baseline stack — no compose `profiles:` field — so bare `docker compose up` brings them all up. The Playwright runner is the only service scoped behind a profile (`profiles: [e2e]`), and the `compose/app.e2e.yml` overlay applies its env-var overrides only when invoked via `just e2e-up` (the `-f`-flag pattern; see the [E2E workflow](#e2e-workflow) section for why a bare `docker compose --profile e2e up` is wrong).
 
-What's different from the dev workflow: the operator opens `http://localhost:8000` (the BFF-served SPA bundle) instead of running `ng serve` on `:4200`. The containers are identical — bare `docker compose up` brings the same baseline stack regardless of which workflow the operator follows.
+The operator opens `http://localhost:4000` (the SPA SSR edge — the only browser-facing host port). The containers are identical in dev and prod-shaped flows — bare `docker compose up` brings the same baseline stack regardless of which workflow the operator follows; the SPA edge is the same Angular SSR Express server in both.
 
-See [`docs/smoke-run.md`](docs/smoke-run.md) for the manual smoke checklist that verifies all six journeys (J1–J6) against this build path. The Run Record at the bottom of that file captures the submission-state evidence (date, commit SHA, per-step checkbox results, anomalies); Story 5.4 documents two execution modes — operator-driven (canonical PASS path) and programmatic-agent partial-smoke (PASS WITH ANOMALIES, with the browser-required journey steps left for an operator follow-up).
+See [`docs/smoke-run.md`](docs/smoke-run.md) for the manual smoke checklist that verifies all six journeys (J1–J6) against this build path. The two Run Records at the bottom of that file capture the submission-state evidence (date, commit SHA, per-step checkbox results, anomalies): the historical 2026-05-18 record (Story 5.4 close, pre-Epic-6 SPA-in-BFF posture) and the Epic-6 close record (2026-05-19, Story 6.4 close, post-Epic-6 SPA-SSR-edge posture). Both document two execution modes — operator-driven (canonical PASS path) and programmatic-agent partial-smoke (PASS WITH ANOMALIES, with the browser-required journey steps left for an operator follow-up).
 
 ## Per-surface test commands
 
@@ -233,6 +235,8 @@ This is a chronological record of how the AI-native build was conducted. Each en
 - **2026-05-18** — Epic 5 documentation pass: Story 5.1 (`docs/coverage-report.md` — pure attestation; no source or test changes), Story 5.2 (`docs/security-review.md` — PRD §9 six-topic envelope; pure documentation citing implementing code paths verbatim), and Story 5.3 (this README rewrite + AI integration log). Model: Claude Opus 4.7 (1M context).
 - **2026-05-18** — Notable AI-assisted decision: **Coverage threshold soften (DN1)** during Story 5.1's code-review pass. The original "≥90% with `fail_under = 90`" hard floor would have created per-pass flake on borderline-pure-data files; the resolution kept the `precision = 0` rounding behavior (effective floor ≈ 89.5%) and softened the doc framing to match — a documentation-coherence call rather than a gate change.
 - **2026-05-18** — Notable AI-assisted decision: **Security review structure mirrors PRD §9 verbatim**. Story 5.2's `docs/security-review.md` resisted the temptation to add a STRIDE / LINDDUN / ASVS cross-walk; instead the six top-level sections map 1-to-1 to PRD §9's six topics, each citing implementing code paths (`auth/keycloak_cookie_session.py`, `auth/csrf.py`, `middleware/security_headers.py:17–21`, `auth/oidc_bearer.py`, etc.) and the pin-tests that lock the behavior. The reviewer's verdict is verifiable from the document and the code, not from a framework cross-walk.
+- **2026-05-19** — Epic 6 (Frontend Split & SSR Edge). Introduced via `bmad-correct-course` after Epic 5 close — the SPA was extracted from the BFF image into its own Angular SSR container, the BFF became API-only, the browser-facing origin moved from `:8000` to `:4000`, and CSP attachment moved from the BFF's Starlette middleware to the SPA edge's Express middleware (architecture A8 amendment). The Sprint Change Proposal at `_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-19.md` is the scope authority. Four stories: 6.1 (SSR scaffold + proxy + cookie forwarding), 6.2 (SPA Dockerfile + compose service + Keycloak realm port pin), 6.3 (BFF cleanup — supersedes Story 1.14), 6.4 (re-validation + e2e + smoke + docs sweep + CSP source move). Model: Claude Opus 4.7 (1M context); code-review pass on each story used **Claude Sonnet 4.6** per the convention.
+- **2026-05-19** — Notable AI-assisted decision: **Epic 6 introduced mid-submission via `bmad-correct-course`**. After Epic 5 close the SPA was still served same-origin by the BFF (Story 1.14's `StaticFiles` mount), which made the BFF a hybrid HTML/JSON server — a load-bearing simplification at the time, but architectural debt the reviewer would notice. The split was scoped tightly: four stories, no SPA TypeScript edits (only the SSR Express server + interceptors + middleware were added), no FR/NFR change. Story 6.4 closed the epic with side-by-side Run Records preserving the historical pre-Epic-6 attestation and adding the post-Epic-6 evidence — the project's submission state reflects both topologies in the same artefacts.
 
 The build deliberately ran without a GitHub Actions CI pipeline (PRD §4 / architecture I7 out-of-scope per the project charter). Local test gates (`uv run pytest`, `npm test`, `just e2e-up`) are the test surfaces.
 

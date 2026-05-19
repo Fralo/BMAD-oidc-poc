@@ -7,6 +7,7 @@ import {
   withInterceptors,
 } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { PLATFORM_ID } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { EMPTY } from 'rxjs';
 
@@ -78,6 +79,27 @@ describe('csrfInterceptor', () => {
     const req = httpTesting.expectOne('/v1/books');
     expect(req.request.headers.has('X-CSRF-Token')).toBe(false);
     req.flush({});
+  });
+
+  it('is a no-op on the server platform even on a POST with the cookie present', () => {
+    // Reset to a fresh module so we can swap PLATFORM_ID.
+    httpTesting.verify();
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(withFetch(), withInterceptors([csrfInterceptor])),
+        provideHttpClientTesting(),
+        { provide: PLATFORM_ID, useValue: 'server' },
+      ],
+    });
+    const httpServer = TestBed.inject(HttpClient);
+    const ctrlServer = TestBed.inject(HttpTestingController);
+
+    httpServer.post('/v1/books', {}).subscribe();
+    const req = ctrlServer.expectOne('/v1/books');
+    expect(req.request.headers.has('X-CSRF-Token')).toBe(false);
+    req.flush({});
+    ctrlServer.verify();
   });
 
   it('does not add X-CSRF-Token on HEAD or OPTIONS even when the cookie is present', () => {

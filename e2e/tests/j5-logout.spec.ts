@@ -70,10 +70,10 @@ test.describe('J5: logout and re-protection', () => {
     //    `GET /v1/test/session-debug` endpoint. Both Playwright `request`
     //    fixtures (test-level and `page.request`) use Node networking, not
     //    Chromium — Node does not honor the chromium `--host-resolver-rules`
-    //    (e2e/playwright.config.ts) that route `localhost:8000` → `bff:8000`,
-    //    so a Node-side GET to `http://localhost:8000/...` is ECONNREFUSED
-    //    inside the compose runner. Issue the fetch from inside the page
-    //    instead — the browser DOES honor resolver-rules AND auto-attaches
+    //    (e2e/playwright.config.ts) that route `localhost:4000` → `spa:4000`;
+    //    inside the compose runner Node resolves `localhost:4000` to its own
+    //    loopback (the SPA edge is on the compose network). Issue the fetch
+    //    from inside the page instead — the browser DOES honor resolver-rules AND auto-attaches
     //    the same-origin `bff_session` cookie.
     const captured = await page.evaluate(async (token: string) => {
       const resp = await fetch('/v1/test/session-debug', {

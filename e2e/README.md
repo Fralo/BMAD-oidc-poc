@@ -37,20 +37,16 @@ runner uses `http://keycloak:8080` instead and the playwright service in
 `compose/app.yml` sets it automatically.
 
 `npm test` invokes `playwright test` with the configuration in
-`playwright.config.ts`. The `dev` profile excludes the SPA — `ng serve` is
-expected to be running on the host if a spec needs the SPA in the loop. The
-helpers (`fixtures/helpers.ts`) target `http://localhost:8000` by default
-(`baseURL` in the config).
+`playwright.config.ts`. Post-Epic-6 the fully containerised stack (Keycloak +
+BFF + RS + SPA SSR edge) is the only supported E2E target. The `dev` profile
+and the `ng serve` / `spa/proxy.conf.json` host-side workflow were retired by
+Story 6.1. The helpers (`fixtures/helpers.ts`) target `http://localhost:4000`
+by default (`baseURL` in the config — flipped from `:8000` by Story 6.4).
 
 Pick the `baseURL` based on which stack you're targeting:
 
-- **Fully containerized stack** (BFF serves the built SPA bundle): the default
-  `http://localhost:8000` is correct — leave `E2E_BASE_URL` unset.
-- **Local dev with `ng serve`** (the typical Angular dev workflow under the
-  `dev` profile): export `E2E_BASE_URL=http://localhost:4200` before running
-  `npm test`. The SPA's `/login` route is served by `ng serve` at `:4200`
-  (the BFF has no `/login` endpoint); `ng serve`'s proxy (`spa/proxy.conf.json`)
-  forwards `/auth`, `/api`, and `/v1` calls back to the BFF at `:8000`.
+- **Fully containerised stack** (SPA SSR edge on `:4000` proxies the BFF): the
+  default `http://localhost:4000` is correct — leave `E2E_BASE_URL` unset.
 
 ## Running via compose
 
@@ -76,12 +72,11 @@ from failed runs) land in `e2e/test-results/` on the host via the bind mount.
 ## Environment variables
 
 - `E2E_BASE_URL` — base URL Playwright navigates to. Defaults to
-  `http://localhost:8000`, which is correct when targeting the fully
-  containerized stack (BFF serves the built SPA bundle). Override to
-  `http://localhost:4200` when targeting `ng serve` under the `dev` profile,
-  since the SPA's `/login` route lives on the dev server (not the BFF). The
-  `e2e` compose profile sets it to `http://bff:8000` automatically so the
-  runner reaches the BFF via the compose network.
+  `http://localhost:4000` (SPA SSR edge, the browser-facing origin post-Epic-6).
+  The `e2e` compose profile sets it to `http://localhost:4000` automatically
+  via `compose/app.yml` playwright service `E2E_BASE_URL` (Story 6.4 flip).
+  The `ng serve` / `:4200` override and the `dev` profile were retired by
+  Story 6.1.
 - `TEST_RESET_TOKEN` — bearer token required by `resetState` and by the J5
   spec's `GET /v1/test/session-debug` capture. Must be set in the repo-root
   `.env` for either workflow; the `e2e` profile forwards it to the runner

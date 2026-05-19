@@ -323,9 +323,11 @@ async def test_client_with_csrf_fixture_round_trips(
 
 
 async def test_csrf_reject_carries_no_csp_header(client: AsyncClient) -> None:
-    # SecurityHeadersMiddleware is INNER to CsrfMiddleware in the LIFO onion.
-    # A CSRF short-circuit therefore bypasses the CSP attach step — the 403
-    # is JSON and must not carry a Content-Security-Policy header.
+    # Story 6.4 / A8 amendment: CSP source moved to the SPA SSR edge; the
+    # BFF no longer attaches CSP on any response. This regression test stays
+    # to lock in that posture — a CSRF 403 from the BFF is JSON and must
+    # never carry a Content-Security-Policy header (CSP belongs only on
+    # the SPA edge's SSR HTML responses).
     response = await client.post("/test/open", json={"value": "x"})
     assert response.status_code == 403
     assert "content-security-policy" not in response.headers

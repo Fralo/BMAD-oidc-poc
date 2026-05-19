@@ -1,17 +1,26 @@
 # docker-compose.yml
 # Top-level entry point. Composition is split into two included files so each
 # tier stays small and reviewable.
-#   - compose/infra.yml  : Keycloak                         (Story 1.2)
-#   - compose/app.yml    : BFF, Resource Server             (Stories 1.3, 3.1)
-#                          + SPA bundle baked into the BFF image (Story 1.14)
+#   - compose/infra.yml  : Keycloak                                       (Story 1.2)
+#   - compose/app.yml    : BFF (API-only), Resource Server, SPA SSR edge  (Stories 1.3, 3.1, 6.2)
+#
+# Story 6.2 split the SPA out of the BFF image into its own Angular SSR
+# Node container. Story 6.3 finalized the split by deleting the BFF's
+# Story-1.14 static-serve code path and reverting the BFF build context to
+# per-service — the BFF is now API-only. The browser-facing host port is
+# `:${SPA_HOST_PORT:-4000}` (the SPA edge); the BFF has no host port and is
+# reachable only on the compose network as `http://bff:8000`.
 #
 # Profile model (D140 follow-up): one profile, `e2e`, scopes the Playwright
 # runner only. Bare `docker compose up` brings up the full baseline stack
-# (Keycloak + BFF + RS). The retired `default` / `dev` profiles produced
-# identical containers; the "dev" workflow is `docker compose up` plus
-# `cd spa && npm start` on the host, which needs no compose-side gating.
-# The e2e workflow stays behind `just e2e-up` (the `-f compose/app.e2e.yml`
-# overlay applies the test-reset env vars and flips RS AUTH_TYPE=oidc_bearer).
+# (Keycloak + BFF + RS + SPA). The retired `default` / `dev` profiles
+# produced identical containers; the "dev" workflow is now containerized —
+# bare `docker compose up` brings up the full topology including the SPA
+# SSR edge. Host-side `cd spa && npm start` was retired with Story 6.1's
+# deletion of `spa/proxy.conf.json`. The e2e workflow stays behind
+# `just e2e-up` (the `-f compose/app.e2e.yml` overlay applies the test-reset
+# env vars and flips RS AUTH_TYPE=oidc_bearer; the e2e harness is a Story
+# 6.4 sweep target — it still pins `:8000` references until then).
 include:
   - compose/infra.yml
   - compose/app.yml

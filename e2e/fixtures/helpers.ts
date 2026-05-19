@@ -52,12 +52,14 @@ export async function resetState(
   //
   // The Playwright `request` fixture uses Node's networking, not Chromium's;
   // it does NOT honor the chromium `--host-resolver-rules` that remap
-  // `localhost:8000` → `bff:8000` for browser navigation. Inside the compose
-  // runner, Node would resolve `localhost:8000` to its own loopback (no
-  // listener → ECONNREFUSED). Setting `BFF_BASE_URL=http://bff:8000` on the
-  // playwright service routes the reset through compose DNS. Host-side
+  // `localhost:4000` → `spa:4000` for browser navigation. Inside the compose
+  // runner, Node resolves `localhost:4000` to its own loopback — the SPA edge
+  // is on the compose network, not the runner's loopback. Setting
+  // `BFF_BASE_URL=http://bff:8000` on the playwright service routes the
+  // reset directly through compose DNS, bypassing the SPA proxy. Host-side
   // workflows leave it unset → the helper falls back to the request's
-  // baseURL (typically `http://localhost:8000` per playwright.config.ts).
+  // baseURL (typically `http://localhost:4000` per playwright.config.ts,
+  // which would route the POST via the SPA edge proxy).
   const bffBaseUrl = process.env.BFF_BASE_URL ?? '';
   const bffResp = await request.post(`${bffBaseUrl}/v1/test/reset`, {
     headers: { Authorization: `Bearer ${opts.resetToken}` },

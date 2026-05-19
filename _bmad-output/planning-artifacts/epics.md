@@ -1931,3 +1931,115 @@ So that the production-shaped deployment is verifiable beyond the `e2e` profile 
 **Given** the README's "Prod-shaped workflow" section,
 **When** a reviewer follows it,
 **Then** it points at this document as the verification artifact.
+
+## Epic 6: Frontend Split & SSR Edge
+
+Introduced 2026-05-19 via `bmad-correct-course` after Epic 5 closed. The Sprint Change Proposal at `_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-19.md` is the scope authority. Epic 6 extracts the SPA out of the BFF image into its own Angular SSR container, makes the BFF API-only, moves the browser-facing host port from `:8000` (BFF) to `:4000` (SPA SSR edge), and moves CSP attachment from the BFF's Starlette middleware to the SPA edge's Express middleware (architecture A8 amendment). Same-origin model preserved through the SPA edge's transparent in-network reverse-proxy mount. The four stories below close the epic; Story 6.4 is the canonical close and flips `epic-6: in-progress → done` in `sprint-status.yaml`.
+
+### Story 6.1: SPA Angular SSR scaffold + proxy mount + cookie forwarding
+
+As the SPA application,
+I want to run as an Angular SSR Express server with `http-proxy-middleware` reverse-proxying `/auth /api /v1` to the BFF over compose DNS, plus SSR-time HTTP interceptors that rewrite relative API URLs to the absolute `BFF_INTERNAL_URL` and forward the inbound browser's cookies on the bootstrap `/api/me` call,
+so that the SPA can be deployed as its own container with the BFF internal-only on the compose network while preserving the same-origin browser experience.
+
+**Acceptance Criteria:**
+
+**Given** `ng add @angular/ssr` has been applied to the `spa/` workspace,
+**When** the SSR build runs,
+**Then** `spa/dist/spa/server/server.mjs` exists and `node dist/spa/server/server.mjs` listens on `PORT=4000` and SSR-renders `<app-root>` with `ng-server-context="ssr"` on the response HTML.
+
+**Given** `spa/src/server.ts` exists,
+**When** a browser request hits `/auth /api /v1` paths,
+**Then** the Express server reverse-proxies the request to `${BFF_INTERNAL_URL}` (default `http://bff:8000`) via `http-proxy-middleware` v3 with `changeOrigin: true` + `xfwd: true`, byte-for-byte forwarding all browser headers including `Cookie`, `Origin`, `X-CSRF-Token`.
+
+**Given** the Angular bootstrap requests `/api/me` from the server platform,
+**When** the SSR HttpClient issues the call,
+**Then** the `ssrApiUrlInterceptor` rewrites the relative URL to `${BFF_INTERNAL_URL}/api/me` (no-op in the browser platform) AND the `ssrCookieForwardInterceptor` attaches the inbound browser's `Cookie` header onto the outbound SSR-time request (no-op in the browser platform).
+
+**Given** `/_health` is registered before the proxy mount,
+**When** a `GET /_health` request hits the SPA edge,
+**Then** the response is `{ ok: true }` HTTP 200 — used by compose's `spa.healthcheck`.
+
+**Source:** Sprint Change Proposal 2026-05-19 §4 Story 6.1.
+
+### Story 6.2: SPA Dockerfile + compose service + Keycloak realm port pin
+
+As the deployment configuration,
+I want a `spa/Dockerfile` (Node multi-stage `deps → build → runtime`) packaged as the `spa` compose service taking host port `${SPA_HOST_PORT:-4000}`, AND a Keycloak realm port pin that flips the BFF client's `redirectUris` / `webOrigins` / `attributes.post.logout.redirect.uris` from `http://localhost:8000` to `http://localhost:${SPA_HOST_PORT:4000}`,
+so that bare `docker compose up` brings up the full baseline including the SPA SSR edge as the only browser-facing port and the OAuth callback round-trip lands at the SPA edge instead of the BFF.
+
+**Acceptance Criteria:**
+
+**Given** `spa/Dockerfile` exists,
+**When** `docker compose build spa` runs,
+**Then** the image is built in three stages (`deps → build → runtime`) and the runtime entrypoint is `node dist/spa/server/server.mjs`.
+
+**Given** `compose/app.yml` defines a `spa` service,
+**When** bare `docker compose up` runs,
+**Then** the `spa` container starts unconditionally (no `profiles:` filter), publishes host port `${SPA_HOST_PORT:-4000}:4000`, depends on `bff: { condition: service_healthy }`, runs with `init: true`, and the healthcheck on `/_health` flips green within the start-period envelope.
+
+**Given** the BFF service block in `compose/app.yml`,
+**When** post-Story-6.2 `docker compose ps` is inspected,
+**Then** the `bff` row carries NO host-published port — the BFF is internal-only on the compose network at `http://bff:8000`. Probe: `curl http://localhost:8000/health` returns `connection_refused`.
+
+**Given** `keycloak/realm-bmad-books.json`,
+**When** the realm is imported at Keycloak container start,
+**Then** the BFF client carries `redirectUris=["http://localhost:${SPA_HOST_PORT:4000}/auth/callback"]`, `webOrigins=["http://localhost:${SPA_HOST_PORT:4000}"]`, and `attributes.post.logout.redirect.uris="http://localhost:${SPA_HOST_PORT:4000}/*"` — the bare `:` substitution form is Quarkus MicroProfile syntax; the Keycloak service in `compose/infra.yml` passes `SPA_HOST_PORT` as an env pass-through so the substitution resolves at boot.
+
+**Source:** Sprint Change Proposal 2026-05-19 §4 Story 6.2.
+
+### Story 6.3: BFF cleanup — supersede Story 1.14
+
+As the BFF service,
+I want the Story-1.14 SPA-in-BFF code surface removed (the `node-builder` Dockerfile stage, the `_register_spa` / `_SPA_DIR` / `_spa_or_404` glue in `services/bff/src/bff/main.py`, the static-mount test at `services/bff/tests/api/test_static.py`, and the BFF's host-port mapping in `compose/app.yml`),
+so that the BFF is API-only and the supersession of Story 1.14 by Epic 6 is reflected in the code surface (not just the planning artefacts).
+
+**Acceptance Criteria:**
+
+**Given** `services/bff/Dockerfile`,
+**When** the post-Story-6.3 file is inspected,
+**Then** the multi-stage `node-builder` stage that compiled the SPA is removed; the final image carries no `/app/static` directory and no Node toolchain.
+
+**Given** `services/bff/src/bff/main.py`,
+**When** the post-Story-6.3 file is inspected,
+**Then** `git grep -nE '_register_spa|_SPA_DIR|_spa_or_404|StaticFiles' services/bff/src/bff/main.py` returns zero matches; the file mounts only the JSON API surface.
+
+**Given** `services/bff/tests/api/`,
+**When** the post-Story-6.3 directory is inspected,
+**Then** `test_static.py` is deleted via `git rm`; no test in the BFF suite depends on the static-serve path.
+
+**Given** Story 1.14's implementation artefact `_bmad-output/implementation-artifacts/1-14-bff-multi-stage-build-serves-spa-bundle.md`,
+**When** the post-Story-6.3 frontmatter is inspected,
+**Then** it carries a `superseded_by: "Epic 6 (stories 6.1–6.4) — Sprint Change Proposal 2026-05-19"` field and a top-of-document banner pointing readers to the SCP.
+
+**Source:** Sprint Change Proposal 2026-05-19 §4 Story 6.3.
+
+### Story 6.4: Re-validation — e2e + smoke + docs sweep (Epic 6 close)
+
+As Epic 6 itself,
+I want the e2e harness to run J1–J6 green against the new `:4000` SPA-edge origin, the smoke artefact to gain a new Epic-6 Run Record (preserving the 2026-05-18 record byte-identical), the security review's §2 + §3 + §6 attestations to cite the SPA-edge as the HTML / CSP source, the coverage report to acknowledge the SSR Express server's test surface, the README's Setup / Architecture / Dev / Prod-shaped sections to describe the split topology, the architecture document's F3 / I6 / A8 to update + F7 / I9 to land, the PRD §6 SPA bullet to gain a one-line SSR clarification, this epics.md to append the Epic 6 four-story block, and the BFF's `security_headers.py` CSP middleware to move to the SPA edge (closing the A8 amendment),
+so that the project's submission state reflects Epic 6's frontend-split reality end-to-end — code surface, e2e contract, security attestation, coverage attestation, smoke attestation, README onboarding, architecture decisions, and PRD/epic planning artefacts.
+
+**Acceptance Criteria:**
+
+**Given** the e2e config flips: `e2e/playwright.config.ts` `baseURL` `http://localhost:8000` → `http://localhost:4000`; `--host-resolver-rules` add `MAP localhost:4000 spa:4000`, remove `MAP localhost:8000 bff:8000`; `compose/app.yml` `playwright:` service `E2E_BASE_URL` flip + `depends_on: spa` add,
+**When** `just e2e-up` runs from the repo root,
+**Then** the runner exits 0 with 26/26 specs green (J1×3, J2×8, J3×5, J4×5, J5×2, J6×3 — same per-journey breakdown as Story 5.1's audit).
+
+**Given** the CSP middleware moves from BFF → SPA edge per A8 amendment,
+**When** the post-Story-6.4 file tree is inspected,
+**Then** `services/bff/src/bff/middleware/security_headers.py` is deleted, `services/bff/src/bff/main.py` does not import or register the middleware, `services/bff/tests/middleware/test_security_headers.py` is deleted, AND `spa/src/server/csp.middleware.ts` exists with a Vitest spec asserting the byte-for-byte CSP value. Live attestation: `curl -sSI http://localhost:4000/login | grep -i 'content-security-policy'` returns the CSP byte string; `curl -sSI http://localhost:4000/api/me | grep -ic 'content-security-policy'` returns 0 (proxied BFF responses are not CSP-stamped).
+
+**Given** `docs/smoke-run.md` is the smoke-run artefact,
+**When** the post-Story-6.4 file is inspected,
+**Then** the historical 2026-05-18 Run Record (Story 5.4 close, lines 54–143) is byte-identical to its pre-6.4 state, AND a new "Run Record — Epic 6 close (2026-05-19)" section is appended with the Mode-B HTTP-probe transcript (5 probes + J6 surrogate) at the post-Epic-6 SPA-SSR-edge topology.
+
+**Given** the planning artefacts `architecture.md` / `PRD.md` / `epics.md`,
+**When** the post-Story-6.4 files are inspected,
+**Then** `architecture.md` carries F3 / I6 / A8 amendments + new F7 + new I9 + §"Architectural Boundaries" diagram refresh; `PRD.md` §6 SPA bullet carries the one-line SSR clarification (no other PRD edits); `epics.md` carries this Epic 6 section appended after Epic 5.
+
+**Source:** Sprint Change Proposal 2026-05-19 §4 Story 6.4.
+
+### Epic 6 close
+
+Story 6.4 is the canonical close. Once Story 6.4 lands as `review` → `done`, `sprint-status.yaml` flips `epic-6: in-progress → done`. The epic-retrospective entry stays at `optional` — Epic 6 is short enough that a formal retro is not load-bearing; if a future session wants one, flip `epic-6-retrospective: optional → backlog`.

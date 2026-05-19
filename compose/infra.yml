@@ -30,6 +30,14 @@ services:
       # 26.0). We bridge the two here so the AR29 contract is preserved.
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      # Story 6.2: env pass-through for the realm-import substitution.
+      # `keycloak/realm-bmad-books.json` references `${SPA_HOST_PORT:4000}`
+      # (Keycloak / Quarkus MicroProfile syntax — BARE colon as default
+      # separator, NOT bash-style `:-`). Substitution runs once at boot
+      # when `start-dev --import-realm` imports the realm into the empty
+      # data volume; subsequent ups do NOT re-run the import, so changing
+      # this value requires `docker compose down -v` first.
+      SPA_HOST_PORT: ${SPA_HOST_PORT:-4000}
     ports:
       # 8080: OIDC + admin console (browser-facing).
       # 9000: management/health endpoint (enabled by KC_HEALTH_ENABLED=true).

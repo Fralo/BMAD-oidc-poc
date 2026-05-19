@@ -1,17 +1,3 @@
-# ── Stage 0: Node SPA builder ──────────────────────────────────────────────
-FROM node:22-slim AS node-builder
-
-WORKDIR /spa
-
-# Install deps first (layer-cache friendly: only re-runs when lockfile changes)
-COPY spa/package.json spa/package-lock.json ./
-RUN npm ci --prefer-offline
-
-# Copy full SPA source and build production bundle
-COPY spa/ ./
-RUN npm run build
-# Output: /spa/dist/spa/browser  (Angular 17+ default; confirmed in spa/angular.json)
-
 # ── Stage 1: Python dependency builder ─────────────────────────────────────
 FROM python:3.14-slim AS builder
 
@@ -23,15 +9,17 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Build context is now the repo root (compose/app.yml sets context: ..).
-# All paths below are relative to the repo root.
+# Build context is the per-service directory (`services/bff/`, set in
+# `compose/app.yml`). All paths below are relative to `services/bff/`.
+# Story 6.3 reverted the Story-1.14 repo-root context — the front-end
+# build stage that required reaching a sibling directory is gone.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=services/bff/uv.lock,target=uv.lock \
-    --mount=type=bind,source=services/bff/pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=services/bff/.python-version,target=.python-version \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=.python-version,target=.python-version \
     uv sync --locked --no-install-project --no-dev --no-editable
 
-COPY services/bff/ /app/
+COPY . /app/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
@@ -50,10 +38,6 @@ COPY --from=builder --chown=app:app /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=app:app /app/alembic /app/alembic
 COPY --from=builder --chown=app:app /app/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-
-# Copy the compiled Angular SPA bundle from the Node builder stage.
-# At runtime this is served by BFF's StaticFiles mount at "/" (AC3, AR24).
-COPY --from=node-builder --chown=app:app /spa/dist/spa/browser /app/static
 
 WORKDIR /app
 

@@ -40,7 +40,6 @@ from bff.core.errors import (
     app_exception_handler,
     validation_exception_handler,
 )
-from bff.middleware.security_headers import SecurityHeadersMiddleware
 from bff.models import entities
 
 # ---------------------------------------------------------------------------
@@ -66,8 +65,9 @@ def _build_app(*, enable: bool, token: str) -> FastAPI:
     gate evaluation sees the test-supplied values.
 
     The CSRF middleware is wired in to exercise scenario #15 (exemption
-    must actually fire on a real app, not on a mocked one). The
-    SecurityHeadersMiddleware is wired in for parity.
+    must actually fire on a real app, not on a mocked one). Story 6.4
+    removed the CSP-attachment middleware from this helper (CSP source
+    moved to the SPA SSR edge per architecture A8 amendment).
     """
     # We deliberately mutate the global settings singleton — the helper's
     # caller is expected to restore via `monkeypatch.setattr` (which we
@@ -76,7 +76,6 @@ def _build_app(*, enable: bool, token: str) -> FastAPI:
     settings.test_reset_token = token
 
     app = FastAPI(title="bff-test", lifespan=None)
-    app.add_middleware(SecurityHeadersMiddleware)  # ty: ignore[invalid-argument-type]
     app.add_middleware(CsrfMiddleware)  # ty: ignore[invalid-argument-type]
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)

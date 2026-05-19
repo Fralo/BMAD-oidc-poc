@@ -126,6 +126,8 @@ redirect.set_cookie(
 **Pin-test references:**
 - [`services/bff/tests/auth/test_keycloak_cookie_session.py`](../services/bff/tests/auth/test_keycloak_cookie_session.py) — pins every `HttpOnly` / `SameSite` / `Secure` / `Path` value across the auth-flow cookie surface.
 
+**Edge-proxy footnote (Epic 6 split).** Post-Epic 6 the browser does not connect to the BFF directly — it connects to the SPA SSR edge on `http://localhost:${SPA_HOST_PORT:-4000}` (the only browser-facing host port; the BFF has no host port and is internal-only on the compose network). The cookies described above are set BY the BFF on `/auth/callback` responses; the SPA edge's `http-proxy-middleware` mount ([`spa/src/server.ts`](../spa/src/server.ts) lines 55–73) forwards the BFF's `Set-Cookie` headers byte-for-byte to the browser (the proxy does not strip, rewrite, or inspect cookie values — `changeOrigin: true` only rewrites the upstream `Host` header). On subsequent browser requests, the same proxy mount forwards the browser's `Cookie` header byte-for-byte upstream so the BFF's session-cookie dependency reads identical values to those it set. The SPA edge holds no auth state and never reads or modifies the cookies — it is a transparent in-network relay for the cookie surface. See §"Edge proxy" subsection in §6 for the full edge-proxy security model.
+
 ---
 
 ## 3. CSRF posture
@@ -206,6 +208,8 @@ with HTTP status `403`. The error code is defined at `services/bff/src/bff/core/
 **Pin-test references:**
 - [`services/bff/tests/auth/test_csrf.py`](../services/bff/tests/auth/test_csrf.py) — every layer: exempt-method bypass, missing header, missing cookie, mismatched header, missing `Origin` AND `Referer`, `Origin` valid + `Referer` absent, `Referer` fallback when `Origin` missing, userinfo-in-Origin rejection, constant-time-compare boundaries.
 - [`spa/src/app/shared/http/csrf-interceptor.spec.ts`](../spa/src/app/shared/http/csrf-interceptor.spec.ts) — SPA cookie→header echo on POST/PUT/PATCH/DELETE.
+
+**Edge-proxy footnote (Epic 6 split).** Layer 3's `Origin` / `Referer` check reads `settings.bff_base_url`, which Story 6.2 flipped from `http://localhost:8000` to `http://localhost:${SPA_HOST_PORT:-4000}` (see [`compose/app.yml`](../compose/app.yml) lines 59–67) — the SPA-edge-facing origin that the browser actually sees. The SPA edge's `http-proxy-middleware` mount is configured with `changeOrigin: true` ([`spa/src/server.ts`](../spa/src/server.ts) line 59), which rewrites the upstream HTTP `Host` header to `bff:8000` on the inside, but the browser's `Origin` header passes through unchanged. The BFF's `_origin_matches` helper compares the unchanged `Origin` value against `settings.bff_base_url` (now `localhost:${SPA_HOST_PORT:-4000}`) and the values match. The trust boundary is unchanged from the pre-Epic-6 posture: the BFF still anchors its CSRF check on the browser's reported `Origin` against the configured browser-facing base URL; only the URL value changed. See Story 6.2 changelog for the realm + base-URL flip; see §"Edge proxy" subsection in §6 for the proxy semantics.
 
 ---
 
@@ -348,7 +352,7 @@ Each endpoint declares its required scope via `Depends(require_scope("<scope>"))
 
 ### Content-Security-Policy
 
-The BFF emits a single CSP response header on every HTML response. The exact value, sourced verbatim from [`services/bff/src/bff/middleware/security_headers.py:17–21`](../services/bff/src/bff/middleware/security_headers.py):
+The SPA SSR edge emits a single CSP response header on every SSR-rendered HTML response. The exact value, sourced verbatim from [`spa/src/server/csp.middleware.ts`](../spa/src/server/csp.middleware.ts) (Story 6.4 / architecture A8 amendment — CSP attachment moved from the BFF's Starlette middleware to the SPA edge's Express middleware; the value did not change, only the attaching service did):
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
@@ -358,16 +362,16 @@ Directive-by-directive:
 
 | Directive | Value | Why |
 |-----------|-------|-----|
-| `default-src 'self'` | only resources from the BFF origin | baseline lockdown |
-| `script-src 'self'` | only scripts from the BFF origin; no inline scripts | first-line XSS defense — even if an injection point exists in HTML, inline scripts won't execute |
+| `default-src 'self'` | only resources from the SPA-edge origin | baseline lockdown |
+| `script-src 'self'` | only scripts from the SPA-edge origin; no inline scripts | first-line XSS defense — even if an injection point exists in HTML, inline scripts won't execute |
 | `style-src 'self' 'unsafe-inline'` | self + inline styles permitted | required because Tailwind v4 emits inline `<style>` content from the `@theme` block in `spa/src/styles.css` |
 | `img-src 'self' data:` | self + data URLs | data URLs accommodate inline SVG / small placeholder icons used by Angular components |
-| `connect-src 'self'` | only same-origin `fetch` / XHR / WebSocket | SPA only talks to the BFF on the same origin; no external API surface |
+| `connect-src 'self'` | only same-origin `fetch` / XHR / WebSocket | SPA only talks to the BFF via the SPA edge's same-origin proxy; no external API surface |
 | `frame-ancestors 'none'` | no embedding under any origin | clickjacking defense; supersedes legacy `X-Frame-Options: DENY` |
 | `base-uri 'self'` | `<base>` tag restricted | prevents an injected `<base href="https://attacker.example/">` from re-routing relative URLs |
 | `form-action 'self'` | form submissions only to same origin | defends against form-action hijacking via injected `<form action="...">` |
 
-**Attachment rule.** CSP is attached only when the request carries `Accept: text/html` AND the response is on an SPA path (not `/auth/*`, `/api/*`, `/v1/*`, `/health`). The trigger is the request `Accept` header rather than the response `Content-Type` — a deliberate choice tested byte-for-byte by [`services/bff/tests/middleware/test_security_headers.py`](../services/bff/tests/middleware/test_security_headers.py). A future SSR migration would prefer the response-`Content-Type`-driven approach; that is tracked as D369 in [`deferred-work.md`](../_bmad-output/implementation-artifacts/deferred-work.md).
+**Attachment rule.** CSP is attached to every non-proxied response (SSR-rendered HTML and static browser assets) by the SPA edge's Express middleware, registered in [`spa/src/server.ts`](../spa/src/server.ts) at step 3 (after the proxy mount at step 2, before `express.static` at step 4 and the Angular SSR catch-all at step 5). The placement is load-bearing: BFF-proxied responses on `/auth /api /v1` (always JSON) short-circuit at the proxy mount and never reach the CSP middleware, so they correctly do NOT carry CSP. All remaining requests — SSR HTML rendered by the Angular handler AND static assets (JS bundles, CSS, fonts, images) served by `express.static` — pass through the CSP middleware first, so they DO carry CSP. Attaching CSP to static assets is harmless and matches the pre-Epic-6 BFF posture (`server.ts` lines 81–83). The middleware is unconditional (no request-`Accept` predicate, no response-`Content-Type` predicate) — middleware placement, not predicate logic, decides which surface gets the header. The historical request-`Accept`-header-driven attachment rule in the BFF middleware (D369) is moot post-6.4; D369 closes alongside the CSP source move. Probe 4 in [`docs/smoke-run.md`](smoke-run.md) (Epic-6 Run Record) is the live attestation: `curl -sSI http://localhost:4000/login` returns the byte string above, and `curl -sSI http://localhost:4000/api/me` (proxied to the BFF) does not.
 
 The `style-src 'unsafe-inline'` carve-out is the one knowingly-relaxed directive. The architecture A8 decision (lines 350–354) accepts it as the cost of using Tailwind v4 without a build-time nonce-injector. Future hardening (D371) could remove the carve-out by computing a per-request nonce for the inlined Tailwind style block and threading it through the Angular bootstrap. This story does not undertake that work.
 
@@ -376,6 +380,14 @@ The `style-src 'unsafe-inline'` carve-out is the one knowingly-relaxed directive
 ### No tokens reachable from JavaScript
 
 Restating §1's contract from the SPA perspective: the session cookie is `HttpOnly`; the only browser-readable cookie is the CSRF token (intentionally — it is not a secret); no access / refresh / id token ever reaches the browser. The architectural constraint "Token isolation" (architecture line 36) is the load-bearing rule and the §"Threat Model Summary" XSS entry below explains why this matters even when XSS is the assumed-compromised case.
+
+### Edge proxy
+
+**Edge-proxy security model.** Post-Epic 6 the SPA SSR Express server ([`spa/src/server.ts`](../spa/src/server.ts), Story 6.1) is a trusted in-network relay between the browser and the BFF. It runs on `http://localhost:${SPA_HOST_PORT:-4000}` (the only host-published port on the public-facing surface); the BFF has no host port and is reachable only at `http://bff:8000` on the compose network (Story 6.2 AC5; Probe 5 in the Epic-6 Run Record attests `http://localhost:8000/health` returns `connection_refused`).
+
+**What the SPA edge does NOT carry.** No auth state, no token state, no session-cookie inspection, no CSRF state, no business logic. The Express middleware chain is, in registration order: `/_health` probe → `/auth /api /v1` proxy mount (`http-proxy-middleware` v3 with `changeOrigin: true`, `xfwd: true`) → CSP middleware (Story 6.4) → static-asset middleware → Angular SSR catch-all. The proxy mount injects `X-Forwarded-For`, `X-Forwarded-Host`, and `X-Forwarded-Proto` headers on every upstream request (`xfwd: true`); if a client sends a forged `X-Forwarded-For`, `http-proxy-middleware` appends rather than replaces — see D150 (trust-proxy not configured). No application-level header is read, modified, or removed by the SPA edge: `Cookie`, `Origin`, `X-CSRF-Token`, and `Authorization` (if any future call carries one) pass through byte-for-byte.
+
+**Implications.** Compromise of the SPA-edge container compromises browser observability (an attacker with code execution in the container could log request bodies) but does NOT compromise tokens (still server-side at the BFF, untouched by the edge) or grant token-level access to the RS (the BFF still owns the bearer-attach step in [`services/bff/src/bff/services/resource_server_client.py`](../services/bff/src/bff/services/resource_server_client.py)). The SPA edge has the same trust profile as a TLS-terminating ingress in a production deployment — load-bearing for headers in transit, not for credentials at rest. CSRF posture is preserved exactly because the edge passes the browser's `Origin` header through unchanged (see §3 Edge-proxy footnote); session cookies are preserved exactly because the edge passes `Set-Cookie` / `Cookie` headers through unchanged (see §2 Edge-proxy footnote).
 
 ### Output escaping (XSS at the template layer)
 
@@ -409,13 +421,14 @@ The chosen versions, current as of this report's authoring date (`2026-05-18`):
 The dependency hygiene point in PRD §9 is satisfied by stating these versions and their currency. No automated CVE scanner output is required by the PRD — the project trades the snapshot-in-time signal of a `bandit` / `trivy` / `npm audit` roll-up for the more durable signal of "we picked recent, maintained components and we know which ones." A production deployment would add a scheduled scanner; that is captured as the "no GitHub Actions CI workflow" item under Known Gaps.
 
 **Implementing code paths:**
-- [`services/bff/src/bff/middleware/security_headers.py`](../services/bff/src/bff/middleware/security_headers.py) — CSP middleware (lines 17–21 for the value; lines 30–50 for the attachment logic).
-- [`services/bff/src/bff/main.py`](../services/bff/src/bff/main.py) — middleware registration.
+- [`spa/src/server/csp.middleware.ts`](../spa/src/server/csp.middleware.ts) — CSP middleware (Story 6.4; byte-for-byte value + Express middleware signature).
+- [`spa/src/server.ts`](../spa/src/server.ts) — middleware registration order: proxy mount → CSP middleware → static assets → Angular SSR catch-all.
 - [`spa/src/styles.css`](../spa/src/styles.css) — Tailwind v4 `@theme` block (the reason `style-src 'unsafe-inline'` is in CSP).
 - [`spa/package.json`](../spa/package.json) + [`spa/angular.json`](../spa/angular.json) — Angular 21 + Tailwind 4 + Vitest 4 toolchain.
 
 **Pin-test references:**
-- [`services/bff/tests/middleware/test_security_headers.py`](../services/bff/tests/middleware/test_security_headers.py) — CSP value byte-for-byte; attachment-trigger rule (HTML responses to SPA paths get CSP; JSON API responses do not).
+- [`spa/src/server/csp.middleware.spec.ts`](../spa/src/server/csp.middleware.spec.ts) — CSP value byte-for-byte (Vitest unit test against the Express middleware signature with a synthetic Request / Response pair).
+- Probe 4 in [`docs/smoke-run.md`](smoke-run.md) Epic-6 Run Record (2026-05-19) — live attestation that `curl -sSI http://localhost:4000/login` returns the byte string and `curl -sSI http://localhost:4000/api/me` does not.
 
 ---
 

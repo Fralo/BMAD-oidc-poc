@@ -52,7 +52,7 @@ A single role: **authenticated end user**. Each user sees only their own books a
 
 The system is composed of four cooperating services plus a database. Ownership boundaries are a deliberate part of the design and should be preserved by the architecture.
 
-- **Single Page Application (SPA)** — the user-facing client. Holds no tokens. Authenticates to the BFF via an HttpOnly session cookie. Communicates only with the BFF.
+- **Single Page Application (SPA)** — the user-facing client. Holds no tokens. Authenticates to the BFF via an HttpOnly session cookie. Communicates only with the BFF. Runs as an Angular SSR Node service whose Express server is the browser-facing edge; the BFF is internal-only on the compose network (Epic 6 split).
 - **Backend for Frontend (BFF)** — a confidential OAuth client. Handles the OIDC login flow, holds access and refresh tokens server-side, exposes a cookie-authenticated API to the SPA, and owns the book domain and its database.
 - **Authorization Server** — an OpenID Connect provider (Keycloak in this implementation). Issues ID tokens, access tokens, and refresh tokens; hosts the user database; serves the JWKS endpoint used by the resource server. Configured reproducibly via realm-style import at container startup.
 - **Resource Server** — a stateless, JWT-protected API. Owns user reading-speed data and the reading-time computation. Has no shared state with the BFF and trusts only tokens signed by the authorization server.

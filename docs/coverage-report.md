@@ -34,8 +34,8 @@ The Python `pytest-cov` invocations write HTML to `services/bff/htmlcov/index.ht
 
 ## BFF
 
-- **Aggregate line coverage:** **97.26%** (1421/1461 statements covered; 40 missed)
-- **Test count:** 543 passed in 10.15s
+- **Aggregate line coverage:** **97.26%** (1421/1461 statements covered; 40 missed) — figures from Story 5.1's audit at `3e3612a`. Story 6.4 deleted `src/bff/middleware/security_headers.py` (CSP source moved to the SPA SSR edge per architecture A8 amendment) along with its companion test `tests/middleware/test_security_headers.py`; the deleted middleware was 100%-covered, so the BFF aggregate may drift downward by a fraction of a percentage point at the next audit, but remains well above the `fail_under = 90` archetype gate.
+- **Test count:** 543 passed in 10.15s (Story 5.1 audit). Post-Story-6.4 the BFF suite carries 528 passing tests: `tests/middleware/test_security_headers.py` deletion (Story 6.4) removed 11 tests (the CSP byte-string pin moved to [`spa/src/server/csp.middleware.spec.ts`](../spa/src/server/csp.middleware.spec.ts)); `tests/api/test_static.py` deletion (Story 6.3) removed 4 tests. The delta: 543 − 11 − 4 = 528. Minor cleanups in `tests/api/test_test_reset.py` and `tests/auth/test_csrf.py` carried no test-function removals.
 - **Per-file scores below 70%:** none
 - **Lowest per-file:** `src/bff/core/database.py` at **84%** (8 missed of 50 statements — lines 27-29, 48, 53-55, 79; engine-bootstrap and disposal paths exercised only at process lifecycle, not in unit tests)
 - **Other per-file scores below 95%:** `src/bff/core/config.py` 91% (pydantic-settings env-resolution branches); `src/bff/main.py` 92% (FastAPI lifespan glue); `src/bff/auth/csrf.py` 94%; `src/bff/auth/keycloak_cookie_session.py` 97%; `src/bff/api/auth.py` 96%
@@ -57,11 +57,12 @@ The Python `pytest-cov` invocations write HTML to `services/bff/htmlcov/index.ht
 
 ## SPA
 
-- **Aggregate (statements / branches / functions / lines):** **94.71% / 91.16% / 95.74% / 94.52%** (699/738, 382/419, 90/94, 535/566 respectively)
-- **Test count:** 152 passed across 19 test files in 1.54s
+- **Aggregate (statements / branches / functions / lines):** **94.71% / 91.16% / 95.74% / 94.52%** (699/738, 382/419, 90/94, 535/566 respectively) — figures from Story 5.1's audit at `3e3612a`. Epic 6 added SSR-time surface (the SPA edge Express server) under `spa/src/server.ts` + `spa/src/server/csp.middleware.ts` plus three new SSR HTTP interceptors under `spa/src/app/shared/http/ssr-*.interceptor.ts`; all carry per-file Vitest specs (Story 6.1 + Story 6.4). Post-Story-6.4 the SPA suite carries 168 passing tests across 22 test files; the aggregate may shift slightly when re-audited and the new SSR-server surface is included in the metric base. The per-file floor (≥50% lines) remains satisfied on every file.
+- **Test count:** 152 passed across 19 test files in 1.54s (Story 5.1 audit). Post-Story-6.4: 168 passed across 22 test files (added: `ssr-cookie-forward.interceptor.spec.ts`, `ssr-api-url.interceptor.spec.ts` — Story 6.1; `csp.middleware.spec.ts` — Story 6.4).
 - **Per-file lines below 50% (hard floor):** none
 - **Lowest per-file lines:** `app/shared/errors/error-service.ts` at **78.94%** (uncovered `case` branches within lines 82-96 — the `forbidden_scope` / `csrf_invalid` / `auth_state_invalid` / `book_not_found` / `invalid_input` case-return pairs are not yet exercised by a dedicated test; the three cases the SPA currently relies on — `session_expired`, `reading_speed_unset`, `resource_server_unavailable` — are covered)
 - **Other per-file lines below 90%:** `app/books/estimate-cell.ts` 86.66% (lines 86, 129, 142-143); `app/books/status-control.ts` 88.88% (lines 83-84); `app/books/estimate-cell.html` 90.47% (template branches 14, 33); `app/books/book-row.ts` 90.9% (lines 108-109); `app/books/book-form.ts` 93.75% (5 lines)
+- **New SSR-server surface (Stories 6.1 + 6.4):** `spa/src/server.ts` is the Angular SSR Express edge (proxy mount + CSP middleware + static + SSR catch-all); `spa/src/server/csp.middleware.ts` is the byte-for-byte CSP value attached on SSR HTML responses (architecture A8 amendment). The CSP middleware spec hits the function trivially (~100% line); the SSR-side HttpClient interceptors (`ssr-api-url.interceptor.ts` + `ssr-cookie-forward.interceptor.ts`) each have a per-file Vitest spec exercising the browser vs server platform branches.
 - **Excluded patterns (Vitest `coverage.exclude`):** none added in Story 5.1. Coverage is collected via Angular's `@angular/build:unit-test` builder using Vitest v8 defaults; `*.types.ts` files emit no JavaScript and therefore do not appear in the coverage matrix.
 
 ## E2E

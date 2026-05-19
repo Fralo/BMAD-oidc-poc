@@ -2,6 +2,9 @@
 status: done
 story_key: 1-14-bff-multi-stage-build-serves-spa-bundle
 created: 2026-05-15
+superseded_by: 6-3-bff-cleanup-supersede-story-1-14
+superseded_on: 2026-05-19
+supersession_rationale: Epic 6 split the SPA out of the BFF image into its own Angular SSR Node container (Sprint Change Proposal 2026-05-19). Story 6.3 removed the Node-builder Dockerfile stage, the StaticFiles + FileResponse machinery in main.py, the test_static.py test surface, and reverted the BFF's compose build context to per-service. This story file remains in the repo as the codified history of the pre-Epic-6 SPA-in-BFF posture; its acceptance criteria are no longer load-bearing.
 ---
 
 # Story 1.14: BFF multi-stage build serves SPA bundle

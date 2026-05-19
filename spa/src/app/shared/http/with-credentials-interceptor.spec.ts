@@ -1,5 +1,6 @@
 import { HttpClient, provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { PLATFORM_ID } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 
@@ -69,5 +70,36 @@ describe('withCredentialsInterceptor', () => {
     expect(authClear).not.toHaveBeenCalled();
     expect(routerNavigate).not.toHaveBeenCalled();
     expect(observed).not.toBeNull();
+  });
+
+  it('on the server platform: 401 clears auth state but DOES NOT navigate', () => {
+    httpTesting.verify();
+    TestBed.resetTestingModule();
+    const serverNavigate = vi.fn();
+    const serverClear = vi.fn();
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(withFetch(), withInterceptors([withCredentialsInterceptor])),
+        provideHttpClientTesting(),
+        { provide: PLATFORM_ID, useValue: 'server' },
+        {
+          provide: Router,
+          useValue: { url: '/books', navigateByUrl: serverNavigate },
+        },
+        {
+          provide: AuthService,
+          useValue: { clear: serverClear, setMe: vi.fn(), me: () => null },
+        },
+      ],
+    });
+    const httpServer = TestBed.inject(HttpClient);
+    const ctrlServer = TestBed.inject(HttpTestingController);
+
+    httpServer.get('/v1/books').subscribe({ error: () => undefined });
+    const req = ctrlServer.expectOne('/v1/books');
+    req.flush(null, { status: 401, statusText: 'Unauthorized' });
+    expect(serverClear).toHaveBeenCalledTimes(1);
+    expect(serverNavigate).not.toHaveBeenCalled();
+    ctrlServer.verify();
   });
 });

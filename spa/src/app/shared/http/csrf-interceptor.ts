@@ -1,4 +1,6 @@
 import { HttpInterceptorFn } from '@angular/common/http';
+import { isPlatformServer } from '@angular/common';
+import { PLATFORM_ID, inject } from '@angular/core';
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CSRF_COOKIE_NAME = 'csrf_token';
@@ -23,6 +25,12 @@ function readCsrfTokenCookie(): string | null {
 }
 
 export const csrfInterceptor: HttpInterceptorFn = (req, next) => {
+  // CSRF double-submit is a browser-only contract — only state-changing
+  // requests from a real browser need the token, and `document.cookie`
+  // doesn't exist during SSR. Short-circuit on the server platform.
+  if (isPlatformServer(inject(PLATFORM_ID))) {
+    return next(req);
+  }
   if (!STATE_CHANGING_METHODS.has(req.method.toUpperCase())) {
     return next(req);
   }

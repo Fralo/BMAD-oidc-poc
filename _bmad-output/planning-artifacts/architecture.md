@@ -175,7 +175,7 @@ npm --version
 npx -p @angular/cli@21 ng new spa \
   --routing \
   --style=css \
-  --ssr=false \
+  --ssr=true \
   --skip-git \
   --package-manager=npm \
   --strict
@@ -286,7 +286,7 @@ npm install -D tailwindcss @tailwindcss/postcss postcss
 **Out of scope for the starter** (decided elsewhere or deliberately excluded):
 
 - Angular Aria (Dev Preview) — not used; a11y is out of scope per PRD §4.
-- Server-side rendering (`--ssr=false`) — not needed; SPA-only with desktop browsers.
+- Server-side rendering (`--ssr=true`, applied in Story 6.1 via `ng add @angular/ssr`) — the SPA's Angular SSR Express server is the browser-facing edge and reverse-proxies `/auth /api /v1` to the BFF over compose DNS. See F3 + I6 below for the runtime model, F7 + I9 for SSR-time cookie forwarding and Keycloak realm port pin.
 - Storybook / mock-service-worker / i18n — none required by the UX or PRD.
 
 **E2E framework (orthogonal to the Angular starter):**
@@ -309,7 +309,7 @@ npm install -D tailwindcss @tailwindcss/postcss postcss
 - Repository structure and compose composition.
 - Keycloak realm-as-code shape.
 - CSRF strategy and cookie attributes.
-- SPA serving model (same-origin via BFF).
+- SPA serving model (same-origin via SPA SSR edge; reverse-proxies to the BFF on the compose network).
 
 **Important Decisions (shape architecture):**
 
@@ -351,7 +351,7 @@ npm install -D tailwindcss @tailwindcss/postcss postcss
 | A5 | **CSRF strategy** | **Double-submit cookie + custom header + Origin/Referer check** | BFF sets a non-HttpOnly `csrf_token` cookie on session creation; SPA reads it and sends `X-CSRF-Token` on state-changing requests; BFF middleware validates header == cookie. Origin/Referer check as defense in depth. |
 | A6 | **Token refresh strategy** | **Reactive — refresh on 401 from RS, single replay** | Simpler than pre-emptive; no clock-skew logic. Bounded: one retry per request. Refresh failure → 401 to SPA → SPA redirects to `/login`. |
 | A7 | **Logout flow** | **Revoke refresh token → call `end_session_endpoint` → clear local session → clear cookie** | If revocation fails: BFF still clears local session and returns 204 (UX forbids half-logged-out states). |
-| A8 | **SPA CSP** | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` (served via response header from the BFF) | `'unsafe-inline'` on styles accommodates Tailwind without nonce-injection complexity. |
+| A8 | **SPA CSP** | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'` (served via response header from the SPA SSR edge's Express middleware on every SSR-rendered HTML response; BFF responses are JSON and do not carry CSP — Story 6.4 / Epic 6 amendment) | `'unsafe-inline'` on styles accommodates Tailwind without nonce-injection complexity. |
 
 ### API & Communication Patterns
 
@@ -433,10 +433,12 @@ class ErrorCode(str, Enum):
 - `withCredentialsInterceptor` — sets `withCredentials: true` on every request.
 - `csrfInterceptor` — reads the `csrf_token` cookie, sets `X-CSRF-Token` header on `POST`/`PUT`/`PATCH`/`DELETE`.
 
-**F3. SPA serving model** — **Same-origin via BFF static-serve**. BFF mounts `spa/dist/spa/browser` at `/`. Single origin everywhere — simplifies cookies, CSRF, and architecture diagram.
+**F3. SPA serving model** — **Same-origin via dedicated SPA edge** (Epic 6 amendment, 2026-05-19). A separate `spa` compose service runs Angular SSR (`@angular/ssr` Express server) on host port `${SPA_HOST_PORT:-4000}`. The Express server SSR-renders HTML, serves the browser bundle, AND reverse-proxies `/auth/*`, `/api/*`, `/v1/*` to `http://bff:8000` over compose DNS via `http-proxy-middleware` v3 (`changeOrigin: true, xfwd: true`). The browser only ever talks to the SPA origin; no Caddy/nginx/Traefik layer involved. Same-origin model preserved — the SPA edge IS the browser-facing origin.
 
-- Dev: `ng serve` on `:4200` with `proxy.conf.json` forwarding `/auth/*`, `/api/*`, `/v1/*` to BFF on `:8000`.
-- Prod: a multi-stage `Dockerfile` builds the SPA in a Node stage and copies `dist/` into the BFF image; only the BFF container exposes the user port.
+- Dev: bare `docker compose up` brings up the SPA SSR edge alongside the backend; HMR iteration via the containerized SSR dev server (Story 6.1 AC3 + README "Containerized SPA development").
+- Prod: same compose service definition; `node dist/spa/server/server.mjs` is the runtime entrypoint.
+
+**F7. SSR cookie forwarding** (Epic 6 amendment, 2026-05-19). Angular SSR's HttpClient issues an outbound `/api/me` during the bootstrap render to populate the auth state. The SPA edge attaches a Node-only HTTP interceptor (`ssrCookieForwardInterceptor`) that reads the incoming browser's `bff_session` + `csrf_token` cookies from the Express `REQUEST` token and threads them into the SSR-time outbound call. Companion: `ssrApiUrlInterceptor` rewrites the relative `/api/me` URL to `${BFF_INTERNAL_URL}/api/me` on the server platform only (no-op in the browser). Bootstrap `/api/me` deduplicated across SSR → hydration via `provideClientHydration(withEventReplay())` + the HttpClient TransferState cache. See `spa/src/app/shared/http/ssr-*.interceptor.ts` (Story 6.1) for the implementation and `spa/src/app/shared/http/ssr-cookie-forward.interceptor.spec.ts` for the pin-test.
 
 **F4. Auth guard** — Functional `authGuard` calling `GET /api/me`. On 401, navigates to `/login?return_to=<original_url>`. Applied to `/books` and `/settings`. `/login` carries an inverse `redirectIfAuthedGuard` that bounces to `/books` if `/api/me` succeeds.
 
@@ -480,16 +482,14 @@ class ErrorCode(str, Enum):
 └── README.md
 ```
 
-**I2. Compose composition** — Top-level `docker-compose.yml` uses Compose's `include:` directive (Compose v2.20+) to pull in the two sub-files. Profiles:
+**I2. Compose composition** — Top-level `docker-compose.yml` uses Compose's `include:` directive (Compose v2.20+) to pull in the two sub-files.
 
-- `default` — full stack (Keycloak + BFF + RS + SPA).
-- `dev` — Keycloak + BFF + RS; SPA runs on host via `ng serve`.
-- `e2e` — `default` plus a Playwright runner container that depends on all healthchecks.
+**Compose profile model (post-Epic-6).** One unconditional baseline stack (Keycloak + BFF + RS + SPA SSR edge); one optional profile `e2e` that scopes the Playwright runner container. Bare `docker compose up` brings up the baseline stack; `just e2e-up` brings up the e2e profile with the `compose/app.e2e.yml` overlay activating `ENABLE_TEST_RESET=true` + `AUTH_TYPE=oidc_bearer`. The historical `default` / `dev` profile names were retired by the D140/D141 follow-up at baseline `5f9b0f7`; Story 6.2 added the `spa` service to the unconditional baseline; Story 6.3 removed the BFF's host-published port so the BFF is internal-only on the compose network.
 
 **I3. Keycloak realm-as-code** — `keycloak/realm-bmad-books.json`:
 
 - Realm `bmad-books`, mode `start-dev --import-realm` for dev, `start --import-realm --optimized` for prod-mode demo.
-- Client `bmad-books-bff` — confidential, Auth Code + PKCE enabled, `client_secret` from env, redirect URIs `http://localhost:8000/auth/callback` (+ configurable prod URL).
+- Client `bmad-books-bff` — confidential, Auth Code + PKCE enabled, `client_secret` from env, redirect URIs `http://localhost:${SPA_HOST_PORT:4000}/auth/callback` (+ configurable prod URL); Story 6.2 flipped the host from `:8000` (BFF, retired) to `:${SPA_HOST_PORT:4000}` (SPA SSR edge — the browser-facing origin) via Keycloak / Quarkus MicroProfile substitution. See I9 for the substitution semantics.
 - Client scopes `reading-speed:read`, `reading-speed:write` defined as `optional` and granted to the BFF client by default — the client requests them in the `scope` param.
 - Audience claim `bmad-books-resource-server` mapped onto the access token (so the RS validates `aud`).
 - Pre-seeded users (see I4).
@@ -506,7 +506,9 @@ Required vars (illustrative):
 
 **Persistence:** each backend service mounts a named Docker volume at `/data` (e.g., `bff_data`, `rs_data`), and its SQLite file lives there. The volumes survive container recreation but are removed on `docker compose down -v`.
 
-**I6. SPA serving in compose** — Production-mode: BFF container is built via multi-stage Dockerfile that compiles the SPA in a Node stage and copies `dist/` into the BFF image (BFF static-mounts it). Dev profile excludes the SPA from compose — `ng serve` runs on host.
+**I6. SPA serving in compose** (Epic 6 amendment, 2026-05-19) — Both dev and prod-shaped: the `spa` compose service (built from `spa/Dockerfile`, Node multi-stage `deps → build → runtime`) runs Angular SSR (`@angular/ssr` Express server) on host port `${SPA_HOST_PORT:-4000}`. The BFF has no host-published port; it is internal-only on the compose network. Bare `docker compose up` brings up the full baseline stack including the SPA edge (Story 6.2). Dev iteration on the SPA happens inside the `spa` container — no host Node toolchain required.
+
+**I9. Keycloak realm port pin** (Epic 6 amendment, 2026-05-19). `keycloak/realm-bmad-books.json` registers `http://localhost:${SPA_HOST_PORT:4000}` for the BFF client's `redirectUris`, `webOrigins`, and `attributes.post.logout.redirect.uris` via Keycloak / Quarkus MicroProfile substitution (bare `:` form, NOT POSIX `:-`). The Keycloak service in `compose/infra.yml` receives `SPA_HOST_PORT` as an env pass-through so the substitution resolves at boot. Default is `4000`; configurable via the repo-root `.env` `SPA_HOST_PORT` override (Story 6.2). The two substitution forms in the repo are NOT interchangeable: the bare `:` form (Quarkus) is used inside the realm JSON only; the POSIX `:-` form (Bash-style) is used inside compose YAML files.
 
 **I7. CI/CD** — Out of scope for this educational project; the PRD only requires `docker-compose up` reproducibility. (A small GitHub Actions workflow could be added later: lint + tests + docker build + Playwright run.)
 
@@ -1015,7 +1017,7 @@ bmad-books/                                      # repo root (monorepo)
 │   ├── tsconfig.spec.json
 │   ├── .postcssrc.json                          # { "plugins": { "@tailwindcss/postcss": {} } }
 │   ├── .eslintrc.json                           # @angular-eslint/recommended + project rules
-│   ├── proxy.conf.json                          # ng serve → BFF (:8000) proxy for dev
+│   ├── src/server.ts                            # Angular SSR Express edge + http-proxy-middleware mount (Story 6.1)
 │   ├── vitest.config.ts
 │   ├── public/
 │   │   └── favicon.ico
@@ -1094,33 +1096,33 @@ bmad-books/                                      # repo root (monorepo)
 **API boundaries (who talks to whom):**
 
 ```
-┌──────────────┐   cookie-authenticated REST   ┌──────────────────────────┐
-│              │ ───────────────────────────►  │                          │
-│     SPA      │       (HttpOnly, CSRF)        │           BFF            │
-│  (Angular)   │ ◄───────────────────────────  │     (FastAPI, books)     │
-│              │       JSON snake_case          │                          │
-└──────────────┘                                │  ┌─────────────────────┐ │
-                                                │  │  cookie-session     │ │
-                                                │  │  OIDC client        │ │
-                                                │  │  (Authlib)          │ │
-                                                │  └─────────────────────┘ │
-                                                └────┬─────────────┬────────┘
-                                                     │             │
-                                  Auth Code + PKCE   │             │ Bearer JWT
-                                  refresh, end-sess  │             │ (forward user
-                                  (Authlib)          │             │  access token)
-                                                     ▼             ▼
-                                          ┌──────────────┐   ┌──────────────────┐
-                                          │              │   │                  │
-                                          │   Keycloak   │   │  Resource Server │
-                                          │   (realm     │   │  (FastAPI; JWKS  │
-                                          │   imported)  │◄──┤   validation;    │
-                                          │              │   │   scope enforce) │
-                                          └──────────────┘   └──────────────────┘
-                                              JWKS fetch (RS → Keycloak, cached 24h)
+┌──────────────┐  HTML + assets (SSR)  ┌────────────────────┐  reverse-proxy   ┌──────────────────────────┐
+│              │ ◄───────────────────  │                    │ ───────────────► │                          │
+│   Browser    │   (HttpOnly cookies,  │  SPA SSR edge      │  /auth /api /v1  │           BFF            │
+│              │ ───────────────────►  │  (Angular SSR Node │ ◄─────────────── │     (FastAPI, books)     │
+│              │   X-CSRF-Token hdr)   │   + Express proxy) │  JSON snake_case │                          │
+└──────────────┘                       └────────────────────┘                  │  ┌─────────────────────┐ │
+                                                                               │  │  cookie-session     │ │
+                                                                               │  │  OIDC client        │ │
+                                                                               │  │  (Authlib)          │ │
+                                                                               │  └─────────────────────┘ │
+                                                                               └────┬─────────────┬────────┘
+                                                                                    │             │
+                                                                 Auth Code + PKCE   │             │ Bearer JWT
+                                                                 refresh, end-sess  │             │ (forward user
+                                                                 (Authlib)          │             │  access token)
+                                                                                    ▼             ▼
+                                                                          ┌──────────────┐  ┌──────────────────┐
+                                                                          │              │  │                  │
+                                                                          │   Keycloak   │  │  Resource Server │
+                                                                          │   (realm     │  │  (FastAPI; JWKS  │
+                                                                          │   imported)  │◄─┤   validation;    │
+                                                                          │              │  │   scope enforce) │
+                                                                          └──────────────┘  └──────────────────┘
+                                                                              JWKS fetch (RS → Keycloak, cached 24h)
 ```
 
-- **SPA ↔ BFF:** the only authenticated channel from the browser. Cookie auth (HttpOnly session cookie), CSRF via double-submit (`X-CSRF-Token` header). Same-origin (BFF serves SPA dist).
+- **Browser ↔ SPA edge ↔ BFF:** the only authenticated channel from the browser. Cookie auth (HttpOnly session cookie), CSRF via double-submit (`X-CSRF-Token` header). Same-origin from the browser's perspective — the SPA SSR edge is the browser-facing origin and reverse-proxies cookies + CSRF headers byte-for-byte to the BFF over compose DNS (Story 6.1's `http-proxy-middleware` mount in `spa/src/server.ts`).
 - **SPA ↔ Resource Server:** **never**. The SPA does not call the RS directly.
 - **BFF ↔ Keycloak:** OAuth Code + PKCE round-trip (`/authorize`, `/token`, `/end_session`, `/revocation`). Tokens stay server-side.
 - **BFF ↔ Resource Server:** REST with `Authorization: Bearer <user_access_token>`. Single 401-→-refresh-→-replay cycle.
@@ -1271,30 +1273,36 @@ bmad-books/                                      # repo root (monorepo)
 
 **Assets:**
 
-- SPA static assets: `spa/public/`. In production they end up in `spa/dist/spa/browser/` and are copied into the BFF image under `src/bff/static/`.
+- SPA static assets: `spa/public/`. In production they end up in `spa/dist/spa/browser/` and are served directly by the SPA SSR edge's Express static-asset middleware (Story 6.1 `server.ts`). The Story-1.14 BFF-static-mount path (`src/bff/static/`) was retired by Story 6.3.
 - No backend static assets (`/health`, `/docs`, `/redoc` are dynamic).
 
 ### Development Workflow Integration
 
-**Dev (host SPA + compose backend):**
+**Dev (single-terminal, post-Epic-6):**
 
 ```bash
-# Terminal 1 — backend + infra
+# Full stack including the SPA SSR edge — bare docker compose up.
 docker compose up
-
-# Terminal 2 — frontend with HMR
-cd spa && npm ci && ng serve  # :4200, proxies /auth, /api, /v1 → BFF :8000
 ```
 
-`docker compose up` brings up Keycloak + BFF + RS (the baseline stack — D140 follow-up retired the `dev` / `default` profile names). The BFF also serves the baked SPA at `/`, but the dev workflow ignores it in favor of `ng serve` on `:4200` for HMR. Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation.
+`docker compose up` brings up Keycloak + BFF + RS + SPA SSR edge (the unconditional baseline stack — Story 6.2 added the `spa` service; the D140/D141 follow-up at baseline `5f9b0f7` retired the `dev` / `default` profile names). Each backend service mounts a named volume at `/data` for its SQLite file, so state survives container recreation; the SPA service holds no on-disk state.
+
+**Containerized SPA dev (HMR-style iteration):**
+
+```bash
+# One-shot the SPA container with a volume mount + the SSR dev entrypoint.
+docker compose run --rm --service-ports -v "$(pwd)/spa:/workspace" spa npm run serve:ssr:spa
+```
+
+See Story 6.1 AC3 + README "Containerized SPA development" for the variant `npm run watch` invocation. No host Node toolchain is required beyond what `docker compose` provides — the legacy `ng serve` on `:4200` workflow was retired by Story 6.1.
 
 **Full stack (production-shaped):**
 
 ```bash
-docker compose up   # full stack — Keycloak + BFF + RS; SPA baked into the BFF image
+docker compose up   # full stack — Keycloak + BFF + RS + SPA SSR edge
 ```
 
-The BFF's multi-stage Dockerfile builds the SPA in a Node stage and copies `dist/` into the BFF image. Only the BFF container exposes the user-facing port.
+Same as the dev workflow above. The SPA SSR edge's multi-stage `spa/Dockerfile` (`deps → build → runtime`) compiles the Angular SSR bundle and runs `node dist/spa/server/server.mjs` at container start. Only the SPA edge container exposes a user-facing host port (`${SPA_HOST_PORT:-4000}`); the BFF is internal-only on the compose network.
 
 **E2E:**
 
@@ -1548,7 +1556,7 @@ python tools/fastapi-archetype/scripts/build_template.py \
 
 # 4. Scaffold the SPA
 npx -p @angular/cli@21 ng new spa \
-  --routing --style=css --ssr=false --skip-git \
+  --routing --style=css --ssr=true --skip-git \
   --package-manager=npm --strict
 cd spa && npm install -D tailwindcss @tailwindcss/postcss postcss
 ```
