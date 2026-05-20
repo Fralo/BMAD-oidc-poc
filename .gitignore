@@ -43,6 +43,9 @@ test-results/
 # Claude Code harness-managed worktrees
 .claude/worktrees/
 
+# BMAD tooling/config (local-only)
+_bmad/
+
 # OS junk
 .DS_Store
 Thumbs.db
