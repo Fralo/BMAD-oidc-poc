@@ -57,16 +57,17 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
-async def test_create_auth_state_persists_row_and_returns_verifier(
+async def test_create_auth_state_persists_row(
     session: AsyncSession,
 ) -> None:
     service = SessionService()
-    row, verifier = await service.create_auth_state(session, return_to="/books")
+    row = await service.create_auth_state(session, return_to="/books")
 
     assert row.id
     assert row.state and row.state != row.id  # distinct opaque ids
     assert row.nonce and row.nonce != row.state
-    assert row.code_verifier == verifier
+    # code_verifier is vestigial dead schema (default ""); see architecture.md.
+    assert row.code_verifier == ""
     assert row.return_to == "/books"
     assert _as_utc(row.expires_at) > datetime.now(UTC)
     assert _as_utc(row.expires_at) < datetime.now(UTC) + timedelta(minutes=6)
@@ -153,7 +154,6 @@ async def test_consume_auth_state_expired_returns_none_and_deletes(
     service = SessionService()
     expired = entities.AuthState(
         id="expired-id",
-        code_verifier="v",
         state="expired-state",
         nonce="n",
         return_to="/",
@@ -338,7 +338,6 @@ async def test_create_auth_state_retry_exhausts_then_raises(
 ) -> None:
     locked = entities.AuthState(
         id="locked-state-id",
-        code_verifier="v",
         state="s",
         nonce="n",
         return_to="/",

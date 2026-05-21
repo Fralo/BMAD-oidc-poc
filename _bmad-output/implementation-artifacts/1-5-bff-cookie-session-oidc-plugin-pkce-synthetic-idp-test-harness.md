@@ -1,6 +1,8 @@
-# Story 1.5: BFF cookie-session OIDC plugin (PKCE) + synthetic-IdP test harness
+# Story 1.5: BFF cookie-session OIDC plugin (Authorization Code, no PKCE) + synthetic-IdP test harness
 
 Status: done
+
+> **Amendment 2026-05-21 — PKCE removed.** The original story shipped with PKCE; PKCE was removed in the sprint change captured at `_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-21.md`. The acceptance criteria below are preserved as the original-DoD record; the **as-built** flow now uses Authorization Code with `client_secret_basic` and no PKCE — see Pattern Amendments in `architecture.md`. Wherever ACs below reference `code_challenge` / `code_verifier` / `pkce.py`, those are no-longer-current behaviors; the corresponding tests have been updated and `services/bff/src/bff/auth/pkce.py` has been deleted.
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

@@ -16,7 +16,7 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 
 ### Functional Requirements
 
-- **FR1 (FR-AUTH-01):** Users can authenticate via the authorization server (Keycloak) and obtain a browser session managed by the BFF, using Authorization Code + PKCE flow. The SPA never sees credentials or tokens; the login is initiated from a single button on `/login`. *Source journey: J1.*
+- **FR1 (FR-AUTH-01):** Users can authenticate via the authorization server (Keycloak) and obtain a browser session managed by the BFF, using the Authorization Code flow authenticated by the BFF's confidential `client_secret`. The SPA never sees credentials or tokens; the login is initiated from a single button on `/login`. *Source journey: J1.*
 - **FR2 (FR-BOOK-01):** Users can perform full CRUD operations on their personal book list. A book consists of a title (text), a page count (positive integer), and a reading status (`to-read` | `reading` | `finished`). Books are owned by the BFF, keyed by the `sub` claim. *Source journey: J2.*
 - **FR3 (FR-SPEED-01):** Users can view and update a personal reading speed (pages-per-hour, positive integer) stored on the Resource Server, keyed by `sub`. The view at `/settings` shows the current value (or empty if unset) and persists changes via an explicit "Save" action. *Source journey: J4.*
 - **FR4 (FR-ESTIMATE-01):** Users can request a reading-time estimate for any book in their list. The estimate is computed by the Resource Server from the user's reading speed and the book's page count, returned as both `minutes` (integer) and a formatted string (e.g., "≈ 4 h 20 m"). *Source journey: J3.*
@@ -26,7 +26,7 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 ### NonFunctional Requirements
 
 - **NFR1 — Token isolation:** Access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage.
-- **NFR2 — BFF as confidential OAuth client:** The BFF is the OAuth client. Login uses Authorization Code flow with PKCE. The BFF holds tokens server-side, keyed by session.
+- **NFR2 — BFF as confidential OAuth client:** The BFF is the OAuth client. Login uses the Authorization Code flow; the BFF authenticates to the AS with `client_secret_basic`. PKCE is intentionally not used (confidential client). The BFF holds tokens server-side, keyed by session.
 - **NFR3 — Transparent token refresh:** The BFF refreshes expired access tokens using the refresh token and retries the in-flight request once, without involving the SPA.
 - **NFR4 — Stateless Resource Server:** The Resource Server maintains no session state, shares no database with the BFF, and authenticates every request solely by the JWT it carries.
 - **NFR5 — JWKS-based JWT validation:** The Resource Server validates JWTs by fetching and caching the authorization server's JWKS. Public keys are not hardcoded.
@@ -44,7 +44,7 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 **Backend archetype & stack (locked by user mandate):**
 
 - **AR1 — Backend archetype:** Both the BFF and the Resource Server MUST be scaffolded from `github.com/tommaso-meledina/fastapi-archetype` (Python 3.14 + FastAPI + SQLModel + uv + Ruff + ty + pytest). The archetype is cloned into `tools/fastapi-archetype/` (gitignored) and `scripts/build_template.py` is used to scaffold each service. The archetype's OTEL/Prometheus wiring, if scaffolded into the output, is treated as inert — BMAD_books does not deploy a collector or dashboards (see NFR10 / PRD §12).
-- **AR2 — BFF cookie-session OIDC plugin:** A new archetype auth plugin (`keycloak_cookie_session.py`) on the BFF implements PKCE Authorization Code flow using Authlib (async/httpx integration), alongside the archetype's existing `none`/`entra` modes. The BFF requests scopes `openid offline_access reading-speed:read reading-speed:write` at `/authorize`.
+- **AR2 — BFF cookie-session OIDC plugin:** A new archetype auth plugin (`keycloak_cookie_session.py`) on the BFF implements the Authorization Code flow using Authlib (async/httpx integration), alongside the archetype's existing `none`/`entra` modes. The BFF authenticates to Keycloak's `/token` endpoint with `client_secret_basic`; PKCE is not used (confidential client). The BFF requests scopes `openid reading-speed:read reading-speed:write` at `/authorize`.
 - **AR3 — Resource Server OIDC bearer plugin:** Generalize the archetype's `entra` mode into a `keycloak`/`oidc_bearer` mode using PyJWT (`pyjwt[crypto]`) + `PyJWKClient`, parameterized for Keycloak (issuer, JWKS URL, audience). Scope enforcement uses the archetype's `RoleMappingProvider` extension point.
 
 **Frontend stack:**
@@ -55,12 +55,12 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 **Data architecture:**
 
 - **AR6 — Database engines:** SQLite (file-backed, WAL mode) for both BFF and RS, in separate files in separate named Docker volumes (`bff_data`, `rs_data`) mounted at `/data`. The PRD's "no shared DB" boundary is preserved because each service owns its own file. Alembic migrations run on container startup before uvicorn boots (`uv run alembic upgrade head && exec uv run uvicorn …`).
-- **AR7 — BFF schema:** Three tables — `books` (CRUD per user, keyed by `sub`), `sessions` (server-side session store: `sub`, `access_token`, `refresh_token`, `id_token`, `expires_at`, `csrf_secret`, `created_at`), `auth_states` (PKCE state: `code_verifier`, `state`, `nonce`, `return_to`, `expires_at`). Indexes on `books.sub`, `auth_states.expires_at`, `sessions.expires_at`.
+- **AR7 — BFF schema:** Three tables — `books` (CRUD per user, keyed by `sub`), `sessions` (server-side session store: `sub`, `access_token`, `refresh_token`, `id_token`, `expires_at`, `csrf_secret`, `created_at`), `auth_states` (OAuth state: `state`, `nonce`, `return_to`, `expires_at`; legacy `code_verifier` column survives as nullable dead schema after the PKCE removal). Indexes on `books.sub`, `auth_states.expires_at`, `sessions.expires_at`.
 - **AR8 — RS schema:** Single `reading_speeds` table keyed by `sub` (indexed), with `pages_per_hour`, `created_at`, `updated_at`.
 
 **Auth, session, and security:**
 
-- **AR9 — PKCE state storage:** Server-side `auth_states` row holds `code_verifier`, `state`, `nonce`, `return_to`; a short-lived signed state-id cookie carries the row id (`HttpOnly`, `Max-Age=300`). Row is deleted on callback. No verifier in a cookie.
+- **AR9 — OAuth state/nonce storage:** Server-side `auth_states` row holds `state`, `nonce`, `return_to`; a short-lived signed state-id cookie carries the row id (`HttpOnly`, `Max-Age=300`). Row is deleted on callback. `state` defends against CSRF on the callback; `nonce` defends against id_token replay.
 - **AR10 — Session cookie attributes:** `HttpOnly; Secure (prod); SameSite=Lax; Path=/; opaque 256-bit value` (not a JWT).
 - **AR11 — CSRF strategy:** Double-submit cookie (non-HttpOnly `csrf_token`) + `X-CSRF-Token` header on state-changing requests + Origin/Referer check as defense in depth. BFF middleware validates header == cookie.
 - **AR12 — Token refresh strategy:** Reactive — on 401 from RS, BFF refreshes via Keycloak token endpoint and retries the in-flight request exactly once. Persisted failure → 401 to SPA → SPA navigates to `/login?return_to=…`.
@@ -87,7 +87,7 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 
 - **AR25 — Repository structure:** Monorepo with `spa/`, `services/bff/`, `services/resource-server/`, `keycloak/`, `e2e/`, `compose/`, `tools/`, top-level `docker-compose.yml`, `.env.example`, `README.md`, `CLAUDE.md`.
 - **AR26 — Compose composition:** Top-level `docker-compose.yml` uses Compose `include:` (v2.20+) to pull in `compose/infra.yml` (Keycloak) and `compose/app.yml` (BFF, RS, SPA in prod). Three profiles: `default` (full stack), `dev` (excludes SPA — `ng serve` runs on host), `e2e` (adds Playwright runner that depends on all healthchecks).
-- **AR27 — Keycloak realm-as-code:** `keycloak/realm-bmad-books.json` defines: realm `bmad-books`; confidential client `bmad-books-bff` with Auth Code + PKCE enabled and `client_secret` from env; redirect URIs `http://localhost:8000/auth/callback` (+ configurable prod URL); client scopes `reading-speed:read` / `reading-speed:write` as `optional` granted to the BFF client by default; audience claim `bmad-books-resource-server` mapped onto the access token (so RS validates `aud`). Two pre-seeded users: `testuser`/`testpassword` (default reading speed seeded by first PUT or by test), `freshuser`/`freshpassword` (no reading speed — exercises the 412 precondition path in J3).
+- **AR27 — Keycloak realm-as-code:** `keycloak/realm-bmad-books.json` defines: realm `bmad-books`; confidential client `bmad-books-bff` with Authorization Code enabled (no PKCE), `client_secret` from env; redirect URIs `http://localhost:8000/auth/callback` (+ configurable prod URL); client scopes `reading-speed:read` / `reading-speed:write` as `optional` granted to the BFF client by default; audience claim `bmad-books-resource-server` mapped onto the access token (so RS validates `aud`). Two pre-seeded users: `testuser`/`testpassword` (default reading speed seeded by first PUT or by test), `freshuser`/`freshpassword` (no reading speed — exercises the 412 precondition path in J3).
 - **AR28 — Health checks & startup ordering:** Each container exposes a health probe; compose uses `depends_on: { condition: service_healthy }`. Keycloak: `/health/ready` after realm import. BFF: `GET /health` returns 200 once DB is reachable, Alembic at head, and the OIDC discovery doc is fetchable; depends on Keycloak. RS: `GET /health` returns 200 once DB reachable, Alembic at head, and JWKS fetchable; depends on Keycloak.
 - **AR29 — Environment variables:** Single `.env.example` at repo root documenting all required vars (`KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `BFF_DATABASE_URL`, `RS_DATABASE_URL`, `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`, `ENABLE_TEST_RESET`, `TEST_RESET_TOKEN`); per-service `.env` files gitignored; compose `env_file:` per service.
 
@@ -149,7 +149,7 @@ This document provides the complete epic and story breakdown for BMAD_books (Rea
 - BFF scaffolded from `fastapi-archetype` (RS scaffold deferred to Epic 3 where it gets its first real endpoint).
 - SPA scaffolded with Angular v21 + Tailwind v4 (design tokens declared under Tailwind's `@theme` block per UX-DR1).
 - Keycloak realm-as-code with the `bmad-books-bff` client, scopes (`reading-speed:read`, `reading-speed:write`), audience claim, and the two pre-seeded users (`testuser`, `freshuser`).
-- BFF: cookie-session OIDC plugin (Authlib + PKCE), `sessions` + `auth_states` tables with Alembic migration, CSRF middleware (double-submit + `X-CSRF-Token` + Origin/Referer check), CSP response-header middleware, `/auth/login`, `/auth/callback`, `/auth/logout`, `/api/me` endpoints, synthetic-IdP test harness extended for Keycloak.
+- BFF: cookie-session OIDC plugin (Authlib, `client_secret_basic`), `sessions` + `auth_states` tables with Alembic migration, CSRF middleware (double-submit + `X-CSRF-Token` + Origin/Referer check), CSP response-header middleware, `/auth/login`, `/auth/callback`, `/auth/logout`, `/api/me` endpoints, synthetic-IdP test harness extended for Keycloak.
 - SPA: `TopChrome` (authenticated + unauthenticated variants), `LoginView`, baseline `ErrorMessage`, `withCredentialsInterceptor` + `csrfInterceptor`, functional `authGuard` + `redirectIfAuthedGuard`, `AuthService`, baseline `ErrorService` parsing the archetype envelope, route table with `/login` + `/books` (placeholder) + `/settings` (placeholder).
 - **QA harness from day one:** Playwright project (`e2e/`) with `playwright.config.ts`, fixtures (`logInAs`, `resetState`, `killRs` stub), `e2e` compose profile with a Playwright runner depending on healthchecks; BFF `POST /v1/test/reset` (ENABLE_TEST_RESET-gated, TEST_RESET_TOKEN-protected); J1 + J5 Playwright E2E specs running against real Keycloak.
 - Compose `dev`, `default`, and `e2e` profiles wired up through Keycloak + BFF + SPA, with health-check-gated startup ordering.
@@ -215,7 +215,7 @@ Note on the QA work that **does NOT live in Epic 5**: the Playwright project, al
 
 ## Epic 1: Foundational Login & Identity (J1, J5)
 
-Stand up the monorepo, Keycloak with realm-as-code, the BFF scaffolded from the archetype with PKCE cookie-session auth, and the Angular SPA with auth chrome — alongside the Playwright harness, test-reset endpoint, and J1+J5 E2E specs. Result: a real OIDC round-trip works end-to-end against the running compose stack, and both J1 and J5 are demonstrably correct in CI-style automated runs from day one.
+Stand up the monorepo, Keycloak with realm-as-code, the BFF scaffolded from the archetype with cookie-session OAuth Code auth (confidential `client_secret`, no PKCE), and the Angular SPA with auth chrome — alongside the Playwright harness, test-reset endpoint, and J1+J5 E2E specs. Result: a real OIDC round-trip works end-to-end against the running compose stack, and both J1 and J5 are demonstrably correct in CI-style automated runs from day one.
 
 ### Story 1.1: Repo scaffold + compose skeleton
 
@@ -263,7 +263,7 @@ So that authentication works on first `docker compose up` with zero manual confi
 **Given** the file `keycloak/realm-bmad-books.json` exists,
 **When** the developer inspects it,
 **Then** it defines realm `bmad-books`,
-**And** it defines a confidential client `bmad-books-bff` with Authorization Code + PKCE enabled and `client_secret` sourced from the `BFF_CLIENT_SECRET` env var,
+**And** it defines a confidential client `bmad-books-bff` with Authorization Code enabled (no PKCE) and `client_secret` sourced from the `BFF_CLIENT_SECRET` env var,
 **And** the client's redirect URIs include `http://localhost:8000/auth/callback`,
 **And** the realm defines client scopes `reading-speed:read` and `reading-speed:write` as `optional` and assigns them to the `bmad-books-bff` client by default,
 **And** the access token has an audience claim mapper that adds `bmad-books-resource-server` to the `aud` claim,
@@ -331,7 +331,7 @@ So that the cookie-session OIDC plugin in the next story has the persistence sur
 **Then** a `Session` SQLModel exists with columns: `id` (PK, str, the opaque 256-bit session value), `sub` (str(255), indexed, NOT NULL), `access_token` (str), `refresh_token` (str), `id_token` (str), `expires_at` (datetime, indexed, NOT NULL), `csrf_secret` (str, NOT NULL), `created_at` (datetime, NOT NULL), `updated_at` (datetime, NOT NULL, `onupdate`).
 
 **When** the developer inspects `src/bff/db/models/auth_state.py`,
-**Then** an `AuthState` SQLModel exists with columns: `id` (PK, str), `code_verifier` (str, NOT NULL), `state` (str, NOT NULL), `nonce` (str, NOT NULL), `return_to` (str, nullable), `expires_at` (datetime, indexed, NOT NULL), `created_at` (datetime, NOT NULL).
+**Then** an `AuthState` SQLModel exists with columns: `id` (PK, str), `state` (str, NOT NULL), `nonce` (str, NOT NULL), `return_to` (str, nullable), `expires_at` (datetime, indexed, NOT NULL), `created_at` (datetime, NOT NULL). *(The `code_verifier` column persisted in 0001_init survives the PKCE removal as nullable dead schema and is no longer required by the model — see Pattern Amendments in architecture.md.)*
 
 **Given** the models exist,
 **When** the developer runs `uv run alembic revision --autogenerate -m "init sessions and auth_states"`,
@@ -349,23 +349,23 @@ So that the cookie-session OIDC plugin in the next story has the persistence sur
 **And** coverage of `src/bff/db/models/` is ≥90%,
 **And** `uv run ruff check && uv run ty` remains clean.
 
-### Story 1.5: BFF cookie-session OIDC plugin (PKCE) + synthetic-IdP test harness
+### Story 1.5: BFF cookie-session OIDC plugin (Authorization Code, no PKCE) + synthetic-IdP test harness  *(amended 2026-05-21 — PKCE removed; see sprint-change-proposal-2026-05-21.md)*
 
 As an unauthenticated visitor,
-I want to be able to complete an Authorization Code + PKCE round-trip against Keycloak through the BFF,
+I want to be able to complete an Authorization Code round-trip against Keycloak through the BFF (BFF authenticates with `client_secret_basic`; no PKCE),
 So that I end up with an HttpOnly session cookie while the BFF holds my access/refresh/id tokens server-side.
 
 **Acceptance Criteria:**
 
-**Given** the BFF `auth/` directory contains `keycloak_cookie_session.py` (Authlib-based OIDC client plugin) and `pkce.py` (PKCE verifier/challenge helpers),
+**Given** the BFF `auth/` directory contains `keycloak_cookie_session.py` (Authlib-based OIDC client plugin),  *(the previous `pkce.py` helper module was deleted on 2026-05-21 — see Group E of sprint-change-proposal-2026-05-21.md)*
 **And** `tests/auth/synthetic_idp.py` provides a test-generated RSA keypair plus monkey-patched httpx routes for `/authorize`, `/token`, `/revocation`, `/end_session`, and a JWKS handler,
 
 **When** an unauthenticated client hits `GET /auth/login?return_to=/books` with redirects disabled,
-**Then** the BFF responds 302 to `${OIDC_ISSUER_URL}/realms/bmad-books/protocol/openid-connect/auth` with query parameters `client_id`, `response_type=code`, `scope=openid offline_access reading-speed:read reading-speed:write`, `code_challenge_method=S256`, `code_challenge` (derived from a fresh verifier), `state` (CSRF random ≥32 bytes), and `redirect_uri=${BFF_BASE_URL}/auth/callback`,
-**And** the BFF persists an `auth_states` row with the fresh `code_verifier`, `state`, `nonce`, `return_to=/books`, and `expires_at = now + 5 min`,
+**Then** the BFF responds 302 to `${OIDC_ISSUER_URL}/realms/bmad-books/protocol/openid-connect/auth` with query parameters `client_id`, `response_type=code`, `scope=openid reading-speed:read reading-speed:write`, `state` (CSRF random ≥32 bytes), `nonce` (replay defense, ≥16 bytes), and `redirect_uri=${BFF_BASE_URL}/auth/callback`,
+**And** the BFF persists an `auth_states` row with the fresh `state`, `nonce`, `return_to=/books`, and `expires_at = now + 5 min` (the legacy `code_verifier` column is left NULL / dead),
 **And** the BFF sets a signed state-id cookie: `HttpOnly`, `Max-Age=300`, `SameSite=Lax`, `Path=/`, value = the `auth_states.id` signed with an HMAC over the BFF's session secret.
 
-**Given** an `auth_states` row exists for state value `S` with code_verifier `V` and `return_to=/books`,
+**Given** an `auth_states` row exists for state value `S` with `return_to=/books`,
 **When** the BFF receives `GET /auth/callback?code=C&state=S` carrying the matching state-id cookie,
 **And** the synthetic IdP exchanges code `C` + verifier `V` for access/refresh/id tokens,
 **Then** the BFF persists a `sessions` row with `sub` (from the id_token claim), `access_token`, `refresh_token`, `id_token`, `expires_at` (derived from the access_token's `exp`), a freshly generated 32-byte `csrf_secret`, `created_at`, and `updated_at`,
@@ -380,7 +380,7 @@ So that I end up with an HttpOnly session cookie while the BFF holds my access/r
 **When** the BFF receives `/auth/callback` for an `auth_states` row whose `expires_at` is in the past,
 **Then** the BFF responds 400 with `errorCode: "auth_state_invalid"` and deletes the expired row.
 
-**When** the synthetic IdP's `/token` endpoint rejects the code+verifier exchange (PKCE mismatch),
+**When** the synthetic IdP's `/token` endpoint rejects the code exchange (invalid code, expired code, or client_secret mismatch),
 **Then** the BFF responds 400 with `errorCode: "auth_state_invalid"` and does NOT create a session.
 
 **Given** an authenticated session,
@@ -389,8 +389,8 @@ So that I end up with an HttpOnly session cookie while the BFF holds my access/r
 
 **Given** the test suite,
 **When** `uv run pytest tests/auth/` runs,
-**Then** tests cover all of: happy path with synthetic IdP, state-cookie/state-param mismatch, PKCE verifier mismatch, expired `auth_state` row, replay of consumed `auth_state` (already-deleted row), missing state-id cookie, missing `state` query param, id_token signature invalid (forged with the wrong key), JWKS-fetch failure on first /authorize hit,
-**And** coverage of `src/bff/auth/keycloak_cookie_session.py` and `src/bff/auth/pkce.py` is ≥90%,
+**Then** tests cover all of: happy path with synthetic IdP, state-cookie/state-param mismatch, token-exchange rejection by the AS (synthetic IdP returns 400), expired `auth_state` row, replay of consumed `auth_state` (already-deleted row), missing state-id cookie, missing `state` query param, id_token signature invalid (forged with the wrong key), JWKS-fetch failure on first /authorize hit,
+**And** coverage of `src/bff/auth/keycloak_cookie_session.py` is ≥90%,
 **And** `ruff check && ty` remains clean.
 
 ### Story 1.6: BFF CSRF middleware + CSP header
@@ -1860,7 +1860,7 @@ So that I can clone and run the repo end-to-end without hunting through files, a
 **When** the developer reads it top-to-bottom,
 **Then** it contains the following sections in order:
 
-1. **Title + one-paragraph summary** — names the project, names the architectural goal (Auth Code + PKCE + BFF + JWKS + scope + sub-keyed identity propagation), names the educational context (BMAD capstone, AI-native engineering course).
+1. **Title + one-paragraph summary** — names the project, names the architectural goal (Auth Code + confidential client BFF + JWKS + scope + sub-keyed identity propagation), names the educational context (BMAD capstone, AI-native engineering course).
 
 2. **Prerequisites** — Node ≥20 LTS, Python 3.14, `uv`, Docker + Compose v2.20+, `npx`, optional `ng` CLI for SPA development.
 

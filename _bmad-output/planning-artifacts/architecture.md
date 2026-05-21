@@ -34,7 +34,7 @@ Six capabilities, deliberately minimal so the OAuth/OIDC topology is the focus:
 **Non-Functional Requirements (PRD §§8–9 — load-bearing):**
 
 - **Token isolation.** Access/refresh tokens never leave the server side; the browser holds only an HttpOnly session cookie.
-- **BFF as confidential OAuth client.** Authorization Code flow with PKCE; tokens held server-side keyed by session.
+- **BFF as confidential OAuth client.** Authorization Code flow authenticating with `client_secret` (server-side only); PKCE deliberately omitted because the confidential-client secret is the trust anchor. Tokens held server-side keyed by session.
 - **Transparent token refresh.** BFF refreshes expired access tokens and replays the in-flight request without SPA involvement.
 - **Stateless Resource Server.** No session state, no shared database with the BFF; every request authenticated solely by its JWT.
 - **JWKS-based JWT validation.** Public keys fetched and cached from the Authorization Server; no hardcoded keys.
@@ -104,7 +104,7 @@ Both the BFF and the Resource Server MUST be built from this archetype. This pre
 
 ### Cross-Cutting Concerns Identified
 
-1. **OAuth/OIDC plumbing** — Auth Code + PKCE, server-side token storage on the BFF, transparent refresh + request replay, end-session at logout. *Note: archetype does not ship this — it is net-new work on top of the archetype.*
+1. **OAuth/OIDC plumbing** — Authorization Code flow with confidential-client secret authentication (no PKCE), server-side token storage on the BFF, transparent refresh + request replay, end-session at logout. *Note: archetype does not ship this — it is net-new work on top of the archetype.*
 2. **Session management** — HttpOnly cookie ↔ server-side session record holding the token bundle; cookie attributes (`Secure`, `HttpOnly`, `SameSite`), session lifetime, idle/absolute timeouts.
 3. **JWKS caching** — Resource Server caches Keycloak's JWKS with a TTL and handles key rotation. Likely reusable from the archetype's `entra` plumbing.
 4. **Scope enforcement** — Resource-Server middleware maps endpoints to required scopes; the archetype's `RoleMappingProvider` is the natural extension point.
@@ -344,9 +344,9 @@ npm install -D tailwindcss @tailwindcss/postcss postcss
 
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
-| A1 | **BFF OIDC client library** | **Authlib** (async/httpx integration) | Most mature Python OIDC library, explicit PKCE support. Implemented as a new archetype auth plugin (`keycloak-cookie-session`) alongside `none`/`entra`. The BFF requests scopes `openid offline_access reading-speed:read reading-speed:write` at `/authorize`; `openid` makes it an OIDC flow, `offline_access` ensures a refresh token, and the two domain scopes are the ones the RS will enforce. |
+| A1 | **BFF OIDC client library** | **Authlib** (async/httpx integration) | Most mature Python OIDC library. Implemented as a new archetype auth plugin (`keycloak-cookie-session`) alongside `none`/`entra`. The BFF requests scopes `openid reading-speed:read reading-speed:write` at `/authorize`; `openid` makes it an OIDC flow, and the two domain scopes are the ones the RS will enforce. The BFF authenticates the back-channel `/token` POST using HTTP Basic with the `client_secret` (RFC 6749 §2.3.1 `client_secret_basic`). PKCE is intentionally not used — the confidential `client_secret` is the trust basis between BFF and AS. |
 | A2 | **RS JWT validation library** | **PyJWT** (`pyjwt[crypto]`) with `PyJWKClient` | FastAPI-recommended; `python-jose` is effectively abandoned. Genericize the archetype's `entra` mode to accept `(issuer, jwks_url, audience)` and expose it as a `keycloak` / `oidc-bearer` mode. |
-| A3 | **PKCE verifier/state storage** | **Server-side `auth_state` row + short-lived state-id cookie** | Transient row holds `code_verifier`, `state`, `nonce`, `return_to`. State-id cookie is signed, `HttpOnly`, `Max-Age=300`. Row deleted on callback. Avoids putting the verifier in a cookie. |
+| A3 | **OAuth state/nonce storage** | **Server-side `auth_state` row + short-lived state-id cookie** | Transient row holds `state`, `nonce`, `return_to`. State-id cookie is signed, `HttpOnly`, `Max-Age=300`. Row deleted on callback. `state` defends against CSRF on the callback; `nonce` defends against id_token replay. *(A vestigial `code_verifier` column survives the PKCE removal as nullable dead schema — see deferred-work for clean-up — but is no longer read or written.)* |
 | A4 | **Session cookie attributes** | `HttpOnly; Secure (prod); SameSite=Lax; Path=/; opaque 256-bit value` | `Lax` allows the post-Keycloak callback redirect to carry the cookie; `Strict` would not. Opaque value (not a JWT). |
 | A5 | **CSRF strategy** | **Double-submit cookie + custom header + Origin/Referer check** | BFF sets a non-HttpOnly `csrf_token` cookie on session creation; SPA reads it and sends `X-CSRF-Token` on state-changing requests; BFF middleware validates header == cookie. Origin/Referer check as defense in depth. |
 | A6 | **Token refresh strategy** | **Reactive — refresh on 401 from RS, single replay** | Simpler than pre-emptive; no clock-skew logic. Bounded: one retry per request. Refresh failure → 401 to SPA → SPA redirects to `/login`. |
@@ -404,7 +404,7 @@ class ErrorCode(str, Enum):
     FORBIDDEN_SCOPE             = "forbidden_scope"              # HTTP 403
     INVALID_INPUT               = "invalid_input"                # HTTP 422
     BOOK_NOT_FOUND              = "book_not_found"               # HTTP 404
-    AUTH_STATE_INVALID          = "auth_state_invalid"           # HTTP 400 (PKCE/state mismatch)
+    AUTH_STATE_INVALID          = "auth_state_invalid"           # HTTP 400 (state/nonce mismatch, expired auth_state row, token exchange failure)
     CSRF_INVALID                = "csrf_invalid"                 # HTTP 403
 ```
 
@@ -489,7 +489,7 @@ class ErrorCode(str, Enum):
 **I3. Keycloak realm-as-code** — `keycloak/realm-bmad-books.json`:
 
 - Realm `bmad-books`, mode `start-dev --import-realm` for dev, `start --import-realm --optimized` for prod-mode demo.
-- Client `bmad-books-bff` — confidential, Auth Code + PKCE enabled, `client_secret` from env, redirect URIs `http://localhost:${SPA_HOST_PORT:4000}/auth/callback` (+ configurable prod URL); Story 6.2 flipped the host from `:8000` (BFF, retired) to `:${SPA_HOST_PORT:4000}` (SPA SSR edge — the browser-facing origin) via Keycloak / Quarkus MicroProfile substitution. See I9 for the substitution semantics.
+- Client `bmad-books-bff` — confidential, Authorization Code (no PKCE), `client_secret` from env, redirect URIs `http://localhost:${SPA_HOST_PORT:4000}/auth/callback` (+ configurable prod URL); Story 6.2 flipped the host from `:8000` (BFF, retired) to `:${SPA_HOST_PORT:4000}` (SPA SSR edge — the browser-facing origin) via Keycloak / Quarkus MicroProfile substitution. See I9 for the substitution semantics.
 - Client scopes `reading-speed:read`, `reading-speed:write` defined as `optional` and granted to the BFF client by default — the client requests them in the `scope` param.
 - Audience claim `bmad-books-resource-server` mapped onto the access token (so the RS validates `aud`).
 - Pre-seeded users (see I4).
@@ -681,7 +681,7 @@ spa/src/app/
 | 201 | Create success; body is the created resource; `Location` header set | — |
 | 204 | DELETE success; `POST /auth/logout` | — |
 | 302 | OAuth redirects from `/auth/login` and `/auth/callback` | — |
-| 400 | PKCE state / nonce / `code` parameter invalid | `auth_state_invalid` |
+| 400 | OAuth state / nonce / `code` parameter invalid; token exchange rejected by AS | `auth_state_invalid` |
 | 401 | No session, expired session, JWT invalid | `session_expired` |
 | 403 | CSRF token missing/mismatch; scope insufficient | `csrf_invalid` / `forbidden_scope` |
 | 404 | Resource not found (book) | `book_not_found` |
@@ -859,6 +859,11 @@ export class BooksService {
 - A SPA model with `pagesPerHour` — wrong; the wire is `pages_per_hour`, the SPA mirrors it.
 - A backend test under `tests/utils/` for code that lives in `src/<svc>/services/` — must mirror source path.
 - Logging `logger.debug(f"access_token={token}")` — secrets in logs.
+
+### Pattern Amendments
+
+**2026-05-21 — PKCE removed from Authorization Code flow.**
+Original architecture had `Authorization Code + PKCE`. Amendment: the BFF is a confidential client and authenticates to the AS with `client_secret_basic`; PKCE adds no incremental protection in the confidential-client model (PKCE was designed for public clients without secrets — RFC 7636 §1). The `auth_states` row still stores `state`, `nonce`, `return_to` to defend against CSRF on the callback and id_token replay. The `code_verifier` column survives the migration as nullable dead schema (no follow-up migration in this round — see `deferred-work.md`). Authority: `sprint-change-proposal-2026-05-21.md`.
 
 ## Project Structure & Boundaries
 
@@ -1108,7 +1113,7 @@ bmad-books/                                      # repo root (monorepo)
                                                                                │  └─────────────────────┘ │
                                                                                └────┬─────────────┬────────┘
                                                                                     │             │
-                                                                 Auth Code + PKCE   │             │ Bearer JWT
+                                                                 Auth Code (no PKCE),│             │ Bearer JWT
                                                                  refresh, end-sess  │             │ (forward user
                                                                  (Authlib)          │             │  access token)
                                                                                     ▼             ▼
@@ -1204,7 +1209,7 @@ bmad-books/                                      # repo root (monorepo)
 **Internal communication (in order of call):**
 
 1. **SPA → BFF (HTTP, cookie+CSRF).** Same-origin. JSON snake_case in both directions. CSP served from BFF.
-2. **BFF → Keycloak (HTTP, OAuth flows).** `/authorize` (redirect), `/token` (POST), `/end_session` (POST), `/revocation` (POST). PKCE on every authorize.
+2. **BFF → Keycloak (HTTP, OAuth flows).** `/authorize` (redirect), `/token` (POST, `client_secret_basic`), `/end_session` (POST), `/revocation` (POST). State + nonce on every authorize for CSRF/replay defense.
 3. **BFF → Resource Server (HTTP, bearer JWT).** Forwards the user's access token. Single 401-refresh-replay cycle. Honest timeouts: 5s connect / 10s read.
 4. **Resource Server → Keycloak (HTTP, JWKS).** Cached 24h, re-fetched on `kid` miss.
 
@@ -1510,7 +1515,7 @@ All 16 checklist items are `[x]`; no critical or important gaps remain open. The
 **Confidence Level:** **high**
 
 - The decisions are all grounded in the PRD, the UX spec, the user-mandated backend archetype, and current (May 2026) versions of the chosen libraries.
-- The cookie-session BFF + bearer-JWT RS + Keycloak topology is a textbook OAuth/OIDC pattern with abundant reference material — implementation risk is implementation-effort, not architectural uncertainty.
+- The cookie-session BFF + bearer-JWT RS + Keycloak topology is a textbook OAuth/OIDC pattern with abundant reference material — implementation risk is implementation-effort, not architectural uncertainty. PKCE is omitted by design (confidential client; `client_secret` is the trust basis), bringing the flow shape into line with the ACME-TS reference auth-architecture this POC mirrors.
 - The Angular v21 + Tailwind v4 SPA surface is small enough (~10 components, 3 routes) that the framework choice cannot dominate the work.
 
 **Key Strengths:**

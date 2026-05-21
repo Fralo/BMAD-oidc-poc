@@ -64,7 +64,7 @@
     {
       "clientId": "bmad-books-bff",
       "name": "BMAD_books Backend-for-Frontend",
-      "description": "Confidential OAuth client used by the BFF. Authorization Code + PKCE only; no password grant.",
+      "description": "Confidential OAuth client used by the BFF. Authorization Code flow with client_secret_basic; no PKCE (confidential client); no password grant.",
       "enabled": true,
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
@@ -76,7 +76,6 @@
       "frontchannelLogout": true,
       "fullScopeAllowed": false,
       "attributes": {
-        "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:${SPA_HOST_PORT:4000}/*",
         "client.use.lightweight.access.token.enabled": "false"
       },

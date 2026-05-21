@@ -147,7 +147,6 @@ async def _seed_auth_state_row(ctx: _AppContext, *, suffix: str) -> None:
     async with ctx.factory() as db:
         row = entities.AuthState(
             id=f"seeded-auth-{suffix}",
-            code_verifier="cv",
             state=f"state-{suffix}",
             nonce=f"nonce-{suffix}",
             return_to=None,

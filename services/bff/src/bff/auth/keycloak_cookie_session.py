@@ -1,14 +1,15 @@
 """Authlib + PyJWT-based OIDC cookie-session plugin (Story 1.5).
 
-The BFF acts as a confidential Authorization Code + PKCE client. This module
-exposes:
+The BFF acts as a confidential Authorization Code client (no PKCE — the
+confidential `client_secret` is the trust basis with the AS, authenticated
+via `client_secret_basic` per RFC 6749 §2.3.1). This module exposes:
 
 * `state_id_serializer(secret)` / `sign_state_id` / `verify_state_id` —
   HMAC-signed short-lived cookie carrying the `auth_states.id` (5-min TTL).
 * `build_authorize_url(...)` — assembles the 302-target sent to the browser
   on `/auth/login`. Uses the *browser-facing* authorize URL (see D2/D8 split).
-* `exchange_code(...)` — back-channel POST to Keycloak's `/token` endpoint
-  with PKCE replay. Honors architecture §C6 (5s connect / 10s read; no retries).
+* `exchange_code(...)` — back-channel POST to Keycloak's `/token` endpoint.
+  Honors architecture §C6 (5s connect / 10s read; no retries).
 * `verify_id_token(...)` — JWKS-backed RS256 verification with `iss`/`aud`/
   `exp`/`nonce` claim checks. Raises `OidcVerificationError` on any failure.
 """
@@ -94,13 +95,15 @@ def build_authorize_url(
     scopes: Iterable[str],
     state: str,
     nonce: str,
-    code_challenge: str,
 ) -> str:
     """Return the browser-facing 302 target for `/auth/login`.
 
     Uses the `authorize_url_browser` value (closes D2/D8 — the browser cannot
     resolve compose-internal hostnames). The path suffix
     `/protocol/openid-connect/auth` is Keycloak's standard authorize endpoint.
+    No `code_challenge` is sent — this is a confidential client and the
+    `client_secret` (carried on the back-channel `/token` POST) is the trust
+    basis.
     """
     base = authorize_url_browser.rstrip("/") + "/protocol/openid-connect/auth"
     params = {
@@ -110,8 +113,6 @@ def build_authorize_url(
         "redirect_uri": redirect_uri,
         "state": state,
         "nonce": nonce,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
     }
     return f"{base}?{urlencode(params)}"
 
@@ -147,16 +148,16 @@ def safe_return_to(raw: str | None) -> str:
 async def exchange_code(
     *,
     code: str,
-    code_verifier: str,
     redirect_uri: str,
     token_url: str,
     client_id: str,
     client_secret: str,
 ) -> dict[str, Any]:
-    """Exchange `code + code_verifier` for an access/refresh/id-token triple.
+    """Exchange `code` for an access/refresh/id-token triple.
 
-    Honors §C6 timeouts. Raises `OidcVerificationError` on any non-2xx from
-    Keycloak (PKCE mismatch, expired code, network failure).
+    Honors §C6 timeouts. Authenticates with `client_secret_basic` (Authlib
+    default). Raises `OidcVerificationError` on any non-2xx from Keycloak
+    (invalid/expired code, client_secret mismatch, network failure).
     """
     try:
         async with AsyncOAuth2Client(
@@ -168,7 +169,6 @@ async def exchange_code(
                 url=token_url,
                 grant_type="authorization_code",
                 code=code,
-                code_verifier=code_verifier,
                 redirect_uri=redirect_uri,
             )
     except Exception as exc:  # Authlib raises a constellation of errors here

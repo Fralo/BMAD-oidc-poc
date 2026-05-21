@@ -114,3 +114,21 @@ development_status:
   6-3-bff-cleanup-supersede-story-1-14: done
   6-4-revalidation-e2e-smoke-docs-sweep: done
   epic-6-retrospective: optional
+
+  # Epic 7: ACME-TS Principles Alignment (PKCE removal + audit gaps)
+  # Added 2026-05-21 via bmad-correct-course; Sprint Change Proposal at
+  # _bmad-output/planning-artifacts/sprint-change-proposal-2026-05-21.md.
+  # PKCE removal landed inline in the change proposal as edits to PRD,
+  # architecture, epics, Keycloak realm, BFF source + tests, security-review,
+  # and Story 1.5 implementation-artifact — see the proposal's Groups A–H.
+  # The three stories below close the remaining principles-audit gaps:
+  # P4 (separation authN/authZ — claim→role mapping in BFF),
+  # P6 (discovery over hardcoding — fetch .well-known at startup),
+  # P8 (observability — ACME-schema {timestamp, sub, decision, reason} logs).
+  # Story 1.5 retains status `done`; the implementation-artifact carries an
+  # amendment header noting PKCE was removed post-hoc.
+  epic-7: backlog
+  7-1-bff-claim-to-role-mapping-demo: backlog
+  7-2-oidc-discovery-bootstrap: backlog
+  7-3-structured-auth-decision-logs: backlog
+  epic-7-retrospective: optional

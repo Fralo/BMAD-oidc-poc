@@ -1,17 +1,18 @@
 """`/auth/login`, `/auth/callback`, and `/auth/logout` — the BFF's OIDC
 cookie-session entry/exit points (Stories 1.5 + 1.7).
 
-Flow:
+Flow (PKCE removed 2026-05-21 — confidential client uses client_secret_basic):
 
 1. SPA navigates the user to `/auth/login?return_to=<path>`.
-2. BFF mints a fresh `auth_states` row + PKCE verifier/challenge, signs the
-   row id into a short-lived state-id cookie, and 302s to Keycloak's
-   browser-facing `/authorize` URL with all the PKCE params.
+2. BFF mints a fresh `auth_states` row holding `state` + `nonce` + `return_to`,
+   signs the row id into a short-lived state-id cookie, and 302s to Keycloak's
+   browser-facing `/authorize` URL with state + nonce (no code_challenge).
 3. Keycloak authenticates the user and 302s back to `/auth/callback?code=...&state=...`.
 4. BFF validates the state-id cookie + the `state` query param + the
-   `auth_states` row (deletion is atomic), exchanges `code + code_verifier`
-   for tokens, verifies the id_token via JWKS, persists a `sessions` row,
-   sets the session + csrf cookies, and 302s to `return_to`.
+   `auth_states` row (deletion is atomic), POSTs `code` to `/token` with
+   `client_secret_basic` authentication, verifies the id_token via JWKS,
+   persists a `sessions` row, sets the session + csrf cookies, and 302s
+   to `return_to`.
 5. Any failure on the callback path returns 400 `auth_state_invalid` AND
    clears the state-id cookie.
 6. On `POST /auth/logout`: revoke refresh token at Keycloak, call the
@@ -43,7 +44,6 @@ from bff.auth.keycloak_cookie_session import (
     verify_id_token,
     verify_state_id,
 )
-from bff.auth.pkce import compute_code_challenge
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
 from bff.core.errors import ErrorCode
@@ -136,11 +136,8 @@ async def auth_login(
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
     return_to: str | None = None,
 ) -> RedirectResponse:
-    """302 the browser to Keycloak's `/authorize` endpoint with PKCE."""
-    row, code_verifier = await _session_service.create_auth_state(
-        db, return_to=return_to
-    )
-    challenge = compute_code_challenge(code_verifier)
+    """302 the browser to Keycloak's `/authorize` endpoint."""
+    row = await _session_service.create_auth_state(db, return_to=return_to)
     serializer = state_id_serializer(cfg.bff_client_secret)
     signed_state_id = sign_state_id(serializer, row.id)
 
@@ -151,7 +148,6 @@ async def auth_login(
         scopes=_AUTHORIZE_SCOPES,
         state=row.state,
         nonce=row.nonce,
-        code_challenge=challenge,
     )
 
     response = RedirectResponse(url=redirect_url, status_code=302)
@@ -181,7 +177,7 @@ async def auth_callback(
     code: str | None = None,
     state: str | None = None,
 ) -> RedirectResponse | JSONResponse:
-    """Complete the PKCE handshake, persist a session, set cookies, 302 home."""
+    """Complete the OAuth callback, persist a session, set cookies, 302 home."""
 
     # ---- 1) State + state-id cookie validation -----------------------------
     if not state:
@@ -228,7 +224,6 @@ async def auth_callback(
     try:
         token = await exchange_code(
             code=code,
-            code_verifier=row.code_verifier,
             redirect_uri=f"{cfg.bff_base_url}/auth/callback",
             token_url=token_url,
             client_id=cfg.oidc_client_id,

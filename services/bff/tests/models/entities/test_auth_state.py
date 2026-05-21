@@ -1,8 +1,9 @@
 """Tests for the `AuthState` SQLModel — round-trip, expiry filter,
 nullable ``return_to``, and NOT NULL constraints.
 
-Per Story 1.4: this model holds in-flight PKCE state between
-``/auth/login`` and ``/auth/callback`` (Story 1.5).
+Per Story 1.4: this model holds in-flight OAuth state (state/nonce/return_to)
+between ``/auth/login`` and ``/auth/callback`` (Story 1.5). PKCE was removed
+2026-05-21 — see architecture.md Pattern Amendments.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -22,7 +23,6 @@ def _as_utc(dt: datetime) -> datetime:
 def _build_auth_state(**overrides: object) -> AuthState:
     base: dict[str, object] = {
         "id": "auth-state-1",
-        "code_verifier": "verifier-1",
         "state": "state-1",
         "nonce": "nonce-1",
         "return_to": "/books",
@@ -39,7 +39,8 @@ async def test_create_and_read_by_id(session: AsyncSession) -> None:
 
     fetched = await session.get(AuthState, "auth-state-1")
     assert fetched is not None
-    assert fetched.code_verifier == "verifier-1"
+    # code_verifier column survives as nullable dead schema (default "").
+    assert fetched.code_verifier == ""
     assert fetched.state == "state-1"
     assert fetched.nonce == "nonce-1"
     assert fetched.return_to == "/books"
@@ -77,7 +78,7 @@ async def test_created_at_autopopulates(session: AsyncSession) -> None:
 
 @pytest.mark.parametrize(
     "missing_field",
-    ["code_verifier", "state", "nonce", "expires_at"],
+    ["state", "nonce", "expires_at"],
 )
 async def test_not_null_columns_reject_none(
     session: AsyncSession, missing_field: str

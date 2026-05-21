@@ -5,7 +5,7 @@
 **Reviewer:** BMAD capstone author
 **Scope:** OAuth2/OIDC + BFF + JWKS + scope-enforcement reference implementation. The document follows the six-topic envelope of [PRD §9](../_bmad-output/planning-artifacts/PRD.md) — token storage and transport, session cookie attributes, CSRF posture, JWT validation correctness, scope enforcement, standard SPA concerns — plus the three subsections required by the implementing story (`_bmad-output/implementation-artifacts/5-2-security-review-document.md`): Accepted Risks, Threat Model Summary, Known Gaps / Future Work.
 
-This is an **attestation document.** Every claim is anchored in a code path that exists at baseline `3e3612a` and (where applicable) in at least one pin-test. Where the architecture explicitly accepted a risk (token plaintext storage at rest, PKCE verifier plaintext storage, no idle-session timeout beyond the refresh chain), the document calls it out under "Accepted Risks" with mitigation and production alternatives. Where a real hardening opportunity exists but has been tracked as deferred work, the document names it under "Known Gaps / Future Work" — Story 5.2 does not close those items; the project does not silently leave them undocumented either.
+This is an **attestation document.** Every claim is anchored in a code path that exists at baseline `3e3612a` and (where applicable) in at least one pin-test. Where the architecture explicitly accepted a risk (token plaintext storage at rest, no idle-session timeout beyond the refresh chain), the document calls it out under "Accepted Risks" with mitigation and production alternatives. Where a real hardening opportunity exists but has been tracked as deferred work, the document names it under "Known Gaps / Future Work" — Story 5.2 does not close those items; the project does not silently leave them undocumented either. *Note: AR2 ("plaintext PKCE code_verifier") was retired 2026-05-21 when PKCE was removed from the flow — confidential-client `client_secret_basic` replaces it; see Pattern Amendments in architecture.md.*
 
 ---
 
@@ -60,7 +60,7 @@ A second 401 after refresh is treated as a hard authentication failure: the sess
 **Why this isolation matters.** The architectural constraint "Token isolation" — `_bmad-output/planning-artifacts/architecture.md:36` and PRD §8 — mandates that "access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage." The browser holds zero credential material that XSS or a malicious extension could exfiltrate. The cost of a compromised browser session is bounded to "an attacker can use the browser for as long as the current session cookie is valid"; the refresh token — the long-lived credential — never reaches the browser.
 
 **Implementing code paths:**
-- [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — Authorization Code + PKCE flow (`build_authorize_url`, `exchange_code`), id-token verification (`verify_id_token`), refresh (`exchange_code` is reused), revocation (`revoke_refresh_token`), end-session (`end_session`).
+- [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — Authorization Code flow with confidential `client_secret_basic` (no PKCE; see Pattern Amendments in architecture.md): `build_authorize_url`, `exchange_code`, id-token verification (`verify_id_token`), refresh (`exchange_code` is reused), revocation (`revoke_refresh_token`), end-session (`end_session`).
 - [`services/bff/src/bff/models/entities/session.py`](../services/bff/src/bff/models/entities/session.py) — `sessions` SQLModel with the three token columns and the per-session `csrf_secret`.
 - [`services/bff/src/bff/services/session_service.py`](../services/bff/src/bff/services/session_service.py) — session row CRUD; 256-bit ID generation via `secrets.token_urlsafe(32)`; retry-on-`IntegrityError` for the (astronomically unlikely) PK collision case.
 - [`services/bff/src/bff/services/resource_server_client.py`](../services/bff/src/bff/services/resource_server_client.py) — BFF → RS bearer-token plumbing + refresh-and-replay on 401.
@@ -103,7 +103,7 @@ response.set_cookie(
 )
 ```
 
-The value is a `URLSafeTimedSerializer`-signed reference to a transient `auth_states` SQLModel row that holds the PKCE `code_verifier`, `state`, `nonce`, and `return_to`. The signer is keyed by `BFF_CLIENT_SECRET` and produces a tamper-evident token that the callback can verify with no server lookup — the row is then loaded by id and consumed (deleted) at callback time. `Max-Age=300` enforces a five-minute window inside which the user must complete the OAuth dance. After successful callback the state-id cookie is cleared with `max_age=0` (see `services/bff/src/bff/api/auth.py:288–296`) using attributes that match the original set (RFC 6265bis requirement when `Secure` is true).
+The value is a `URLSafeTimedSerializer`-signed reference to a transient `auth_states` SQLModel row that holds `state`, `nonce`, and `return_to`. *(A vestigial `code_verifier` column survives in the row schema after the PKCE removal on 2026-05-21 but is no longer read or written.)* The signer is keyed by `BFF_CLIENT_SECRET` and produces a tamper-evident token that the callback can verify with no server lookup — the row is then loaded by id and consumed (deleted) at callback time. `Max-Age=300` enforces a five-minute window inside which the user must complete the OAuth dance. After successful callback the state-id cookie is cleared with `max_age=0` (see `services/bff/src/bff/api/auth.py:288–296`) using attributes that match the original set (RFC 6265bis requirement when `Secure` is true).
 
 **The CSRF cookie sidebar.** The CSRF cookie is deliberately NOT HttpOnly — the SPA's CSRF interceptor must be able to read it in order to echo it back as the `X-CSRF-Token` header on state-changing requests. This is the standard double-submit-cookie pattern; the cookie content is not a secret in itself (the value is HMAC-derived per-session) and the threat the CSRF cookie defends against is cross-site request forgery, not XSS-driven exfiltration:
 
@@ -449,15 +449,9 @@ The architecture explicitly accepts the following risks for the educational refe
 
 **Authority.** [`_bmad-output/planning-artifacts/architecture.md:1362–1368`](../_bmad-output/planning-artifacts/architecture.md) — "Operational Details" → "Token storage at rest." Explicitly out of scope per PRD §4.
 
-### AR2 — Plaintext PKCE `code_verifier` in the BFF's `auth_states` table
+### AR2 — *(retired 2026-05-21)*
 
-**Risk.** The PKCE `code_verifier` — the high-value secret of the login flow — is persisted as plaintext in the transient `auth_states` row created at `/auth/login` and consumed at `/auth/callback`. Anyone with read access to the BFF's SQLite file during the five-minute window between login initiation and callback could (in combination with intercepting the authorization code) complete a successful token exchange impersonating the user.
-
-**Mitigation in this implementation.** Same volume isolation as AR1. The row is deleted at callback time (success or failure). The window is bounded to 5 minutes by `_STATE_COOKIE_MAX_AGE`. The row carries no user identity until after the callback completes — an attacker who reads the row but cannot replay the OAuth code learns nothing useful.
-
-**Production-deployment alternative.** Encrypt the `code_verifier` column with the same KEK proposed for AR1. The encryption boundary is the same; the implementation is uniform.
-
-**Authority.** Deferred-work entry D42 (severity: low) — "Accepted risk per architecture §Operational Details lines 1362–1368; same accepted-risk envelope as token-column plaintext storage." Recorded in `_bmad-output/implementation-artifacts/deferred-work.md`.
+The original AR2 documented an accepted risk: plaintext PKCE `code_verifier` storage in the `auth_states` table. PKCE was removed from the flow on 2026-05-21 (confidential-client `client_secret_basic` is now the trust basis; see Pattern Amendments in architecture.md). The `code_verifier` column survives in the schema as nullable dead storage but is no longer read or written — the at-rest plaintext-verifier risk no longer exists.
 
 ### AR3 — No idle-session timeout beyond the refresh-token-expiry chain
 

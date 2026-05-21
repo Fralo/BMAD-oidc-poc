@@ -21,7 +21,6 @@ from sqlmodel import select
 
 from bff.api.auth import BFF_AUTH_STATE_COOKIE_NAME
 from bff.auth.keycloak_cookie_session import sign_state_id, state_id_serializer
-from bff.auth.pkce import compute_code_challenge
 from bff.core.config import settings
 from bff.models import entities
 from bff.services.session_service import SessionService
@@ -92,9 +91,8 @@ async def _complete_login(
     """Run /auth/login then /auth/callback, returning the final response."""
     params, state_cookie = await _authorize_and_capture(client, return_to=return_to)
     state_value = params["state"]
-    challenge = params["code_challenge"]
 
-    # Fetch the auth_state row to grab its `code_verifier` for the IdP stash.
+    # Fetch the auth_state row to grab its `nonce` for the IdP stash.
     row = (
         (
             await session.execute(
@@ -107,13 +105,11 @@ async def _complete_login(
         .first()
     )
     assert row is not None
-    assert compute_code_challenge(row.code_verifier) == challenge
 
     # Stash the authorization code with the nonce/sub the id_token will carry.
     nonce_for_token = nonce_override if nonce_override is not None else row.nonce
     code = stash_authorization_code(
         idp,
-        code_verifier=row.code_verifier,
         nonce=nonce_for_token,
         sub=sub,
     )
@@ -129,16 +125,20 @@ async def _complete_login(
 # ---------------------------------------------------------------------------
 
 
-async def test_auth_login_redirects_to_idp_with_pkce_params(
+async def test_auth_login_redirects_to_idp_without_pkce_params(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     configured_idp,
 ) -> None:
+    """PKCE removed 2026-05-21 — confidential client uses client_secret_basic
+    on the back-channel /token POST; the /authorize redirect carries state +
+    nonce only.
+    """
     params, _ = await _authorize_and_capture(client_no_redirects, return_to="/books")
     assert params["client_id"] == DEFAULT_AUDIENCE
     assert params["response_type"] == "code"
-    assert params["code_challenge_method"] == "S256"
-    assert params["code_challenge"]
+    assert "code_challenge_method" not in params
+    assert "code_challenge" not in params
     assert params["state"]
     assert params["nonce"]
     assert "openid" in params["scope"]
@@ -357,33 +357,25 @@ async def test_auth_callback_cookie_row_id_mismatch_returns_400(
     assert result.scalars().all() == []
 
 
-async def test_auth_callback_pkce_mismatch_returns_400(
+async def test_auth_callback_token_exchange_rejected_returns_400(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     configured_idp,
 ) -> None:
-    """The IdP rejects the code+verifier exchange."""
-    _, idp = configured_idp
+    """The IdP rejects the code exchange (e.g., unknown code) — BFF maps to 400.
+
+    Note: the original "PKCE mismatch" scenario was retired with PKCE removal
+    on 2026-05-21. The remaining failure mode at /token is the AS rejecting
+    the code outright (invalid_grant); this test exercises that path by sending
+    a code the synthetic IdP never stashed.
+    """
+    _, _ = configured_idp
     params, state_cookie = await _authorize_and_capture(
         client_no_redirects, return_to="/books"
     )
 
-    row = (
-        (
-            await session.execute(
-                select(entities.AuthState).where(
-                    entities.AuthState.state == params["state"]
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    assert row is not None
-    # Stash a code with a DIFFERENT verifier — exchange will 400 at IdP.
-    code = stash_authorization_code(idp, code_verifier="wrong-verifier")
     response = await client_no_redirects.get(
-        f"/auth/callback?code={code}&state={params['state']}",
+        f"/auth/callback?code=never-stashed-code&state={params['state']}",
         cookies={BFF_AUTH_STATE_COOKIE_NAME: state_cookie},
     )
     assert response.status_code == 400
@@ -432,7 +424,6 @@ async def test_auth_callback_expired_auth_state_returns_400(
     serializer = state_id_serializer(settings.bff_client_secret)
     expired = entities.AuthState(
         id="expired-id-xyz",
-        code_verifier="v",
         state="expired-state-xyz",
         nonce="n",
         return_to="/",
@@ -513,7 +504,6 @@ async def _login_with_id_token_override(
     bad_token = make_token(row.nonce)
     code = stash_authorization_code(
         idp,
-        code_verifier=row.code_verifier,
         nonce=row.nonce,
         id_token_override=bad_token,
     )
@@ -606,9 +596,7 @@ async def test_auth_callback_jwks_fetch_failure_returns_400(
         .first()
     )
     assert row is not None
-    code = stash_authorization_code(
-        idp, code_verifier=row.code_verifier, nonce=row.nonce
-    )
+    code = stash_authorization_code(idp, nonce=row.nonce)
 
     # Clear the JWKS key cache so fetch_data is called for this request.
     monkeypatch.setattr(_kcs, "_jwks_clients", {})

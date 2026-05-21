@@ -27,7 +27,7 @@ Beyond the course, the architecture mirrors a potential client engagement in whi
 
 ## 3. Goals
 
-- Provide a working end-to-end example of the Authorization Code + PKCE flow with a confidential client.
+- Provide a working end-to-end example of the OAuth2 Authorization Code flow with a confidential OIDC client. PKCE is intentionally omitted: the `client_secret` held server-side is the trust anchor with the Authorization Server, and PKCE was designed to protect public clients that lack one — a confidential client gains no incremental protection. (See Architecture §A1.)
 - Demonstrate the Token Handler / BFF pattern, in which access and refresh tokens never leave the server side and the browser holds only an HttpOnly session cookie.
 - Demonstrate a stateless, JWT-protected resource API that has no shared session or database with the BFF and trusts only the authorization server's signature.
 - Demonstrate OAuth scope-based authorization enforced at the resource server.
@@ -74,7 +74,7 @@ At the capability level (functional decomposition is the PM persona's job):
 These constraints are load-bearing for the educational goals of the project and are not open for the Architect persona to relax:
 
 - **Token isolation.** Access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage.
-- **BFF as confidential OAuth client.** The BFF is the OAuth client. Login uses Authorization Code flow with PKCE. The BFF holds tokens server-side, keyed by session.
+- **BFF as confidential OAuth client.** The BFF is the OAuth client. Login uses the Authorization Code flow; the BFF authenticates to the Authorization Server with a `client_secret` that lives only on the backend (loaded from env at startup, never present in any browser-reachable artifact). PKCE is not used — the confidential-client secret is the trust anchor. The BFF holds tokens server-side, keyed by session.
 - **Transparent token refresh.** The BFF refreshes expired access tokens using the refresh token and retries the in-flight request, without involving the SPA.
 - **Stateless resource server.** The resource server maintains no session state, shares no database with the BFF, and authenticates every request solely by the JWT it carries.
 - **JWKS-based validation.** The resource server validates JWTs by fetching and caching the authorization server's JWKS. Public keys are not hardcoded.
@@ -128,4 +128,5 @@ These are the journeys the system must support end-to-end and that the E2E test 
 - Authorization server downtime handling beyond a graceful error to the user.
 - Token revocation propagation beyond standard refresh-token invalidation on logout.
 - Observability tooling: no distributed-tracing collector, metrics aggregator, or dashboards. The project does not deploy OTEL Collector, Jaeger, Prometheus, or Grafana. Structured logging is the only operational-visibility surface.
+- PKCE (RFC 7636) on the OAuth Authorization Code flow. Deliberately omitted because the BFF is a confidential client. Adding PKCE in addition would be defense-in-depth, not a correctness requirement, and is out of scope for this educational reference.
 - Any feature whose implementation would dilute the architectural focus of the project.

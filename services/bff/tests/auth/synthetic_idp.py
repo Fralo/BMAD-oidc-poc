@@ -82,7 +82,9 @@ class SyntheticIdp:
     captured_token_exchanges: list[dict[str, Any]] = field(default_factory=list)
     captured_revocations: list[dict[str, Any]] = field(default_factory=list)
     captured_end_sessions: list[dict[str, Any]] = field(default_factory=list)
-    # Per-code stash of the verifier challenge expected at exchange time.
+    # Per-code stash. Value is the (no-longer-validated) historical verifier
+    # kept for backwards-compat call signatures — token exchange only checks
+    # that the code is *present* in this dict.
     pending_codes: dict[str, str] = field(default_factory=dict)
     # Per-code stash of the nonce + sub the token handler will mint into id_tokens.
     pending_claims: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -203,7 +205,9 @@ def build_synthetic_idp(
         return_value=httpx.Response(200, json={"keys": [jwk]})
     )
 
-    # Token exchange — validates PKCE verifier vs stash, returns id+access+refresh.
+    # Token exchange — confidential-client `client_secret_basic` auth; no PKCE
+    # verifier validation (removed 2026-05-21). Returns id+access+refresh on a
+    # known code, 400 invalid_grant otherwise.
     # Story 1.7 adds the `refresh_token` grant branch (used by /auth/logout's
     # refresh-replay-rejection integration test) — revoked tokens get 400
     # `invalid_grant`, unknown ones get 400 `invalid_request`.
@@ -218,13 +222,11 @@ def build_synthetic_idp(
             return httpx.Response(400, json={"error": "invalid_request"})
 
         code = body.get("code")
-        verifier = body.get("code_verifier")
-        if not code or not verifier:
+        if not code:
             return httpx.Response(400, json={"error": "invalid_request"})
-        expected = idp.pending_codes.pop(code, None)
-        if expected is None:
-            return httpx.Response(400, json={"error": "invalid_grant"})
-        if expected != verifier:
+        # `pending_codes.pop(code, None)` now returns the (ignored) historical
+        # verifier or None. None => unknown code => reject.
+        if idp.pending_codes.pop(code, _SENTINEL_UNKNOWN) is _SENTINEL_UNKNOWN:
             return httpx.Response(400, json={"error": "invalid_grant"})
         claims = idp.pending_claims.pop(code, {})
         id_token_override = claims.pop("_id_token", None)
@@ -239,7 +241,7 @@ def build_synthetic_idp(
                 "id_token": id_token,
                 "token_type": "Bearer",
                 "expires_in": 300,
-                "scope": "openid offline_access",
+                "scope": "openid reading-speed:read reading-speed:write",
             },
         )
 
@@ -288,16 +290,23 @@ def build_synthetic_idp(
     return idp
 
 
+_SENTINEL_UNKNOWN = object()
+
+
 def stash_authorization_code(
     idp: SyntheticIdp,
     *,
-    code_verifier: str,
+    code_verifier: str = "",
     nonce: str | None = None,
     sub: str | None = None,
     code: str | None = None,
     id_token_override: str | None = None,
 ) -> str:
-    """Pre-register a code↔verifier pair the synthetic IdP will accept at `/token`.
+    """Pre-register a code the synthetic IdP will accept at `/token`.
+
+    `code_verifier` is accepted as a parameter for backwards-compat with
+    pre-2026-05-21 call sites but is no longer validated (PKCE was removed —
+    see architecture.md Pattern Amendments).
 
     `nonce` and `sub` control the id_token claims the IdP mints on success.
     `id_token_override` injects a pre-built id_token (e.g., for negative tests
@@ -305,7 +314,7 @@ def stash_authorization_code(
     """
     if code is None:
         code = "code-" + uuid.uuid4().hex
-    idp.pending_codes[code] = code_verifier
+    idp.pending_codes[code] = code_verifier  # stored but no longer validated
     claims: dict[str, str] = {}
     if nonce is not None:
         claims["nonce"] = nonce

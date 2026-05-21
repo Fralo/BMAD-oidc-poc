@@ -100,10 +100,9 @@ def test_build_authorize_url_emits_all_required_query_params() -> None:
         authorize_url_browser="http://localhost:8080/realms/test",
         redirect_uri="http://localhost:8000/auth/callback",
         client_id="bmad-books-bff",
-        scopes=["openid", "offline_access", "reading-speed:read"],
+        scopes=["openid", "reading-speed:read"],
         state="state-value",
         nonce="nonce-value",
-        code_challenge="challenge-value",
     )
     assert url.startswith(
         "http://localhost:8080/realms/test/protocol/openid-connect/auth?"
@@ -111,11 +110,12 @@ def test_build_authorize_url_emits_all_required_query_params() -> None:
     assert "client_id=bmad-books-bff" in url
     assert "response_type=code" in url
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8000%2Fauth%2Fcallback" in url
-    assert "scope=openid+offline_access+reading-speed%3Aread" in url
+    assert "scope=openid+reading-speed%3Aread" in url
     assert "state=state-value" in url
     assert "nonce=nonce-value" in url
-    assert "code_challenge=challenge-value" in url
-    assert "code_challenge_method=S256" in url
+    # PKCE removed 2026-05-21 — see architecture.md Pattern Amendments.
+    assert "code_challenge" not in url
+    assert "code_challenge_method" not in url
 
 
 def test_build_authorize_url_strips_trailing_slash() -> None:
@@ -126,7 +126,6 @@ def test_build_authorize_url_strips_trailing_slash() -> None:
         scopes=["openid"],
         state="s",
         nonce="n",
-        code_challenge="c",
     )
     assert "//protocol/openid-connect/auth" not in url
 
@@ -139,10 +138,9 @@ def test_build_authorize_url_strips_trailing_slash() -> None:
 async def test_exchange_code_happy_path() -> None:
     with respx.mock(assert_all_called=False) as mock:
         idp = build_synthetic_idp(mock)
-        code = stash_authorization_code(idp, code_verifier="verifier-xyz")
+        code = stash_authorization_code(idp)
         token = await exchange_code(
             code=code,
-            code_verifier="verifier-xyz",
             redirect_uri="http://localhost:8000/auth/callback",
             token_url=DEFAULT_TOKEN_URL,
             client_id="test-client",
@@ -153,28 +151,12 @@ async def test_exchange_code_happy_path() -> None:
     assert "id_token" in token
 
 
-async def test_exchange_code_pkce_mismatch_raises() -> None:
-    with respx.mock(assert_all_called=False) as mock:
-        idp = build_synthetic_idp(mock)
-        code = stash_authorization_code(idp, code_verifier="expected-verifier")
-        with pytest.raises(OidcVerificationError, match="token_exchange_failed"):
-            await exchange_code(
-                code=code,
-                code_verifier="wrong-verifier",
-                redirect_uri="http://localhost:8000/auth/callback",
-                token_url=DEFAULT_TOKEN_URL,
-                client_id="test-client",
-                client_secret="test-secret",
-            )
-
-
 async def test_exchange_code_unknown_code_raises() -> None:
     with respx.mock(assert_all_called=False) as mock:
         build_synthetic_idp(mock)
         with pytest.raises(OidcVerificationError, match="token_exchange_failed"):
             await exchange_code(
                 code="never-stashed",
-                code_verifier="v",
                 redirect_uri="http://localhost:8000/auth/callback",
                 token_url=DEFAULT_TOKEN_URL,
                 client_id="test-client",
