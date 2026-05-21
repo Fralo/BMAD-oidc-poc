@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from fastapi import Request
 
 _REQUIRED_FIELDS: tuple[str, ...] = (
     "issuer",
@@ -98,3 +99,13 @@ def _validated(payload: dict[str, Any]) -> OidcDiscovery:
             raise DiscoveryFetchError(f"missing_field:{field_name}")
         resolved[field_name] = value
     return OidcDiscovery(**resolved)
+
+
+def get_oidc_discovery(request: Request) -> OidcDiscovery:
+    """FastAPI dependency returning the cached `OidcDiscovery` from app.state.
+
+    The lifespan startup hook in `bff.main` populates `app.state.oidc_discovery`
+    before any request can land — so a `KeyError` here would mean the app was
+    started without a lifespan (a test that bypassed lifespan) and is a bug.
+    """
+    return request.app.state.oidc_discovery

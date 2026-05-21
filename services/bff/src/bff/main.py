@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,7 @@ from bff.api.me import router as me_router
 from bff.api.test_reset import register_test_reset_router
 from bff.api.v1 import router as v1_router
 from bff.auth.csrf import CsrfMiddleware
+from bff.auth.oidc_discovery import DiscoveryFetchError, fetch_discovery
 from bff.core.config import settings
 from bff.core.database import dispose_engine
 from bff.core.errors import (
@@ -20,10 +22,25 @@ from bff.core.errors import (
 )
 from bff.observability.logging import configure_logging
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     configure_logging(settings)
+    # Story 7.2: fetch the OIDC discovery doc once at startup and cache on
+    # app.state. Fail-fast on any error — operators see the exit code +
+    # `discovery_unreachable` log line rather than a runtime 500 on the
+    # first /auth/login.
+    try:
+        app.state.oidc_discovery = await fetch_discovery(
+            settings.oidc_issuer_url,
+            connect_timeout=settings.oidc_discovery_connect_timeout,
+            read_timeout=settings.oidc_discovery_read_timeout,
+        )
+    except DiscoveryFetchError as exc:
+        logger.error("discovery_unreachable: %s", exc.classifier)
+        raise
     try:
         yield
     finally:

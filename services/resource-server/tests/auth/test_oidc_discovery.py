@@ -9,15 +9,15 @@ dependency surface narrow (per resource-server PROJECT_CONTEXT.md: no new
 libraries without human approval).
 """
 
-from collections.abc import Callable
-
 import httpx
 import pytest
 
 from resource_server.auth.oidc_discovery import (
     DiscoveryFetchError,
     OidcDiscovery,
-    fetch_discovery,
+)
+from resource_server.auth.oidc_discovery import (
+    _real_fetch_discovery as fetch_discovery,  # ty: ignore[unresolved-import]
 )
 
 _ISSUER = "http://kc/realms/x"
@@ -35,8 +35,8 @@ def _good_payload() -> dict[str, str]:
     }
 
 
-def _factory_for(transport: httpx.MockTransport) -> Callable[..., httpx.AsyncClient]:
-    def _build(**kw: object) -> httpx.AsyncClient:
+def _factory_for(transport: httpx.MockTransport):
+    def _build(**kw):
         return httpx.AsyncClient(transport=transport, **kw)
 
     return _build

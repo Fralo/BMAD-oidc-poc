@@ -24,10 +24,47 @@ os.environ.setdefault(
 )
 os.environ.setdefault("OIDC_AUDIENCE", "bmad-books-resource-server")
 
-from resource_server.auth.dependencies import require_auth, require_role
-from resource_server.auth.models import Role
-from resource_server.core.database import get_session
-from resource_server.main import app
+# Story 7.2: replace the lifespan's outbound discovery fetch with an
+# in-process stub so AsyncClient(transport=ASGITransport(app=app)) startup
+# does not try to reach a real Keycloak. The patch lands on the
+# `resource_server.auth.oidc_discovery` module BEFORE `resource_server.main`
+# is first imported, so the main module's `from ... import fetch_discovery`
+# captures the stub (and survives an `importlib.reload`). Tests that need
+# the real function (tests/auth/test_oidc_discovery.py) pull it via the
+# preserved `_real_fetch_discovery` attribute below.
+from resource_server.auth import oidc_discovery as _oidc_discovery_module
+from resource_server.auth.oidc_discovery import OidcDiscovery
+
+_TEST_DISCOVERY = OidcDiscovery(
+    issuer="http://keycloak-test/realms/test",
+    authorization_endpoint=(
+        "http://keycloak-test/realms/test/protocol/openid-connect/auth"
+    ),
+    token_endpoint=("http://keycloak-test/realms/test/protocol/openid-connect/token"),
+    jwks_uri=("http://keycloak-test/realms/test/protocol/openid-connect/certs"),
+    end_session_endpoint=(
+        "http://keycloak-test/realms/test/protocol/openid-connect/logout"
+    ),
+    revocation_endpoint=(
+        "http://keycloak-test/realms/test/protocol/openid-connect/revoke"
+    ),
+)
+
+
+async def _stub_fetch_discovery(*_args: object, **_kwargs: object) -> OidcDiscovery:
+    return _TEST_DISCOVERY
+
+
+_oidc_discovery_module._real_fetch_discovery = _oidc_discovery_module.fetch_discovery  # type: ignore[attr-defined]
+_oidc_discovery_module.fetch_discovery = _stub_fetch_discovery  # type: ignore[assignment]
+
+from resource_server.auth.dependencies import (  # noqa: E402  # patch must precede main import
+    require_auth,
+    require_role,
+)
+from resource_server.auth.models import Role  # noqa: E402
+from resource_server.core.database import get_session  # noqa: E402
+from resource_server.main import app  # noqa: E402
 
 _stub_logger = logging.getLogger("resource_server.test_stubs")
 

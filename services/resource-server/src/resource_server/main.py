@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -10,6 +11,7 @@ from resource_server.api.health import router as health_router
 from resource_server.api.test_reset import register_test_reset_router
 from resource_server.api.v1 import router as v1_router
 from resource_server.api.v2 import router as v2_router
+from resource_server.auth.oidc_discovery import DiscoveryFetchError, fetch_discovery
 from resource_server.core.config import settings
 from resource_server.core.database import (
     dispose_engine,
@@ -26,9 +28,11 @@ from resource_server.models import (
 )
 from resource_server.observability.logging import configure_logging
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Story 3.1: observability stack is intentionally inert (no OTEL exporter
     # wiring, no /metrics endpoint) per the 2026-05-14 sprint-change cut +
     # AR1 archetype-mandate note. The archetype's observability/* helpers
@@ -36,6 +40,18 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # SQLModel entities, so the SQLite `create_all` is a no-op until Story
     # 3.3 lands the first ReadingSpeed entity.
     configure_logging(settings)
+    # Story 7.2: fetch the OIDC discovery doc once at startup and cache on
+    # app.state. Placed BEFORE create_all so a discovery failure aborts
+    # startup without touching the database.
+    try:
+        app.state.oidc_discovery = await fetch_discovery(
+            settings.oidc_issuer_url,
+            connect_timeout=settings.oidc_jwks_connect_timeout,
+            read_timeout=settings.oidc_jwks_read_timeout,
+        )
+    except DiscoveryFetchError as exc:
+        logger.error("discovery_unreachable: %s", exc.classifier)
+        raise
     engine = get_engine(settings)
     if is_local_dev_mode(settings):
         async with engine.begin() as conn:

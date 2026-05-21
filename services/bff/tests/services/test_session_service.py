@@ -89,7 +89,7 @@ async def test_create_auth_state_falls_back_unsafe_return_to(
     session: AsyncSession,
 ) -> None:
     service = SessionService()
-    row, _ = await service.create_auth_state(session, return_to="https://evil.example")
+    row = await service.create_auth_state(session, return_to="https://evil.example")
     assert row.return_to == "/"
 
 
@@ -116,7 +116,7 @@ async def test_create_auth_state_retries_on_integrity_error(
     monkeypatch.setattr(session, "commit", _flaky_commit)
 
     service = SessionService()
-    row, _ = await service.create_auth_state(session, return_to="/x")
+    row = await service.create_auth_state(session, return_to="/x")
     assert attempts["n"] == 3
     assert row.id  # successfully persisted
 
@@ -130,7 +130,7 @@ async def test_consume_auth_state_returns_and_deletes_row(
     session: AsyncSession,
 ) -> None:
     service = SessionService()
-    row, _ = await service.create_auth_state(session, return_to="/books")
+    row = await service.create_auth_state(session, return_to="/books")
     consumed = await service.consume_auth_state(session, state=row.state)
     assert consumed is not None
     assert consumed.id == row.id
