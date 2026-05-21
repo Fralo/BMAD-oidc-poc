@@ -502,7 +502,7 @@ class ErrorCode(str, Enum):
 **I5. Env vars** — Single `.env.example` at repo root documenting all required vars; per-service `.env` files gitignored; compose `env_file:` per service.
 
 Required vars (illustrative):
-`KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `BFF_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/bff.db`), `RS_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/rs.db`), `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`.
+`KEYCLOAK_ADMIN_USER`, `KEYCLOAK_ADMIN_PASSWORD`, `BFF_CLIENT_SECRET`, `BFF_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/bff.db`), `RS_DATABASE_URL` (e.g., `sqlite+aiosqlite:////data/rs.db`), `BFF_BASE_URL`, `OIDC_ISSUER_URL`, `OIDC_PUBLIC_BASE_URL` (BFF only; browser-facing base — Story 7.2), `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME`, `BFF_SESSION_COOKIE_SECURE`. (Story 7.2 dropped `OIDC_JWKS_URL` and `OIDC_AUTHORIZE_URL_BROWSER` — JWKS + authorize URL now come from the cached OIDC discovery doc; see Pattern Amendments.)
 
 **Persistence:** each backend service mounts a named Docker volume at `/data` (e.g., `bff_data`, `rs_data`), and its SQLite file lives there. The volumes survive container recreation but are removed on `docker compose down -v`.
 
@@ -864,6 +864,9 @@ export class BooksService {
 
 **2026-05-21 — PKCE removed from Authorization Code flow.**
 Original architecture had `Authorization Code + PKCE`. Amendment: the BFF is a confidential client and authenticates to the AS with `client_secret_basic`; PKCE adds no incremental protection in the confidential-client model (PKCE was designed for public clients without secrets — RFC 7636 §1). The `auth_states` row still stores `state`, `nonce`, `return_to` to defend against CSRF on the callback and id_token replay. The `code_verifier` column survives the migration as nullable dead schema (no follow-up migration in this round — see `deferred-work.md`). Authority: `sprint-change-proposal-2026-05-21.md`.
+
+**2026-05-21 — OIDC discovery bootstrap (ACME-TS P6).**
+Original architecture had `OIDC_JWKS_URL` and `OIDC_AUTHORIZE_URL_BROWSER` as separate env vars on the BFF + RS (Stories 1.3, 1.5, 3.1). Amendment: both services now read the OIDC discovery document at startup from `${OIDC_ISSUER_URL}/.well-known/openid-configuration` and cache the parsed URLs on `app.state.oidc_discovery` via a FastAPI `lifespan` hook. The cached `OidcDiscovery` dataclass exposes `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `end_session_endpoint`, `revocation_endpoint`; consumers read it via the `get_oidc_discovery(request)` dependency. A discovery fetch failure at startup raises and the process exits non-zero (fail-fast — no silent fallback). `OIDC_PUBLIC_BASE_URL` (BFF only; defaults to `OIDC_ISSUER_URL`) overrides the browser-facing authorize URL host for the compose dev split. Keycloak's `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` (compose/infra.yml) makes back-channel discovery responses return back-channel URLs (and mints tokens with back-channel `iss`), so the BFF/RS read all back-channel URLs straight from discovery without per-endpoint rebasing. `/health` no longer re-fetches per probe — it now reads from `app.state.oidc_discovery` (closes security-review §14 D25). Authority: Story 7.2 (`_bmad-output/implementation-artifacts/7-2-oidc-discovery-bootstrap.md`).
 
 ## Project Structure & Boundaries
 

@@ -176,9 +176,11 @@ def build_synthetic_rs_idp(
       2. Patches `jwt.PyJWKClient.fetch_data` to return the IdP's JWKS payload
          (and increments `fetch_call_count` so tests can assert on cache hits
          / rotation re-fetches).
-      3. Patches `settings.oidc_issuer_url`, `oidc_audience`, `oidc_jwks_url`
-         in the RS's `core.config` module so `_validate_access_token` sees the
-         synthetic values.
+      3. Patches `settings.oidc_issuer_url` + `oidc_audience` in the RS's
+         `core.config` module, and stashes a synthetic `OidcDiscovery` on
+         `tests.conftest.app.state.oidc_discovery` carrying the IdP's
+         `issuer` + `jwks_uri` so `_validate_access_token` resolves the
+         synthetic values via the cached discovery doc (Story 7.2).
     """
     key = _generate_keypair()
     public_jwk = _public_jwk(key, kid=kid)

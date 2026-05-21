@@ -166,10 +166,10 @@ class AppSettings(BaseSettings):
     @model_validator(mode="after")
     def _validate_rs_base_url(self) -> AppSettings:
         # Story 3.5: BFF→RS base URL is required-fail-fast. Mirrors the
-        # `_validate_oidc_authorize_url_browser` pattern. A silent default
-        # could direct production traffic at `localhost` (which would not
-        # resolve to the RS in compose) or, worse, an attacker-controlled URL
-        # if a typo'd env var lands in the deployment config.
+        # `_validate_oidc_issuer_url` pattern. A silent default could direct
+        # production traffic at `localhost` (which would not resolve to the
+        # RS in compose) or, worse, an attacker-controlled URL if a typo'd
+        # env var lands in the deployment config.
         #
         # CR5: also reject values that are well-formed strings but produce
         # a URL with no netloc (e.g., ``http://`` alone, ``http:///foo``) —

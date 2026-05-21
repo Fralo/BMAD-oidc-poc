@@ -55,7 +55,6 @@ _OIDC_BEARER_LOGGER: Final[str] = "resource_server.auth.oidc_bearer"
 
 _OIDC_STUBS: Final[dict[str, str]] = {
     "oidc_issuer_url": "http://keycloak-test/realms/test",
-    "oidc_jwks_url": "http://keycloak-test/realms/test/protocol/openid-connect/certs",
     "oidc_audience": "bmad-books-resource-server",
 }
 

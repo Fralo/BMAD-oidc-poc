@@ -60,7 +60,7 @@ A second 401 after refresh is treated as a hard authentication failure: the sess
 **Why this isolation matters.** The architectural constraint "Token isolation" — `_bmad-output/planning-artifacts/architecture.md:36` and PRD §8 — mandates that "access and refresh tokens must never be transmitted to, stored in, or accessible from the SPA or any browser-accessible storage." The browser holds zero credential material that XSS or a malicious extension could exfiltrate. The cost of a compromised browser session is bounded to "an attacker can use the browser for as long as the current session cookie is valid"; the refresh token — the long-lived credential — never reaches the browser.
 
 **Implementing code paths:**
-- [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — Authorization Code flow with confidential `client_secret_basic` (no PKCE; see Pattern Amendments in architecture.md): `build_authorize_url`, `exchange_code`, id-token verification (`verify_id_token`), refresh (`exchange_code` is reused), revocation (`revoke_refresh_token`), end-session (`end_session`).
+- [`services/bff/src/bff/auth/keycloak_cookie_session.py`](../services/bff/src/bff/auth/keycloak_cookie_session.py) — Authorization Code flow with confidential `client_secret_basic` (no PKCE; see Pattern Amendments in architecture.md): `build_authorize_url` (takes the full `authorize_endpoint` URL — Story 7.2 derives it from `discovery.authorization_endpoint` rebased onto `OIDC_PUBLIC_BASE_URL`), `exchange_code` (token URL from `discovery.token_endpoint`), id-token verification (`verify_id_token` reads `jwks_url=discovery.jwks_uri`, `expected_issuer=discovery.issuer`), refresh (`exchange_code` reused; `ResourceServerClient._refresh_access_token` also uses `discovery.token_endpoint`), revocation (`revoke_refresh_token` against `discovery.revocation_endpoint`), end-session (`end_session` against `discovery.end_session_endpoint`).
 - [`services/bff/src/bff/models/entities/session.py`](../services/bff/src/bff/models/entities/session.py) — `sessions` SQLModel with the three token columns and the per-session `csrf_secret`.
 - [`services/bff/src/bff/services/session_service.py`](../services/bff/src/bff/services/session_service.py) — session row CRUD; 256-bit ID generation via `secrets.token_urlsafe(32)`; retry-on-`IntegrityError` for the (astronomically unlikely) PK collision case.
 - [`services/bff/src/bff/services/resource_server_client.py`](../services/bff/src/bff/services/resource_server_client.py) — BFF → RS bearer-token plumbing + refresh-and-replay on 401.
@@ -220,16 +220,16 @@ with HTTP status `403`. The error code is defined at `services/bff/src/bff/core/
 **What the RS validates on every authenticated request.** Per [`services/resource-server/src/resource_server/auth/oidc_bearer.py:76–93`](../services/resource-server/src/resource_server/auth/oidc_bearer.py):
 
 ```python
-def _validate_access_token(token: str) -> dict[str, Any]:
+def _validate_access_token(token: str, discovery: OidcDiscovery) -> dict[str, Any]:
     try:
-        jwks_client = _get_jwks_client(settings.oidc_jwks_url)
+        jwks_client = _get_jwks_client(discovery.jwks_uri)  # Story 7.2: from discovery
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         decoded = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
             audience=settings.oidc_audience,
-            issuer=settings.oidc_issuer_url,
+            issuer=discovery.issuer,                        # Story 7.2: from discovery
             options={"require": ["iss", "aud", "exp", "sub"]},
         )
     except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
@@ -242,7 +242,7 @@ The validation performs, in this order:
 1. **JWKS key retrieval by `kid`.** `PyJWKClient.get_signing_key_from_jwt(token)` reads the token header's `kid`, looks it up in the client's in-memory key cache, and re-fetches from the JWKS endpoint on cache miss. This handles Keycloak key rotation without any operator intervention.
 2. **Algorithm pinning.** `algorithms=["RS256"]` rejects any token signed with a different algorithm — including the `none` algorithm (CVE-2015-9235 class of attack) and any HS256 (symmetric-key) variant that would let an attacker forge tokens using the public key.
 3. **Audience claim.** `audience=settings.oidc_audience` — set to `bmad-books-resource-server`. The Keycloak realm includes a hardcoded protocol mapper (`aud-resource-server`) that injects this value into every access token issued to the `bmad-books-bff` client.
-4. **Issuer claim.** `issuer=settings.oidc_issuer_url` — pinned to the deployment's Keycloak realm URL.
+4. **Issuer claim.** `issuer=discovery.issuer` — sourced from the cached OIDC discovery doc (Story 7.2). With Keycloak's `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, this matches the `iss` claim Keycloak signs into back-channel-minted tokens.
 5. **Expiry.** PyJWT verifies `exp` ≥ now (no `leeway` is configured today; see Known Gaps for the small-but-real clock-skew implication).
 6. **Required-claims gate.** `options={"require": ["iss", "aud", "exp", "sub"]}` enforces that the token actually carries all four claims — a forged token that elided the audience claim would fail this check even before signature verification ran on a valid key. Note this is a **presence-only** check: PyJWT does not enforce non-empty values, so a token carrying an empty-string `sub` would pass this gate and surface downstream as `412 reading_speed_unset`. See Known Gap #5 (D67) for the empty-`sub` consequence.
 
@@ -257,8 +257,8 @@ Signature verification is performed by `jwt.decode` against the public key retur
 # services/bff/src/bff/auth/keycloak_cookie_session.py:204–246 (implementation)
 claims = verify_id_token(
     id_token=id_token_jwt,
-    jwks_url=cfg.oidc_jwks_url,
-    expected_issuer=cfg.oidc_authorize_url_browser,   # D2/D8 caveat — browser-facing URL
+    jwks_url=discovery.jwks_uri,                 # Story 7.2: from discovery
+    expected_issuer=discovery.issuer,            # Story 7.2: from discovery
     expected_audience=cfg.oidc_client_id,
     expected_nonce=row.nonce,
 )
@@ -266,7 +266,7 @@ claims = verify_id_token(
 
 Two notable differences from the RS validation:
 
-- **`expected_issuer` uses `oidc_authorize_url_browser`, not the back-channel issuer.** This is the resolution of defer D2 / D8 — Keycloak emits `iss=<KC_HOSTNAME>` in id_tokens, which equals the browser-facing URL (`http://localhost:8080`), not the in-cluster docker-DNS issuer (`http://keycloak:8080`). The verification uses the same value Keycloak signed.
+- **`expected_issuer` uses `discovery.issuer`.** Story 7.2 replaced the prior `oidc_authorize_url_browser` kludge with the discovery doc's `issuer` field. Keycloak's `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` makes back-channel-minted tokens carry an `iss` matching `discovery.issuer` (the back-channel URL), so the JWT validation passes without per-endpoint host rebasing.
 - **`expected_nonce` is enforced.** OIDC nonce binding — the BFF generated this nonce in `/auth/login`, stored it in the `auth_states` row, and verifies it matches what came back in the id-token. This defends against id-token replay across login attempts.
 
 **Implementing code paths:**
@@ -543,7 +543,7 @@ Items below are real concerns the project has chosen not to address, captured he
 
 13. **BFF `validation_exception_handler` emits `VALIDATION_ERROR` instead of project-standard `invalid_input`.** The RS was migrated to `invalid_input` (lower_snake) in Story 3.3; the BFF still emits the archetype-default `VALIDATION_ERROR` (upper_snake). Operator-visible wire-code drift. Authority: D81. Severity: medium.
 
-14. **Health endpoint amplification.** `services/bff/src/bff/api/health.py:116–135` does per-request engine setup, parses Alembic config, makes an outbound httpx request to the OIDC discovery endpoint, and has no rate limit. Compose's 30s × 5s × 30 retries window admits roughly five outbound discovery requests per second from a single source. Fix: cache the OIDC discovery probe, or drop it from `/health` and rely on the startup-time check only. Authority: D25. Severity: low.
+14. **Health endpoint amplification.** ~~Per-request outbound discovery fetch and Alembic config parse on every probe; compose's 30s × 5s × 30 retries window admits roughly five outbound discovery requests per second.~~ **Resolved by Story 7.2 (2026-05-21):** the lifespan startup hook fetches the discovery doc once and caches it on `app.state.oidc_discovery`; `/health`'s `_check_oidc_discovery` is now a synchronous presence check on the cached value (no outbound httpx call, no per-probe overhead). The RS mirrored the same refactor. Authority: D25 (resolved).
 
 15. **`BFF_CLIENT_SECRET` shared between the production confidential client and the Playwright runner.** `compose/app.yml:87` plumbs the real `bmad-books-bff` client secret into the e2e Playwright container. Test artifacts (traces, screenshots, videos under `e2e/test-results/`) could capture the credential on a failed run. Clean fix: add a separate `bmad-books-bff-test` confidential client to the realm, used only under the `e2e` profile. Authority: D440. Severity: low.
 

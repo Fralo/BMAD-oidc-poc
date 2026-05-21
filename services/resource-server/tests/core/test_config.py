@@ -184,7 +184,7 @@ def test_profile_invalid_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Required-fail-fast: OIDC_ISSUER_URL / OIDC_JWKS_URL / OIDC_AUDIENCE
+# Required-fail-fast: OIDC_ISSUER_URL / OIDC_AUDIENCE (Story 7.2 dropped JWKS_URL)
 # ---------------------------------------------------------------------------
 # Story 3.1 review patch CR1: add the missing fail-fast tests for the
 # `_validate_oidc_required_fail_fast` model_validator (spec Dev Notes lines
