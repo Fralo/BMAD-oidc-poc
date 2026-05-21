@@ -197,6 +197,58 @@ async def test_create_session_persists_row(session: AsyncSession) -> None:
     assert row.csrf_secret
     assert row.sub == "user-sub-1"
     assert row.access_token == "at"
+    # Story 7.1: roles default to "" when no roles= kwarg is passed.
+    assert row.roles == ""
+
+
+async def test_create_session_persists_roles_sorted(session: AsyncSession) -> None:
+    """Story 7.1 AC3: create_session persists the mapped role set as a
+    comma-separated, alphabetically sorted string."""
+    from bff.auth.role_mapping import Role
+
+    service = SessionService()
+    expires = datetime.now(UTC) + timedelta(hours=1)
+    row = await service.create_session(
+        session,
+        sub="user-sub-roles",
+        access_token="at",
+        refresh_token="rt",
+        id_token="it",
+        expires_at=expires,
+        roles=frozenset({Role.READER, Role.ADMIN}),
+    )
+    # Sorted alphabetically — admin precedes reader.
+    assert row.roles == "admin,reader"
+
+
+async def test_create_session_persists_empty_roles(session: AsyncSession) -> None:
+    """Story 7.1 AC3: passing frozenset() persists the canonical empty string."""
+    from bff.auth.role_mapping import Role
+
+    service = SessionService()
+    expires = datetime.now(UTC) + timedelta(hours=1)
+    row = await service.create_session(
+        session,
+        sub="user-sub-no-roles",
+        access_token="at",
+        refresh_token="rt",
+        id_token="it",
+        expires_at=expires,
+        roles=frozenset(),
+    )
+    assert row.roles == ""
+    # Sanity: single-role serialization is also tested via the mapper unit
+    # tests, but pin the through-the-service path too.
+    row2 = await service.create_session(
+        session,
+        sub="user-sub-single-role",
+        access_token="at",
+        refresh_token="rt",
+        id_token="it",
+        expires_at=expires,
+        roles=frozenset({Role.READER}),
+    )
+    assert row2.roles == "reader"
 
 
 async def test_get_session_returns_row_or_none(session: AsyncSession) -> None:

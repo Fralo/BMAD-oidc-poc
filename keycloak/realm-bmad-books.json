@@ -14,6 +14,11 @@
   "ssoSessionMaxLifespan": 36000,
   "offlineSessionIdleTimeout": 2592000,
 
+  "groups": [
+    { "name": "reader", "path": "/reader" },
+    { "name": "admin", "path": "/admin" }
+  ],
+
   "clientScopes": [
     {
       "name": "profile",
@@ -111,6 +116,20 @@
             "claim.name": "sub",
             "jsonType.label": "String"
           }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false",
+            "claim.name": "groups",
+            "jsonType.label": "String"
+          }
         }
       ],
       "defaultClientScopes": [
@@ -138,6 +157,9 @@
           "value": "testpassword",
           "temporary": false
         }
+      ],
+      "groups": [
+        "/reader"
       ]
     },
     {
@@ -153,6 +175,10 @@
           "value": "freshpassword",
           "temporary": false
         }
+      ],
+      "groups": [
+        "/reader",
+        "/admin"
       ]
     }
   ]

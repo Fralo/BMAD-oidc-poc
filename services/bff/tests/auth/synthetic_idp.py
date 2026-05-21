@@ -111,12 +111,16 @@ class SyntheticIdp:
         exp_offset_seconds: int = 300,
         signing_key: rsa.RSAPrivateKey | None = None,
         kid: str = _DEFAULT_KID,
+        groups: list[str] | None = None,
         claims_override: dict[str, Any] | None = None,
     ) -> str:
         """Sign and return an RS256 id_token.
 
         Use `signing_key=` with a different RSA key to forge an invalid
-        signature. Use `claims_override` to drop required claims.
+        signature. Use `claims_override` to drop required claims. Story 7.1
+        added the first-class `groups=` kwarg as a readability nicety for
+        the new role-mapping tests — `claims_override={"groups": [...]}`
+        still works and remains the path of choice for non-list edge cases.
         """
         now = int(time.time())
         claims: dict[str, Any] = {
@@ -128,6 +132,8 @@ class SyntheticIdp:
             "nonce": nonce,
             "preferred_username": preferred_username,
         }
+        if groups is not None:
+            claims["groups"] = list(groups)
         if claims_override:
             for key, value in claims_override.items():
                 if value is None and key in claims:

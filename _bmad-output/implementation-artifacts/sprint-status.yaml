@@ -129,7 +129,7 @@ development_status:
   # Story 1.5 retains status `done`; the implementation-artifact carries an
   # amendment header noting PKCE was removed post-hoc.
   epic-7: in-progress
-  7-1-bff-claim-to-role-mapping-demo: ready-for-dev
+  7-1-bff-claim-to-role-mapping-demo: done
   7-2-oidc-discovery-bootstrap: review
   7-3-structured-auth-decision-logs: done
   epic-7-retrospective: optional

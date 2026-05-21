@@ -11,6 +11,7 @@ Flow (PKCE removed 2026-05-21 — confidential client uses client_secret_basic):
 4. BFF validates the state-id cookie + the `state` query param + the
    `auth_states` row (deletion is atomic), POSTs `code` to `/token` with
    `client_secret_basic` authentication, verifies the id_token via JWKS,
+   maps the id_token's `groups` claim → in-app roles (Story 7.1 / P4),
    persists a `sessions` row, sets the session + csrf cookies, and 302s
    to `return_to`.
 5. Any failure on the callback path returns 400 `auth_state_invalid` AND
@@ -47,6 +48,7 @@ from bff.auth.keycloak_cookie_session import (
     verify_state_id,
 )
 from bff.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
+from bff.auth.role_mapping import map_claims_to_roles
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
 from bff.core.errors import ErrorCode
@@ -303,7 +305,13 @@ async def auth_callback(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
 
-    # ---- 3) Persist session + set cookies + redirect ----------------------
+    # ---- 3) Map id_token claims → in-app roles (Story 7.1 / P4) -----------
+    # The BFF (not the AS) owns the mapping from raw OIDC `groups` claim
+    # values to in-app `Role` enum members. The mapper is pure (no DB, no
+    # network); unknown group names are silently ignored.
+    mapped_roles = map_claims_to_roles(claims)
+
+    # ---- 4) Persist session + set cookies + redirect ----------------------
     session_row = await _session_service.create_session(
         db,
         sub=sub,
@@ -311,6 +319,7 @@ async def auth_callback(
         refresh_token=str(token.get("refresh_token", "")),
         id_token=id_token_jwt,
         expires_at=expires_at,
+        roles=mapped_roles,
     )
 
     redirect = RedirectResponse(url=row.return_to or "/", status_code=302)
