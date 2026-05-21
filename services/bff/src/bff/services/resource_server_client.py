@@ -69,7 +69,6 @@ logger = logging.getLogger(__name__)
 _RS_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=10.0)
 _READING_SPEED_PATH = "/v1/reading-speed"
 _ESTIMATE_PATH = "/v1/estimate"
-_TOKEN_PATH_SUFFIX = "/protocol/openid-connect/token"
 
 
 class RsUnavailable(Exception):  # noqa: N818 -- domain classifier; not a stack-trace error
@@ -175,26 +174,49 @@ class ResourceServerClient:
         self,
         settings_obj: AppSettings,
         session_service: SessionService | None = None,
+        *,
+        default_token_url: str = "",
     ) -> None:
+        # Story 7.2: ``default_token_url`` is a test-only convenience that lets
+        # fixtures construct a client without threading ``token_url`` through
+        # every call. Production routes always pass an explicit ``token_url``
+        # from ``discovery.token_endpoint`` — the default stays empty.
         self._settings = settings_obj
         self._session_service = session_service or SessionService()
+        self._default_token_url = default_token_url
 
     async def get_reading_speed(
-        self, db: AsyncSession, session_row: Session
+        self,
+        db: AsyncSession,
+        session_row: Session,
+        *,
+        token_url: str = "",
     ) -> tuple[int, dict[str, Any] | None]:
         """Issue ``GET /v1/reading-speed`` with refresh-and-replay.
 
         Returns ``(http_status, parsed_json_body_or_None)``. Raises
         :class:`RsUnavailable` on transport failure or RS 5xx;
         :class:`RsSessionTerminated` when the refresh cycle cannot
-        recover.
+        recover. ``token_url`` is the OIDC token endpoint used by the
+        refresh-grant POST — comes from `discovery.token_endpoint`
+        (Story 7.2).
         """
         return await self._call_with_refresh(
-            db, session_row, method="GET", path=_READING_SPEED_PATH, body=None
+            db,
+            session_row,
+            method="GET",
+            path=_READING_SPEED_PATH,
+            body=None,
+            token_url=token_url,
         )
 
     async def put_reading_speed(
-        self, db: AsyncSession, session_row: Session, payload: dict[str, Any]
+        self,
+        db: AsyncSession,
+        session_row: Session,
+        payload: dict[str, Any],
+        *,
+        token_url: str = "",
     ) -> tuple[int, dict[str, Any] | None]:
         """Issue ``PUT /v1/reading-speed`` with the JSON ``payload``.
 
@@ -203,7 +225,12 @@ class ResourceServerClient:
         NFR6.
         """
         return await self._call_with_refresh(
-            db, session_row, method="PUT", path=_READING_SPEED_PATH, body=payload
+            db,
+            session_row,
+            method="PUT",
+            path=_READING_SPEED_PATH,
+            body=payload,
+            token_url=token_url,
         )
 
     async def compute_estimate(
@@ -212,6 +239,7 @@ class ResourceServerClient:
         session_row: Session,
         *,
         pages: int,
+        token_url: str = "",
     ) -> tuple[int, dict[str, Any] | None]:
         """Issue ``POST /v1/estimate`` with body ``{"pages": pages}``.
 
@@ -225,6 +253,7 @@ class ResourceServerClient:
             method="POST",
             path=_ESTIMATE_PATH,
             body={"pages": pages},
+            token_url=token_url,
         )
 
     async def _call_with_refresh(
@@ -235,7 +264,16 @@ class ResourceServerClient:
         method: str,
         path: str,
         body: dict[str, Any] | None,
+        token_url: str,
     ) -> tuple[int, dict[str, Any] | None]:
+        effective_token_url = token_url or self._default_token_url
+        if not effective_token_url:
+            msg = (
+                "ResourceServerClient.token_url is required — pass token_url="
+                "discovery.token_endpoint from the route handler or set "
+                "default_token_url on the test fixture."
+            )
+            raise ValueError(msg)
         # First attempt with the current access_token.
         status, parsed = await self._do_rs_call(
             method, path, session_row.access_token, body
@@ -245,7 +283,9 @@ class ResourceServerClient:
 
         # RS-401 → attempt refresh-and-replay (single cycle per AR19 / A6).
         try:
-            new_tokens = await self._refresh_access_token(session_row)
+            new_tokens = await self._refresh_access_token(
+                session_row, effective_token_url
+            )
         except _RefreshFailed as exc:
             # Refresh itself failed — clear session row + emit cookie-clearing 401.
             logger.warning(
@@ -356,18 +396,21 @@ class ResourceServerClient:
             parsed = None
         return response.status_code, parsed
 
-    async def _refresh_access_token(self, session_row: Session) -> dict[str, Any]:
+    async def _refresh_access_token(
+        self, session_row: Session, token_url: str
+    ) -> dict[str, Any]:
         """Exchange refresh_token for a new access_token at Keycloak.
 
         Mirrors the BFF's existing ``keycloak_cookie_session.exchange_code``
         timeout idiom (Story 1.5). Uses a plain httpx POST with form-encoded
         body — Keycloak's confidential-client refresh grant accepts
-        ``client_id`` and ``client_secret`` as form fields.
+        ``client_id`` and ``client_secret`` as form fields. Story 7.2:
+        ``token_url`` comes from `discovery.token_endpoint`, threaded
+        through `_call_with_refresh` from the per-request handler.
 
         Raises ``_RefreshFailed`` on any failure mode. The caller surfaces
         this as ``RsSessionTerminated(clear_cookies=True)``.
         """
-        token_url = self._settings.oidc_issuer_url.rstrip("/") + _TOKEN_PATH_SUFFIX
         try:
             async with httpx.AsyncClient(timeout=_RS_TIMEOUT) as client:
                 response = await client.post(

@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bff.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
 from bff.core.errors import AppException, ErrorCode
@@ -155,10 +156,13 @@ async def get_reading_speed(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> JSONResponse:
     session_row = await _require_session(request, db, cfg)
     try:
-        status, body = await resource_server_client.get_reading_speed(db, session_row)
+        status, body = await resource_server_client.get_reading_speed(
+            db, session_row, token_url=discovery.token_endpoint
+        )
     except RsSessionTerminated as exc:
         return _session_terminated_response(cfg, clear_cookies=exc.clear_cookies)
     except RsUnavailable:
@@ -174,11 +178,12 @@ async def put_reading_speed(
     payload: ReadingSpeedPutBody,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> JSONResponse:
     session_row = await _require_session(request, db, cfg)
     try:
         status, body = await resource_server_client.put_reading_speed(
-            db, session_row, payload.model_dump()
+            db, session_row, payload.model_dump(), token_url=discovery.token_endpoint
         )
     except RsSessionTerminated as exc:
         return _session_terminated_response(cfg, clear_cookies=exc.clear_cookies)

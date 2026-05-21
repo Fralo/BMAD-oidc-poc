@@ -66,6 +66,9 @@ from resource_server.auth.models import Role  # noqa: E402
 from resource_server.core.database import get_session  # noqa: E402
 from resource_server.main import app  # noqa: E402
 
+# Story 7.2: ASGITransport doesn't run lifespan; populate app.state directly.
+app.state.oidc_discovery = _TEST_DISCOVERY
+
 _stub_logger = logging.getLogger("resource_server.test_stubs")
 
 

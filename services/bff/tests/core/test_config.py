@@ -168,31 +168,43 @@ def test_profile_invalid_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         AppSettings()
 
 
-def test_oidc_authorize_url_browser_required(
+def test_oidc_public_base_url_defaults_to_issuer_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Story 1.5: fail-fast when OIDC_AUTHORIZE_URL_BROWSER is unset — without it
-    # the BFF cannot build a browser-redirectable /authorize URL (D2/D8).
-    monkeypatch.delenv("OIDC_AUTHORIZE_URL_BROWSER", raising=False)
-    with pytest.raises(ValidationError, match="OIDC_AUTHORIZE_URL_BROWSER is required"):
-        AppSettings()
+    # Story 7.2: when unset, `effective_oidc_public_base_url` falls back to
+    # OIDC_ISSUER_URL. The production case where front-channel = back-channel.
+    monkeypatch.delenv("OIDC_PUBLIC_BASE_URL", raising=False)
+    settings = AppSettings()
+    assert settings.effective_oidc_public_base_url == settings.oidc_issuer_url
 
 
-def test_oidc_authorize_url_browser_blank_rejected(
+def test_oidc_public_base_url_blank_falls_back_to_issuer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("OIDC_AUTHORIZE_URL_BROWSER", "   ")
-    with pytest.raises(ValidationError, match="OIDC_AUTHORIZE_URL_BROWSER is required"):
-        AppSettings()
+    monkeypatch.setenv("OIDC_PUBLIC_BASE_URL", "   ")
+    settings = AppSettings()
+    assert settings.effective_oidc_public_base_url == settings.oidc_issuer_url
 
 
-def test_oidc_authorize_url_browser_accepted(
+def test_oidc_public_base_url_explicit_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Compose dev sets this to the browser-resolvable host while OIDC_ISSUER_URL
+    # stays back-channel (architecturally separate values).
     monkeypatch.setenv(
-        "OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/bmad-books"
+        "OIDC_PUBLIC_BASE_URL", "http://localhost:8080/realms/bmad-books"
     )
     settings = AppSettings()
+    assert settings.oidc_public_base_url == "http://localhost:8080/realms/bmad-books"
     assert (
-        settings.oidc_authorize_url_browser == "http://localhost:8080/realms/bmad-books"
+        settings.effective_oidc_public_base_url
+        == "http://localhost:8080/realms/bmad-books"
     )
+
+
+def test_oidc_public_base_url_rejects_non_http_scheme(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OIDC_PUBLIC_BASE_URL", "ftp://example/realms/test")
+    with pytest.raises(ValidationError, match="OIDC_PUBLIC_BASE_URL must start"):
+        AppSettings()

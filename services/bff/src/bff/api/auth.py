@@ -26,6 +26,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Final
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
@@ -44,6 +45,7 @@ from bff.auth.keycloak_cookie_session import (
     verify_id_token,
     verify_state_id,
 )
+from bff.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
 from bff.core.errors import ErrorCode
@@ -100,6 +102,20 @@ def _http_error_classifier(exc: httpx.HTTPError) -> str:
     return type(exc).__name__
 
 
+def _rebase(url: str, base: str) -> str:
+    """Return `url` with its scheme+authority replaced by `base`'s.
+
+    Story 7.2 / Dev Notes §"The front-channel / back-channel hostname trap":
+    discovery returns back-channel URLs; the `/auth/login` 302 must use a
+    browser-resolvable host. Swap the host:port using `urllib.parse.urlparse`
+    so the path / query / fragment stay byte-identical (avoids slicing bugs
+    when the discovery URL has a trailing slash or query string).
+    """
+    u = urlparse(url)
+    b = urlparse(base)
+    return urlunparse((b.scheme, b.netloc, u.path, u.params, u.query, u.fragment))
+
+
 def _auth_state_invalid_response(
     state_cookie_name: str, *, secure: bool = False
 ) -> JSONResponse:
@@ -134,6 +150,7 @@ async def auth_login(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
     return_to: str | None = None,
 ) -> RedirectResponse:
     """302 the browser to Keycloak's `/authorize` endpoint."""
@@ -141,8 +158,11 @@ async def auth_login(
     serializer = state_id_serializer(cfg.bff_client_secret)
     signed_state_id = sign_state_id(serializer, row.id)
 
+    browser_authorize_endpoint = _rebase(
+        discovery.authorization_endpoint, cfg.effective_oidc_public_base_url
+    )
     redirect_url = build_authorize_url(
-        authorize_url_browser=cfg.oidc_authorize_url_browser,
+        authorize_endpoint=browser_authorize_endpoint,
         redirect_uri=f"{cfg.bff_base_url}/auth/callback",
         client_id=cfg.oidc_client_id,
         scopes=_AUTHORIZE_SCOPES,
@@ -174,6 +194,7 @@ async def auth_callback(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
     code: str | None = None,
     state: str | None = None,
 ) -> RedirectResponse | JSONResponse:
@@ -220,12 +241,11 @@ async def auth_callback(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
 
-    token_url = cfg.oidc_issuer_url.rstrip("/") + "/protocol/openid-connect/token"
     try:
         token = await exchange_code(
             code=code,
             redirect_uri=f"{cfg.bff_base_url}/auth/callback",
-            token_url=token_url,
+            token_url=discovery.token_endpoint,
             client_id=cfg.oidc_client_id,
             client_secret=cfg.bff_client_secret,
         )
@@ -245,11 +265,12 @@ async def auth_callback(
     try:
         claims = verify_id_token(
             id_token=id_token_jwt,
-            jwks_url=cfg.oidc_jwks_url,
-            # D2/D8 caveat: Keycloak emits `iss=KC_HOSTNAME` (the browser-facing
-            # URL) in id_tokens. Use the browser-facing URL here, not the
-            # back-channel `oidc_issuer_url`.
-            expected_issuer=cfg.oidc_authorize_url_browser,
+            jwks_url=discovery.jwks_uri,
+            # Story 7.2 / Resolution C: with KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true,
+            # Keycloak emits the discovery doc's `issuer` field as the back-channel
+            # URL AND signs tokens with that same value. The pre-7.2 D2/D8 split
+            # (front-channel URL as expected_issuer) is now obsolete.
+            expected_issuer=discovery.issuer,
             expected_audience=cfg.oidc_client_id,
             expected_nonce=row.nonce,
         )
@@ -384,6 +405,7 @@ async def auth_logout(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> Response:
     """Tear down the user's session — locally and at the AS — and return 204.
 
@@ -427,9 +449,8 @@ async def auth_logout(
         _safe_session_id_log(session_id),
     )
 
-    issuer = cfg.oidc_issuer_url.rstrip("/")
-    revocation_url = f"{issuer}/protocol/openid-connect/revoke"
-    end_session_url = f"{issuer}/protocol/openid-connect/logout"
+    revocation_url = discovery.revocation_endpoint
+    end_session_url = discovery.end_session_endpoint
 
     try:
         if row.refresh_token:

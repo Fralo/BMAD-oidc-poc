@@ -89,7 +89,7 @@ def verify_state_id(
 
 def build_authorize_url(
     *,
-    authorize_url_browser: str,
+    authorize_endpoint: str,
     redirect_uri: str,
     client_id: str,
     scopes: Iterable[str],
@@ -98,14 +98,15 @@ def build_authorize_url(
 ) -> str:
     """Return the browser-facing 302 target for `/auth/login`.
 
-    Uses the `authorize_url_browser` value (closes D2/D8 — the browser cannot
-    resolve compose-internal hostnames). The path suffix
-    `/protocol/openid-connect/auth` is Keycloak's standard authorize endpoint.
-    No `code_challenge` is sent — this is a confidential client and the
-    `client_secret` (carried on the back-channel `/token` POST) is the trust
-    basis.
+    Story 7.2: `authorize_endpoint` is the full URL of the OIDC authorize
+    endpoint (scheme+authority+path) — typically derived from
+    `discovery.authorization_endpoint` with the host:port rebased onto
+    `OIDC_PUBLIC_BASE_URL` (the browser-facing host the user can resolve).
+    The endpoint already encodes Keycloak's `/protocol/openid-connect/auth`
+    path, so this function is now query-string-only. No `code_challenge`
+    is sent — this is a confidential client and the `client_secret`
+    (carried on the back-channel `/token` POST) is the trust basis.
     """
-    base = authorize_url_browser.rstrip("/") + "/protocol/openid-connect/auth"
     params = {
         "client_id": client_id,
         "response_type": "code",
@@ -114,7 +115,7 @@ def build_authorize_url(
         "state": state,
         "nonce": nonce,
     }
-    return f"{base}?{urlencode(params)}"
+    return f"{authorize_endpoint}?{urlencode(params)}"
 
 
 # ---------------------------------------------------------------------------

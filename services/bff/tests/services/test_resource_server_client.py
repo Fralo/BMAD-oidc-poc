@@ -85,7 +85,11 @@ async def _seed_session(
 
 
 def _build_client() -> ResourceServerClient:
-    return ResourceServerClient(settings, session_service=SessionService())
+    return ResourceServerClient(
+        settings,
+        session_service=SessionService(),
+        default_token_url=_KEYCLOAK_TOKEN_URL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +614,11 @@ def test_is_valid_expires_in_classifications(value: object, expected: bool) -> N
 
 @pytest.fixture(name="rsc")
 def _rsc_fixture() -> ResourceServerClient:
-    return ResourceServerClient(settings, session_service=SessionService())
+    return ResourceServerClient(
+        settings,
+        session_service=SessionService(),
+        default_token_url=_KEYCLOAK_TOKEN_URL,
+    )
 
 
 def _build_session(
@@ -641,7 +649,7 @@ async def test_cr3_refresh_missing_expires_in_treated_as_malformed(
     await session.commit()
 
     rs_url = settings.rs_base_url.rstrip("/") + "/v1/reading-speed"
-    token_url = settings.oidc_issuer_url.rstrip("/") + "/protocol/openid-connect/token"
+    token_url = _KEYCLOAK_TOKEN_URL  # Story 7.2: rsc fixture's default_token_url
     respx.get(rs_url).mock(return_value=httpx.Response(401, json={"error": "expired"}))
     # No ``expires_in`` key in the payload.
     respx.post(token_url).mock(
@@ -672,7 +680,7 @@ async def test_cr3_refresh_invalid_expires_in_treated_as_malformed(
     await session.commit()
 
     rs_url = settings.rs_base_url.rstrip("/") + "/v1/reading-speed"
-    token_url = settings.oidc_issuer_url.rstrip("/") + "/protocol/openid-connect/token"
+    token_url = _KEYCLOAK_TOKEN_URL  # Story 7.2: rsc fixture's default_token_url
     respx.get(rs_url).mock(return_value=httpx.Response(401, json={"error": "expired"}))
     body: dict[str, object] = {
         "access_token": "new-at",

@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bff.api.schemas.book import BookCreate, BookOut, BookUpdate
+from bff.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
 from bff.core.config import AppSettings, settings
 from bff.core.database import get_session
 from bff.core.errors import AppException, ErrorCode
@@ -248,6 +249,7 @@ async def estimate_for_book(
     book_id: int,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> JSONResponse:
     """Broker a reading-time estimate for the user's book against the RS.
 
@@ -270,7 +272,7 @@ async def estimate_for_book(
 
     try:
         rs_status, body = await resource_server_client.compute_estimate(
-            db, session_row, pages=book.pages
+            db, session_row, pages=book.pages, token_url=discovery.token_endpoint
         )
     except RsSessionTerminated as exc:
         return _session_terminated_response(cfg, clear_cookies=exc.clear_cookies)

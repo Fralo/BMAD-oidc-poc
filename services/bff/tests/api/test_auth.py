@@ -27,7 +27,6 @@ from bff.services.session_service import SessionService
 from tests.auth.synthetic_idp import (
     DEFAULT_AUDIENCE,
     DEFAULT_ISSUER,
-    DEFAULT_JWKS_URL,
     DEFAULT_TOKEN_URL,
     SyntheticIdp,
     build_synthetic_idp,
@@ -46,8 +45,7 @@ def configured_idp(monkeypatch: pytest.MonkeyPatch):
     Yields (respx_router, SyntheticIdp).
     """
     monkeypatch.setattr(settings, "oidc_issuer_url", DEFAULT_ISSUER)
-    monkeypatch.setattr(settings, "oidc_jwks_url", DEFAULT_JWKS_URL)
-    monkeypatch.setattr(settings, "oidc_authorize_url_browser", DEFAULT_ISSUER)
+    monkeypatch.setattr(settings, "oidc_public_base_url", DEFAULT_ISSUER)
     monkeypatch.setattr(settings, "oidc_client_id", DEFAULT_AUDIENCE)
     monkeypatch.setattr(settings, "bff_client_secret", "test-bff-secret")
     monkeypatch.setattr(settings, "bff_base_url", "http://localhost:8000")

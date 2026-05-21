@@ -15,11 +15,6 @@ os.environ["ENV_FILE"] = ""
 # settings instance — built when `bff.main` is imported below — validates
 # successfully without leaking a real secret into pytest output.
 os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
-# Story 1.5 added OIDC_AUTHORIZE_URL_BROWSER as a required-fail-fast config var
-# (browser-vs-container hostname split — see deferred-work.md#D2/#D8). Provide
-# a stable default here so the test settings instance — built when `bff.main`
-# is imported below — validates successfully.
-os.environ.setdefault("OIDC_AUTHORIZE_URL_BROWSER", "http://localhost:8080/realms/test")
 # Story 3.5 review CR9: OIDC_ISSUER_URL is required-fail-fast so the
 # BFF→Keycloak refresh-token call (ResourceServerClient._refresh_access_token)
 # cannot silently emit a relative URL on a misconfigured deployment.
@@ -56,6 +51,14 @@ _oidc_discovery_module.fetch_discovery = _stub_fetch_discovery  # type: ignore[a
 from bff.core.config import settings  # noqa: E402  # patch must precede bff.main import
 from bff.core.database import get_session  # noqa: E402
 from bff.main import app  # noqa: E402
+
+# Story 7.2: httpx.ASGITransport (the one used in tests) does NOT run lifespan
+# by default, so the lifespan-populated `app.state.oidc_discovery` is empty
+# when tests issue requests. Set it directly so route handlers depending on
+# `get_oidc_discovery` resolve. Tests that exercise the lifespan-fails-fast
+# path explicitly invoke `app.router.lifespan_context(app)` in their own
+# `async with` (after re-stubbing `fetch_discovery` to raise).
+app.state.oidc_discovery = _TEST_DISCOVERY
 
 # Shared CSRF secret for state-changing-request fixtures. 43 chars matches the
 # real `secrets.token_urlsafe(32)` output length minted by Story 1.5 at

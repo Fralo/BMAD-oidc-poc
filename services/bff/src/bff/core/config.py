@@ -79,16 +79,17 @@ class AppSettings(BaseSettings):
     bff_client_secret: str = ""
     bff_base_url: str = "http://localhost:8000"
     oidc_issuer_url: str = ""
-    oidc_jwks_url: str = ""
     oidc_audience: str = ""
     oidc_client_id: str = ""
-    # Browser-facing authorize URL — used in the 302 from /auth/login. Differs
-    # from `oidc_issuer_url` (the BFF↔IdP back-channel URL) because the browser
-    # cannot resolve compose-internal hostnames like `keycloak:8080`. In
-    # compose with `KC_HOSTNAME=localhost`, the discovery doc emits
-    # `http://localhost:8080/...` and the BFF MUST use that for redirects.
-    # (See deferred-work.md#D2 / #D8, closed by Story 1.5.)
-    oidc_authorize_url_browser: str = ""
+    # Browser-facing OIDC base URL — used to derive the `/auth/login` 302
+    # target by combining this scheme+authority with the *path* from
+    # `discovery.authorization_endpoint`. Defaults to `${OIDC_ISSUER_URL}`
+    # (the production case where front-channel = back-channel). Override in
+    # compose dev where the BFF must redirect the browser through a host
+    # the browser can resolve (e.g. `http://localhost:8080/realms/...`)
+    # while back-channel calls go to `http://keycloak:8080/realms/...`.
+    # Story 7.2 replaces the prior `OIDC_AUTHORIZE_URL_BROWSER` env var.
+    oidc_public_base_url: str = ""
     bff_session_cookie_name: str = "bff_session"
     bff_csrf_cookie_name: str = "csrf_token"
     bff_session_cookie_secure: bool = False
@@ -144,22 +145,19 @@ class AppSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _validate_oidc_authorize_url_browser(self) -> AppSettings:
-        # Story 1.5 closes deferred-work.md#D2 / #D8: a browser-facing authorize
-        # URL is required so /auth/login can redirect through a hostname the
-        # user's browser actually resolves. Fail-fast at startup so the misconfig
-        # surfaces at first boot rather than at first OIDC redirect.
-        val = self.oidc_authorize_url_browser.strip()
-        if not val:
+    def _validate_oidc_public_base_url(self) -> AppSettings:
+        # Story 7.2: OIDC_PUBLIC_BASE_URL is the browser-facing base URL used
+        # to construct `/auth/login` 302 targets (consumers combine it with
+        # the *path* from `discovery.authorization_endpoint`). When unset, it
+        # falls back to OIDC_ISSUER_URL via `effective_oidc_public_base_url`
+        # — that's the production case where front-channel = back-channel.
+        # In compose dev it MUST be overridden to a browser-resolvable host.
+        # Fail-fast on http(s) prefix when a value is supplied; the all-empty
+        # case is the fall-through to OIDC_ISSUER_URL (already validated).
+        val = self.oidc_public_base_url.strip()
+        if val and not val.startswith(("http://", "https://")):
             msg = (
-                "OIDC_AUTHORIZE_URL_BROWSER is required and must be non-empty "
-                "(the browser-facing authorize URL — typically "
-                "http://localhost:8080/realms/<realm> in compose)"
-            )
-            raise ValueError(msg)
-        if not val.startswith(("http://", "https://")):
-            msg = (
-                "OIDC_AUTHORIZE_URL_BROWSER must start with 'http://' or 'https://' "
+                "OIDC_PUBLIC_BASE_URL must start with 'http://' or 'https://' "
                 f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)
@@ -240,6 +238,19 @@ class AppSettings(BaseSettings):
     @property
     def cors_expose_headers_list(self) -> list[str]:
         return self._parse_csv(self.cors_expose_headers)
+
+    @property
+    def effective_oidc_public_base_url(self) -> str:
+        """Browser-facing OIDC base. Falls back to OIDC_ISSUER_URL when unset.
+
+        Story 7.2: `/auth/login`'s 302 redirect target is built by replacing
+        the scheme+authority of `discovery.authorization_endpoint` with this
+        value (keeping the path). Production deployments leave it unset
+        (defaults to the issuer); compose dev sets it to the host-facing
+        URL the browser can resolve.
+        """
+        val = self.oidc_public_base_url.strip()
+        return val if val else self.oidc_issuer_url
 
     @property
     def effective_database_url(self) -> str:

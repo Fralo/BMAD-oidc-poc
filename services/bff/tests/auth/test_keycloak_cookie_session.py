@@ -96,8 +96,12 @@ def test_signed_state_id_with_different_secret_does_not_verify() -> None:
 
 
 def test_build_authorize_url_emits_all_required_query_params() -> None:
+    # Story 7.2: `authorize_endpoint` is the full authorize URL (caller
+    # rebases the host:port from `OIDC_PUBLIC_BASE_URL` + discovery's path).
     url = build_authorize_url(
-        authorize_url_browser="http://localhost:8080/realms/test",
+        authorize_endpoint=(
+            "http://localhost:8080/realms/test/protocol/openid-connect/auth"
+        ),
         redirect_uri="http://localhost:8000/auth/callback",
         client_id="bmad-books-bff",
         scopes=["openid", "reading-speed:read"],
@@ -118,16 +122,21 @@ def test_build_authorize_url_emits_all_required_query_params() -> None:
     assert "code_challenge_method" not in url
 
 
-def test_build_authorize_url_strips_trailing_slash() -> None:
+def test_build_authorize_url_appends_query_to_endpoint() -> None:
+    # `authorize_endpoint` is full — no trailing-slash normalization needed
+    # anymore (Story 7.2 moved that responsibility to the caller's `_rebase`).
     url = build_authorize_url(
-        authorize_url_browser="http://localhost:8080/realms/test/",
+        authorize_endpoint=(
+            "http://localhost:8080/realms/test/protocol/openid-connect/auth"
+        ),
         redirect_uri="http://localhost:8000/auth/callback",
         client_id="x",
         scopes=["openid"],
         state="s",
         nonce="n",
     )
-    assert "//protocol/openid-connect/auth" not in url
+    assert url.count("?") == 1
+    assert "?client_id=x&" in url
 
 
 # ---------------------------------------------------------------------------
