@@ -6,43 +6,32 @@ Returns 200 only when **all three** of the following are true:
       migrations; with zero migrations both head and current are None,
       which trivially satisfies the check until Story 3.3 lands the first
       ReadingSpeed migration),
-  (c) the JWKS endpoint at ${OIDC_JWKS_URL} is fetchable over HTTP and
-      returns a JWKS-shaped JSON body — a 2xx response with a top-level
-      `keys` array (any length >= 0 is acceptable; this is a *liveness*
-      probe, not a key-rotation probe).
+  (c) the cached OIDC discovery doc is present on `app.state` — Story
+      7.2's lifespan startup hook fetched it once at boot and fail-fast'd
+      on any error. /health no longer re-fetches per probe (closes the
+      security-review §14 D25 amplification finding); a missing
+      `app.state.oidc_discovery` here means the lifespan was somehow
+      bypassed, which is the same operator signal as an unreachable AS.
 
 On any failure, returns 503 with the archetype error envelope and
 ErrorCode `service_unavailable`. The endpoint is always unauthenticated
 (architecture §"Operational Details" — healthchecks are always-on); the
 response body discloses **only** sanitized status labels ("down"/"ok").
-Verbose probe details are logged server-side at WARNING, not echoed to the
-unauthenticated caller (mirrors the BFF's Story 1.3 review patch P4).
-
-**Why JWKS and not OIDC discovery?** The BFF probes /.well-known/openid-
-configuration because it is an OAuth *client* (it visits /authorize,
-/token, /end_session). The RS is an OAuth *resource server* — its only
-read against Keycloak is the JWKS document used for JWT signature
-verification (Story 3.2). Probing JWKS directly is narrower (smaller
-surface area) and more honest (asserts the actual dependency, not a proxy
-for it). Architecture line 1327 makes this explicit.
 """
 
 import logging
 import os
-from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from resource_server.core.config import AppSettings, settings
 from resource_server.core.database import get_engine
 from resource_server.core.errors import ErrorCode
 
@@ -102,68 +91,29 @@ async def _check_alembic_at_head(engine: AsyncEngine) -> tuple[bool, str]:
     return True, ""
 
 
-async def _check_jwks(
-    cfg: AppSettings,
-    *,
-    client_factory: Callable[..., httpx.AsyncClient] | None = None,
-) -> tuple[bool, str]:
-    """GET ${OIDC_JWKS_URL}; require a 2xx JSON object response carrying a
-    top-level `keys` array (any length is acceptable, including zero).
+def _check_oidc_discovery(request: Request) -> tuple[bool, str]:
+    """Presence check on `app.state.oidc_discovery`.
 
-    Liveness, not configuration-correctness. The probe answers a narrow
-    question — is Keycloak alive and serving *some* JWKS document on this
-    URL? — not whether the keys are actually usable for signature
-    verification (that is Story 3.2's territory via PyJWKClient). An empty
-    `keys: []` array still passes the probe because a freshly-rotated
-    realm momentarily exposes an empty key set; treating that as a /health
-    failure would create a startup race against Keycloak's key-cache warm-up.
-
-    Honors architecture §C6 / AR19 timeouts (5s connect, 10s read) and zero
-    retries. Follows 3xx redirects (mirrors BFF Story 1.3 Review Findings
-    P6 — Keycloak behind ingress with trailing-slash normalization
-    302-redirects on this path).
+    Story 7.2: the lifespan startup hook fetched the discovery doc once
+    and fail-fast'd on any error — so by the time /health runs, the
+    doc is either present (return ok) or the process is already dead
+    (return down with a hint operators recognize).
     """
-    jwks_url = cfg.oidc_jwks_url.strip()
-    if not jwks_url:
-        return False, "OIDC_JWKS_URL is not configured"
-    timeout = httpx.Timeout(
-        connect=cfg.oidc_jwks_connect_timeout,
-        read=cfg.oidc_jwks_read_timeout,
-        write=cfg.oidc_jwks_read_timeout,
-        pool=cfg.oidc_jwks_read_timeout,
-    )
-    factory = client_factory or httpx.AsyncClient
-    try:
-        async with factory(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(jwks_url)
-    except httpx.HTTPError as exc:
-        return False, f"jwks unreachable: {exc!s}"
-    if not (200 <= response.status_code < 300):
-        return False, f"jwks returned HTTP {response.status_code}"
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return False, f"jwks returned non-JSON body: {exc!s}"
-    if not isinstance(payload, dict):
-        return False, (f"jwks body is not a JSON object: got {type(payload).__name__}")
-    keys = payload.get("keys")
-    if not isinstance(keys, list):
-        return False, (
-            "jwks body is missing a 'keys' array: "
-            f"got {type(keys).__name__ if keys is not None else 'None'}"
-        )
+    discovery = getattr(request.app.state, "oidc_discovery", None)
+    if discovery is None:
+        return False, "oidc_discovery not populated on app.state"
     return True, ""
 
 
 @router.get("/health")
-async def health() -> JSONResponse:
+async def health(request: Request) -> JSONResponse:
     engine = get_engine()
 
     db_ok, db_detail = await _check_database(engine)
     alembic_ok, alembic_detail = await _check_alembic_at_head(engine)
-    jwks_ok, jwks_detail = await _check_jwks(settings)
+    oidc_ok, oidc_detail = _check_oidc_discovery(request)
 
-    if db_ok and alembic_ok and jwks_ok:
+    if db_ok and alembic_ok and oidc_ok:
         return JSONResponse(status_code=200, content={"status": "ok"})
 
     # Sanitized response body — `_check_*` helpers return rich detail
@@ -171,15 +121,15 @@ async def health() -> JSONResponse:
     # operators but must not leak to an unauthenticated caller. Log the
     # verbose detail server-side and respond with status labels only.
     logger.warning(
-        "health probe failed: db=%s alembic=%s jwks=%s",
+        "health probe failed: db=%s alembic=%s oidc_discovery=%s",
         db_detail or "ok",
         alembic_detail or "ok",
-        jwks_detail or "ok",
+        oidc_detail or "ok",
     )
     detail = {
         "database": "ok" if db_ok else "down",
         "alembic": "ok" if alembic_ok else "down",
-        "jwks": "ok" if jwks_ok else "down",
+        "oidc_discovery": "ok" if oidc_ok else "down",
     }
     return JSONResponse(
         status_code=ErrorCode.SERVICE_UNAVAILABLE.http_status,

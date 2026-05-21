@@ -1,6 +1,6 @@
 import importlib
 from collections.abc import Generator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -42,8 +42,9 @@ def _patch_health_probes_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         health_module, "_check_alembic_at_head", AsyncMock(return_value=(True, ""))
     )
+    # Story 7.2: _check_oidc_discovery is sync (presence check on app.state).
     monkeypatch.setattr(
-        health_module, "_check_jwks", AsyncMock(return_value=(True, ""))
+        health_module, "_check_oidc_discovery", MagicMock(return_value=(True, ""))
     )
 
 

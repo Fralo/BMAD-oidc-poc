@@ -206,18 +206,6 @@ def test_oidc_issuer_url_required_whitespace(monkeypatch: pytest.MonkeyPatch) ->
         AppSettings()
 
 
-def test_oidc_jwks_url_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OIDC_JWKS_URL", raising=False)
-    with pytest.raises(ValidationError, match="OIDC_JWKS_URL is required"):
-        AppSettings()
-
-
-def test_oidc_jwks_url_required_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OIDC_JWKS_URL", "   ")
-    with pytest.raises(ValidationError, match="OIDC_JWKS_URL is required"):
-        AppSettings()
-
-
 def test_oidc_audience_required_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OIDC_AUDIENCE", raising=False)
     with pytest.raises(ValidationError, match="OIDC_AUDIENCE is required"):

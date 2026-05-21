@@ -6,7 +6,19 @@ import pytest
 from resource_server.auth.contracts import AuthFeatureNotSupportedError
 from resource_server.auth.factory import get_auth
 from resource_server.auth.models import AuthFunctions
+from resource_server.auth.oidc_discovery import OidcDiscovery
 from resource_server.core.config import AppSettings
+
+# Story 7.2: get_auth now takes a discovery doc. The `none` + `entra`
+# providers ignore it; only `oidc_bearer` reads from it.
+_DUMMY_DISCOVERY = OidcDiscovery(
+    issuer="i",
+    authorization_endpoint="a",
+    token_endpoint="t",
+    jwks_uri="j",
+    end_session_endpoint="e",
+    revocation_endpoint="r",
+)
 
 
 def _entra_settings() -> AppSettings:
@@ -21,7 +33,7 @@ def _entra_settings() -> AppSettings:
 
 
 def test_get_auth_entra_returns_auth_functions() -> None:
-    auth_fns = get_auth(_entra_settings())
+    auth_fns = get_auth(_entra_settings(), _DUMMY_DISCOVERY)
     assert isinstance(auth_fns, AuthFunctions)
 
 
@@ -43,11 +55,11 @@ def test_get_auth_errors_when_httpx_is_missing(
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     with pytest.raises(RuntimeError, match="AUTH_TYPE=entra requires httpx"):
-        get_auth(_entra_settings())
+        get_auth(_entra_settings(), _DUMMY_DISCOVERY)
 
 
 @pytest.mark.asyncio
 async def test_none_auth_obo_not_supported() -> None:
-    auth_fns = get_auth(AppSettings(auth_type="none"))
+    auth_fns = get_auth(AppSettings(auth_type="none"), _DUMMY_DISCOVERY)
     with pytest.raises(AuthFeatureNotSupportedError, match="OBO flow is unavailable"):
         await auth_fns.get_on_behalf_of_access_token("scope", "user-token")

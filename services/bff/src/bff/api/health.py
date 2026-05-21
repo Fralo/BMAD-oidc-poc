@@ -5,11 +5,10 @@ Returns 200 only when **all three** of the following are true:
   (b) Alembic reports the database is at the head revision (no pending
       migrations; with zero migrations both head and current are None, which
       trivially satisfies the check until Story 1.4 lands the first migration),
-  (c) the OIDC discovery doc at ${OIDC_ISSUER_URL}/.well-known/openid-configuration
-      is reachable and advertises a non-empty `issuer` field (proves
-      Keycloak is alive and serving the realm's discovery document; the
-      `iss` value is intentionally NOT byte-compared against
-      OIDC_ISSUER_URL — see D45 + `_check_oidc_discovery` docstring).
+  (c) the cached OIDC discovery doc is present on `app.state` — Story 7.2's
+      lifespan startup hook fetched it once at boot and fail-fast'd on any
+      error. /health no longer re-fetches per probe (closes the
+      security-review §14 D25 amplification finding).
 
 On any failure, returns 503 with the archetype error envelope and ErrorCode
 `service_unavailable`. The endpoint is always unauthenticated (architecture
@@ -20,20 +19,17 @@ are logged server-side, not echoed to the unauthenticated caller.
 
 import logging
 import os
-from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from bff.core.config import AppSettings, settings
 from bff.core.database import get_engine
 from bff.core.errors import ErrorCode
 
@@ -94,73 +90,27 @@ async def _check_alembic_at_head(engine: AsyncEngine) -> tuple[bool, str]:
     return True, ""
 
 
-async def _check_oidc_discovery(
-    cfg: AppSettings,
-    *,
-    client_factory: Callable[..., httpx.AsyncClient] | None = None,
-) -> tuple[bool, str]:
-    """GET ${OIDC_ISSUER_URL}/.well-known/openid-configuration; require a 2xx
-    JSON object response carrying a non-empty `issuer` string.
+def _check_oidc_discovery(request: Request) -> tuple[bool, str]:
+    """Presence check on `app.state.oidc_discovery`.
 
-    Liveness, not configuration-correctness. The probe answers a narrow
-    question — is Keycloak up and serving *some* realm's discovery document
-    on this URL? — not the broader question of whether the discovery doc's
-    `iss` byte-matches `OIDC_ISSUER_URL`. The latter is reconciled at boot
-    (see D2/D8 resolution): under `KC_HOSTNAME=localhost` (the
-    browser-correct setting), Keycloak emits
-    `iss=http://localhost:8080/realms/...` even when the back-channel URL is
-    `http://keycloak:8080/realms/...`, and that's expected. Asserting the
-    `issuer` field is a present, non-empty string still rejects a generic
-    reverse-proxy 200 (which would have no `issuer` key) without coupling
-    /health to Keycloak's frontend-URL configuration. Closes D45.
-
-    Honors architecture §C6 timeouts (5s connect, 10s read) and zero retries.
-    Follows 3xx redirects (Story 1.3 Review Findings P6) — Keycloak behind
-    ingress with trailing-slash normalization 302-redirects on this path.
+    Story 7.2: the lifespan startup hook fetched the discovery doc once
+    and fail-fast'd on any error — so by the time /health runs, the doc
+    is either present (return ok) or the process is already dead (return
+    down with a hint operators recognize).
     """
-    issuer = cfg.oidc_issuer_url.strip()
-    if not issuer:
-        return False, "OIDC_ISSUER_URL is not configured"
-    canonical_issuer = issuer.rstrip("/")
-    url = canonical_issuer + "/.well-known/openid-configuration"
-    timeout = httpx.Timeout(
-        connect=cfg.oidc_discovery_connect_timeout,
-        read=cfg.oidc_discovery_read_timeout,
-        write=cfg.oidc_discovery_read_timeout,
-        pool=cfg.oidc_discovery_read_timeout,
-    )
-    factory = client_factory or httpx.AsyncClient
-    try:
-        async with factory(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url)
-    except httpx.HTTPError as exc:
-        return False, f"oidc discovery unreachable: {exc!s}"
-    if not (200 <= response.status_code < 300):
-        return False, f"oidc discovery returned HTTP {response.status_code}"
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        return False, f"oidc discovery returned non-JSON body: {exc!s}"
-    if not isinstance(payload, dict):
-        return False, (
-            f"oidc discovery body is not a JSON object: got {type(payload).__name__}"
-        )
-    declared_issuer = payload.get("issuer")
-    if not isinstance(declared_issuer, str) or not declared_issuer:
-        return False, (
-            "oidc discovery body is missing a non-empty 'issuer' field: "
-            f"got {declared_issuer!r}"
-        )
+    discovery = getattr(request.app.state, "oidc_discovery", None)
+    if discovery is None:
+        return False, "oidc_discovery not populated on app.state"
     return True, ""
 
 
 @router.get("/health")
-async def health() -> JSONResponse:
+async def health(request: Request) -> JSONResponse:
     engine = get_engine()
 
     db_ok, db_detail = await _check_database(engine)
     alembic_ok, alembic_detail = await _check_alembic_at_head(engine)
-    oidc_ok, oidc_detail = await _check_oidc_discovery(settings)
+    oidc_ok, oidc_detail = _check_oidc_discovery(request)
 
     if db_ok and alembic_ok and oidc_ok:
         return JSONResponse(status_code=200, content={"status": "ok"})

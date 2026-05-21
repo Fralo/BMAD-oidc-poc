@@ -32,6 +32,7 @@ from resource_server.auth.contracts import (
     UnauthorizedError,
 )
 from resource_server.auth.models import AuthFunctions, Principal
+from resource_server.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
 from resource_server.auth.role_mapping import identity_role_mapper
 from resource_server.core.config import AppSettings, settings
 from resource_server.core.errors import AppException, ErrorCode
@@ -73,16 +74,16 @@ def _parse_scopes(claim: object) -> frozenset[str]:
     return frozenset()
 
 
-def _validate_access_token(token: str) -> dict[str, Any]:
+def _validate_access_token(token: str, discovery: OidcDiscovery) -> dict[str, Any]:
     try:
-        jwks_client = _get_jwks_client(settings.oidc_jwks_url)
+        jwks_client = _get_jwks_client(discovery.jwks_uri)
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         decoded = jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
             audience=settings.oidc_audience,
-            issuer=settings.oidc_issuer_url,
+            issuer=discovery.issuer,
             options={"require": ["iss", "aud", "exp", "sub"]},
         )
     except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
@@ -117,13 +118,14 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_authenticated_principal(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> Principal:
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise AppException(ErrorCode.SESSION_EXPIRED)
     token = credentials.credentials
     if not token or not token.strip():
         raise AppException(ErrorCode.SESSION_EXPIRED)
-    claims = _validate_access_token(token)
+    claims = _validate_access_token(token, discovery)
     return _principal_from_claims(claims)
 
 
@@ -156,19 +158,21 @@ def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
     return _dependency
 
 
-def make_oidc_bearer_auth(settings_arg: AppSettings) -> AuthFunctions:
+def make_oidc_bearer_auth(
+    settings_arg: AppSettings, discovery: OidcDiscovery
+) -> AuthFunctions:
     """Return configured auth functions for the OIDC bearer (Keycloak JWKS) provider.
 
-    The signature accepts `AppSettings` for parity with `make_entra_auth` and to
-    keep the archetype's factory seam clean — but the module's deps read from
-    the module-level `settings` singleton so test fixtures can monkeypatch them
-    without rebuilding the AuthFunctions closure.
+    Story 7.2: `discovery` is the cached OIDC discovery doc; the closure
+    captures it so JWT validation reads `jwks_uri` + `issuer` from the
+    doc instead of dead env vars. The `settings_arg` parameter is kept
+    for archetype-seam parity with `make_entra_auth`.
     """
     _ = settings_arg
 
     async def authenticate_bearer_token(token: str) -> Principal:
         try:
-            claims = _validate_access_token(token)
+            claims = _validate_access_token(token, discovery)
         except AppException as exc:
             raise UnauthorizedError("JWT validation failed") from exc
         return _principal_from_claims(claims)

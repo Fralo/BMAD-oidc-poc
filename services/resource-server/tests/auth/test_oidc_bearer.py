@@ -26,6 +26,7 @@ from httpx import ASGITransport, AsyncClient
 from resource_server.auth import oidc_bearer
 from resource_server.auth.models import Principal
 from resource_server.auth.oidc_bearer import require_scope
+from resource_server.auth.oidc_discovery import OidcDiscovery
 from resource_server.main import app
 
 from .synthetic_idp import (
@@ -310,7 +311,7 @@ async def test_whitespace_only_bearer_token_returns_401(
 
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="   ")
     with pytest.raises(AppException) as exc_info:
-        await get_authenticated_principal(creds)
+        await get_authenticated_principal(creds, _discovery_from_idp(synthetic_rs_idp))
     assert exc_info.value.error_code is ErrorCode.SESSION_EXPIRED
 
 
@@ -515,12 +516,37 @@ async def test_scope_rejection_emits_warning_log_with_sub_and_scope(
 # ---------------------------------------------------------------------------
 
 
+def _discovery_from_idp(idp: SyntheticRsIdp) -> OidcDiscovery:
+    """Build an OidcDiscovery matching a SyntheticRsIdp's published values."""
+    return OidcDiscovery(
+        issuer=idp.issuer,
+        authorization_endpoint=f"{idp.issuer}/protocol/openid-connect/auth",
+        token_endpoint=f"{idp.issuer}/protocol/openid-connect/token",
+        jwks_uri=idp.jwks_url,
+        end_session_endpoint=f"{idp.issuer}/protocol/openid-connect/logout",
+        revocation_endpoint=f"{idp.issuer}/protocol/openid-connect/revoke",
+    )
+
+
+def _dummy_discovery() -> OidcDiscovery:
+    return OidcDiscovery(
+        issuer="i",
+        authorization_endpoint="a",
+        token_endpoint="t",
+        jwks_uri="j",
+        end_session_endpoint="e",
+        revocation_endpoint="r",
+    )
+
+
 async def test_make_oidc_bearer_auth_authenticate_returns_principal(
     synthetic_rs_idp: SyntheticRsIdp,
 ) -> None:
     from resource_server.core.config import settings
 
-    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings)
+    auth_fns = oidc_bearer.make_oidc_bearer_auth(
+        settings, _discovery_from_idp(synthetic_rs_idp)
+    )
     token = synthetic_rs_idp.make_access_token(sub="seam-test-sub")
     principal = await auth_fns.authenticate_bearer_token(token)
     assert principal.subject == "seam-test-sub"
@@ -533,7 +559,9 @@ async def test_make_oidc_bearer_auth_authenticate_raises_unauthorized_on_bad_tok
     from resource_server.auth.contracts import UnauthorizedError
     from resource_server.core.config import settings
 
-    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings)
+    auth_fns = oidc_bearer.make_oidc_bearer_auth(
+        settings, _discovery_from_idp(synthetic_rs_idp)
+    )
     with pytest.raises(UnauthorizedError):
         await auth_fns.authenticate_bearer_token("not.a.real.jwt")
 
@@ -542,7 +570,7 @@ async def test_make_oidc_bearer_auth_client_credentials_unsupported() -> None:
     from resource_server.auth.contracts import AuthFeatureNotSupportedError
     from resource_server.core.config import settings
 
-    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings)
+    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings, _dummy_discovery())
     with pytest.raises(AuthFeatureNotSupportedError):
         await auth_fns.get_client_credentials_access_token("any-scope")
 
@@ -551,7 +579,7 @@ async def test_make_oidc_bearer_auth_on_behalf_of_unsupported() -> None:
     from resource_server.auth.contracts import AuthFeatureNotSupportedError
     from resource_server.core.config import settings
 
-    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings)
+    auth_fns = oidc_bearer.make_oidc_bearer_auth(settings, _dummy_discovery())
     with pytest.raises(AuthFeatureNotSupportedError):
         await auth_fns.get_on_behalf_of_access_token("scope", "user-token")
 
@@ -591,10 +619,9 @@ def test_factory_dispatch_includes_oidc_bearer(
     test_settings = AppSettings(
         auth_type="oidc_bearer",
         oidc_issuer_url=synthetic_rs_idp.issuer,
-        oidc_jwks_url=synthetic_rs_idp.jwks_url,
         oidc_audience=synthetic_rs_idp.audience,
     )
-    auth_fns = get_auth(test_settings)
+    auth_fns = get_auth(test_settings, _discovery_from_idp(synthetic_rs_idp))
     assert auth_fns.role_mapper("admin") == "admin"
     # Returned AuthFunctions has the four callables wired:
     assert callable(auth_fns.authenticate_bearer_token)

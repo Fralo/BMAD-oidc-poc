@@ -201,7 +201,29 @@ def build_synthetic_rs_idp(
 
     monkeypatch.setattr(oidc_bearer.settings, "oidc_issuer_url", issuer)
     monkeypatch.setattr(oidc_bearer.settings, "oidc_audience", audience)
-    monkeypatch.setattr(oidc_bearer.settings, "oidc_jwks_url", jwks_url)
+
+    # Story 7.2: `_validate_access_token` reads jwks_uri + issuer from the
+    # cached OidcDiscovery on app.state. Stash a synthetic discovery matching
+    # the IdP's values; the autouse `_reset_app_state_discovery` fixture in
+    # tests/conftest.py restores the default between tests.
+    #
+    # IMPORTANT: import `app` from `tests.conftest`, NOT from
+    # `resource_server.main`. `tests/api/test_cors.py` reloads
+    # `resource_server.main` mid-suite, which produces a new FastAPI app
+    # instance bound on the module — but the `client` test fixture still
+    # talks to the conftest-bound original. Setting state on the wrong app
+    # would leave the request-side discovery stale.
+    from resource_server.auth.oidc_discovery import OidcDiscovery
+    from tests.conftest import app
+
+    app.state.oidc_discovery = OidcDiscovery(
+        issuer=issuer,
+        authorization_endpoint=f"{issuer}/protocol/openid-connect/auth",
+        token_endpoint=f"{issuer}/protocol/openid-connect/token",
+        jwks_uri=jwks_url,
+        end_session_endpoint=f"{issuer}/protocol/openid-connect/logout",
+        revocation_endpoint=f"{issuer}/protocol/openid-connect/revoke",
+    )
 
     return idp
 

@@ -1,5 +1,4 @@
 import logging
-from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
@@ -8,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from resource_server.auth.contracts import UnauthorizedError
 from resource_server.auth.factory import get_auth
 from resource_server.auth.models import AuthFunctions, Principal, Role
+from resource_server.auth.oidc_discovery import OidcDiscovery, get_oidc_discovery
 from resource_server.core.config import settings
 from resource_server.core.errors import AppException, ErrorCode
 
@@ -16,9 +16,14 @@ logger = logging.getLogger(__name__)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-@lru_cache
-def get_auth_functions() -> AuthFunctions:
-    return get_auth(settings)
+def get_auth_functions(
+    discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
+) -> AuthFunctions:
+    # Story 7.2: built per-request because `get_auth(settings, discovery)`
+    # closes over the cached discovery doc; the previous @lru_cache returned
+    # a closure that captured a stale empty discovery at first-call time.
+    # Construction is just dataclass assembly — negligible overhead.
+    return get_auth(settings, discovery)
 
 
 async def get_bearer_token(

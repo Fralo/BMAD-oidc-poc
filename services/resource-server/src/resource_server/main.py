@@ -46,8 +46,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     try:
         app.state.oidc_discovery = await fetch_discovery(
             settings.oidc_issuer_url,
-            connect_timeout=settings.oidc_jwks_connect_timeout,
-            read_timeout=settings.oidc_jwks_read_timeout,
+            connect_timeout=settings.oidc_discovery_connect_timeout,
+            read_timeout=settings.oidc_discovery_read_timeout,
         )
     except DiscoveryFetchError as exc:
         logger.error("discovery_unreachable: %s", exc.classifier)

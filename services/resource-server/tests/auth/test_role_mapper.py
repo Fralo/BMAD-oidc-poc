@@ -1,12 +1,22 @@
 from resource_server.auth.factory import get_auth
 from resource_server.auth.models import AuthFunctions
+from resource_server.auth.oidc_discovery import OidcDiscovery
 from resource_server.auth.role_mapping import identity_role_mapper
 from resource_server.core.config import AppSettings
+
+_DUMMY_DISCOVERY = OidcDiscovery(
+    issuer="i",
+    authorization_endpoint="a",
+    token_endpoint="t",
+    jwks_uri="j",
+    end_session_endpoint="e",
+    revocation_endpoint="r",
+)
 
 
 class TestAuthFunctionsRoleMapper:
     def test_default_role_mapper_is_identity(self) -> None:
-        auth_fns = get_auth(AppSettings(auth_type="none"))
+        auth_fns = get_auth(AppSettings(auth_type="none"), _DUMMY_DISCOVERY)
         assert auth_fns.role_mapper("admin") == "admin"
         assert auth_fns.role_mapper("reader") == "reader"
 

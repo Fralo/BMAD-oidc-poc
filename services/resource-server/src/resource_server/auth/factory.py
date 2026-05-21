@@ -2,12 +2,19 @@ from collections.abc import Callable
 
 from resource_server.auth import none as none_auth
 from resource_server.auth.models import AuthFunctions
+from resource_server.auth.oidc_discovery import OidcDiscovery
 from resource_server.auth.role_mapping import identity_role_mapper
 from resource_server.core.config import AppSettings
 
 
-def get_auth(settings: AppSettings) -> AuthFunctions:
-    """Return configured auth functions for the given auth_type via dict-dispatch."""
+def get_auth(settings: AppSettings, discovery: OidcDiscovery) -> AuthFunctions:
+    """Return configured auth functions for the given auth_type via dict-dispatch.
+
+    Story 7.2: `discovery` is the cached OIDC discovery doc; the
+    `oidc_bearer` provider's `authenticate_bearer_token` closure captures
+    it so JWT validation reads `jwks_uri` + `issuer` from the doc instead
+    of dead env vars. Other providers ignore the parameter.
+    """
 
     def _build_none() -> AuthFunctions:
         return AuthFunctions(
@@ -43,7 +50,7 @@ def get_auth(settings: AppSettings) -> AuthFunctions:
                 )
                 raise RuntimeError(msg) from exc
             raise
-        return make_oidc_bearer_auth(settings)
+        return make_oidc_bearer_auth(settings, discovery)
 
     builders: dict[str, Callable[[], AuthFunctions]] = {
         "none": _build_none,

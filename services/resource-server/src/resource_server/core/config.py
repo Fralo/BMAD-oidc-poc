@@ -72,32 +72,24 @@ class AppSettings(BaseSettings):
 
     database_url: str | None = None
 
-    # BMAD_books AR29 env vars (RS subset). The RS consumes a narrow slice
-    # of the project-wide env enumeration:
+    # BMAD_books AR29 env vars (RS subset). Story 7.2 dropped OIDC_JWKS_URL —
+    # the RS now reads `jwks_uri` from the cached OIDC discovery doc.
     #   - RS_DATABASE_URL is the canonical async SQLAlchemy URL for the
-    #     Resource Server's SQLite file (Story 3.1; consumed by /health and,
-    #     from Story 3.3, by /v1/reading-speed).
-    #   - OIDC_ISSUER_URL / OIDC_JWKS_URL / OIDC_AUDIENCE are the
-    #     JWT-validation parameters. OIDC_JWKS_URL is consumed by /health in
-    #     Story 3.1; all three become load-bearing in Story 3.2's oidc_bearer
-    #     plugin. All three are validated as required-fail-fast below.
-    #   - ENABLE_TEST_RESET / TEST_RESET_TOKEN gate the test-reset endpoint
-    #     (Story 3.4 mounts POST /v1/test/reset when ENABLE_TEST_RESET=true).
-    # NOT declared on the RS (each is BFF-only): OIDC_CLIENT_ID,
-    # BFF_CLIENT_SECRET, BFF_BASE_URL, BFF_DATABASE_URL,
-    # BFF_SESSION_COOKIE_*, BFF_CSRF_COOKIE_*.
+    #     Resource Server's SQLite file.
+    #   - OIDC_ISSUER_URL + OIDC_AUDIENCE remain. ISSUER_URL is the discovery
+    #     fetch target; AUDIENCE is the JWT `aud` claim the RS enforces.
+    #   - ENABLE_TEST_RESET / TEST_RESET_TOKEN gate the test-reset endpoint.
     rs_database_url: str = ""
     oidc_issuer_url: str = ""
-    oidc_jwks_url: str = ""
     oidc_audience: str = ""
     enable_test_reset: bool = False
     test_reset_token: str = "change-me"
 
-    # JWKS reachability probe timeouts (architecture §C6 / AR19:
-    # RS→Keycloak 5s connect / 10s read, zero retries). The /health probe
-    # in Story 3.1 reads these.
-    oidc_jwks_connect_timeout: float = 5.0
-    oidc_jwks_read_timeout: float = 10.0
+    # OIDC discovery fetch timeouts (architecture §C6 / AR19: RS→Keycloak
+    # 5s connect / 10s read, zero retries). Story 7.2 renamed from
+    # `oidc_jwks_*` (the previous /health JWKS probe) to mirror the BFF.
+    oidc_discovery_connect_timeout: float = 5.0
+    oidc_discovery_read_timeout: float = 10.0
 
     auth_type: Literal["none", "entra", "oidc_bearer"] = "none"
     auth_external_issuer: str = ""
@@ -125,7 +117,6 @@ class AppSettings(BaseSettings):
         """
         for field_name, env_name in (
             ("oidc_issuer_url", "OIDC_ISSUER_URL"),
-            ("oidc_jwks_url", "OIDC_JWKS_URL"),
             ("oidc_audience", "OIDC_AUDIENCE"),
         ):
             value = getattr(self, field_name)

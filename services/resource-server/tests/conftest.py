@@ -11,17 +11,12 @@ from sqlmodel import SQLModel
 
 os.environ["ENV_FILE"] = ""
 os.environ.setdefault("AUTH_TYPE", "none")
-# Story 3.1 added required-fail-fast validators for OIDC_ISSUER_URL,
-# OIDC_JWKS_URL, OIDC_AUDIENCE on AppSettings (mirrors the BFF's
-# BFF_CLIENT_SECRET fail-fast pattern from Story 1.3 review's
-# decision-needed #3). Provide non-secret pytest placeholders here so the
+# Story 3.1 + 7.2: required-fail-fast validators for OIDC_ISSUER_URL +
+# OIDC_AUDIENCE (OIDC_JWKS_URL removed by Story 7.2 — JWKS now read from
+# the cached discovery doc). Provide non-secret pytest placeholders so the
 # settings instance built when `resource_server.main` is imported below
 # validates successfully without leaking real values into pytest output.
 os.environ.setdefault("OIDC_ISSUER_URL", "http://keycloak-test/realms/test")
-os.environ.setdefault(
-    "OIDC_JWKS_URL",
-    "http://keycloak-test/realms/test/protocol/openid-connect/certs",
-)
 os.environ.setdefault("OIDC_AUDIENCE", "bmad-books-resource-server")
 
 # Story 7.2: replace the lifespan's outbound discovery fetch with an
@@ -68,6 +63,21 @@ from resource_server.main import app  # noqa: E402
 
 # Story 7.2: ASGITransport doesn't run lifespan; populate app.state directly.
 app.state.oidc_discovery = _TEST_DISCOVERY
+
+
+@pytest.fixture(autouse=True)
+def _reset_app_state_discovery():
+    """Re-stash the default OidcDiscovery on app.state for each test.
+
+    Story 7.2: the synthetic IdP fixture mutates `app.state.oidc_discovery`
+    so JWT validation sees the synthetic JWKS/issuer. Without this reset,
+    a non-synthetic-IdP test that runs afterward would inherit the leftover
+    state and fail on issuer/audience checks.
+    """
+    app.state.oidc_discovery = _TEST_DISCOVERY
+    yield
+    app.state.oidc_discovery = _TEST_DISCOVERY
+
 
 _stub_logger = logging.getLogger("resource_server.test_stubs")
 
