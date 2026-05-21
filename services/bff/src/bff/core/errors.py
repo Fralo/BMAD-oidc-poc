@@ -29,6 +29,10 @@ class ErrorCode(enum.Enum):
     )
     AUTH_STATE_INVALID = ("auth_state_invalid", "Authorization state invalid", 400)
     CSRF_INVALID = ("csrf_invalid", "CSRF token missing or invalid", 403)
+    # Architecture §C5: 403 emitted by role-gated endpoints (Story 7.1). The RS
+    # mirrors this code at services/resource-server/src/resource_server/core/errors.py
+    # for scope-gated endpoints; the same wire code unifies the two surfaces.
+    FORBIDDEN_SCOPE = ("forbidden_scope", "Required role missing", 403)
     BOOK_NOT_FOUND = ("book_not_found", "Book not found", 404)
     INVALID_INPUT = ("invalid_input", "Invalid input", 422)
     # CR8: message kept generic so Epic 4 Story 4.2's compute-estimate path

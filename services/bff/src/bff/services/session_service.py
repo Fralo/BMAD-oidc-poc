@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from bff.auth.keycloak_cookie_session import safe_return_to
+from bff.auth.role_mapping import Role, serialize_roles
 from bff.models import entities
 
 logger = logging.getLogger(__name__)
@@ -139,8 +140,15 @@ class SessionService:
         refresh_token: str,
         id_token: str,
         expires_at: datetime,
+        roles: frozenset[Role] = frozenset(),
     ) -> entities.Session:
-        """Persist a fresh `sessions` row. Retries on `IntegrityError` (PK)."""
+        """Persist a fresh `sessions` row. Retries on `IntegrityError` (PK).
+
+        Story 7.1: `roles` is the in-app role set mapped from the id_token's
+        `groups` claim. Default `frozenset()` means "no roles" (serializes
+        to ``""``); the column is NOT NULL.
+        """
+        roles_blob = serialize_roles(roles)
         last_exc: IntegrityError | None = None
         for attempt in range(_INSERT_RETRY_LIMIT):
             row = entities.Session(
@@ -151,6 +159,7 @@ class SessionService:
                 id_token=id_token,
                 expires_at=expires_at,
                 csrf_secret=_new_opaque_id(),
+                roles=roles_blob,
             )
             db.add(row)
             try:

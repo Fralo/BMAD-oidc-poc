@@ -87,8 +87,14 @@ async def _complete_login(
     return_to: str | None = "/books",
     nonce_override: str | None = None,
     sub: str = "test-sub-001",
+    groups: list[str] | None = None,
 ):
-    """Run /auth/login then /auth/callback, returning the final response."""
+    """Run /auth/login then /auth/callback, returning the final response.
+
+    Story 7.1: pass `groups=` to mint an id_token whose `groups` claim
+    drives the `map_claims_to_roles(...)` path at the callback success
+    branch. The role set is then persisted on the `sessions.roles` column.
+    """
     params, state_cookie = await _authorize_and_capture(client, return_to=return_to)
     state_value = params["state"]
 
@@ -108,11 +114,23 @@ async def _complete_login(
 
     # Stash the authorization code with the nonce/sub the id_token will carry.
     nonce_for_token = nonce_override if nonce_override is not None else row.nonce
-    code = stash_authorization_code(
-        idp,
-        nonce=nonce_for_token,
-        sub=sub,
-    )
+    if groups is None:
+        code = stash_authorization_code(
+            idp,
+            nonce=nonce_for_token,
+            sub=sub,
+        )
+    else:
+        # Story 7.1: inject a pre-built id_token carrying the `groups` claim.
+        id_token = idp.make_id_token(
+            sub=sub, nonce=nonce_for_token, groups=groups
+        )
+        code = stash_authorization_code(
+            idp,
+            nonce=nonce_for_token,
+            sub=sub,
+            id_token_override=id_token,
+        )
     response = await client.get(
         f"/auth/callback?code={code}&state={state_value}",
         cookies={BFF_AUTH_STATE_COOKIE_NAME: state_cookie},
@@ -1377,3 +1395,105 @@ async def test_logout_revocation_4xx_classifier_includes_status_code(
         "auth_logout_revocation_failed: HTTPStatusError(401)" in rec.message
         for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Story 7.1 — claim → role mapping persisted on the session row at callback
+# ---------------------------------------------------------------------------
+
+
+async def test_auth_callback_persists_mapped_roles_from_groups_claim(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    configured_idp,
+) -> None:
+    """Story 7.1 AC3 / AC5 #4: when the id_token carries `groups: ["reader", "admin"]`,
+    the post-callback `sessions.roles` column holds the comma-separated sorted
+    serialization (`"admin,reader"`)."""
+    _, idp = configured_idp
+    response = await _complete_login(
+        client_no_redirects,
+        session,
+        idp,
+        sub="user-with-roles",
+        groups=["reader", "admin"],
+    )
+    assert response.status_code == 302
+
+    # The session row was created by the callback handler; fetch it via sub
+    # so we don't have to parse the Set-Cookie header.
+    rows = (
+        (
+            await session.execute(
+                select(entities.Session).where(
+                    entities.Session.sub == "user-with-roles"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].roles == "admin,reader"
+
+
+async def test_auth_callback_persists_empty_roles_when_groups_claim_absent(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    configured_idp,
+) -> None:
+    """Story 7.1 AC3: a login with no `groups` claim persists `roles=""`."""
+    _, idp = configured_idp
+    response = await _complete_login(
+        client_no_redirects,
+        session,
+        idp,
+        sub="user-without-roles",
+    )
+    assert response.status_code == 302
+
+    rows = (
+        (
+            await session.execute(
+                select(entities.Session).where(
+                    entities.Session.sub == "user-without-roles"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].roles == ""
+
+
+async def test_auth_callback_persists_only_known_roles(
+    client_no_redirects: AsyncClient,
+    session: AsyncSession,
+    configured_idp,
+) -> None:
+    """Story 7.1 AC2 / AC3: unknown group names are silently dropped by the
+    mapper; only known roles end up persisted."""
+    _, idp = configured_idp
+    response = await _complete_login(
+        client_no_redirects,
+        session,
+        idp,
+        sub="user-partial-roles",
+        groups=["reader", "ghost", "spectre"],
+    )
+    assert response.status_code == 302
+
+    rows = (
+        (
+            await session.execute(
+                select(entities.Session).where(
+                    entities.Session.sub == "user-partial-roles"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].roles == "reader"
