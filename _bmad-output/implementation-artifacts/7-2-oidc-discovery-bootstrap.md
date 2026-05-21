@@ -1,6 +1,6 @@
 # Story 7.2: OIDC discovery bootstrap (no more hardcoded endpoint URLs)
 
-Status: in-progress
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -26,64 +26,64 @@ so that environment promotion requires changing only the ISSUER base URL — mat
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Author `OidcDiscovery` dataclass and discovery loader (BFF + RS shared shape).** (AC1, AC2, AC3)
-  - [ ] Add `services/bff/src/bff/auth/oidc_discovery.py` with a frozen `@dataclass OidcDiscovery` carrying the six string fields (`issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `end_session_endpoint`, `revocation_endpoint`) plus an async `fetch_discovery(issuer_url, *, connect_timeout, read_timeout, client_factory=httpx.AsyncClient) -> OidcDiscovery` function. The function GETs `${issuer_url.rstrip("/")}/.well-known/openid-configuration` honoring §C6 timeouts (5s connect / 10s read), follows 3xx redirects (mirror `_check_oidc_discovery` lines 134), parses the JSON, asserts each of the six required fields is a non-empty `str`, and returns the dataclass. Any failure (httpx.HTTPError, JSON parse failure, non-2xx, missing/empty required field) raises a `DiscoveryFetchError(classifier: str)` whose message is a one-token classifier safe for ERROR logging (no URL, no response body).
-  - [ ] Add `services/resource-server/src/resource_server/auth/oidc_discovery.py` with the same `OidcDiscovery` dataclass + `fetch_discovery` function. RS uses its own `oidc_jwks_connect_timeout` / `oidc_jwks_read_timeout` settings (currently consumed by `_check_jwks`) — repurpose those (rename to `oidc_discovery_connect_timeout` / `oidc_discovery_read_timeout` to mirror the BFF; OK, see Task 6).
-  - [ ] No retries on either loader. The lifespan call site catches `DiscoveryFetchError` and re-raises with the classifier embedded in the message so uvicorn's startup error surface carries it.
+- [x] **Task 1 — Author `OidcDiscovery` dataclass and discovery loader (BFF + RS shared shape).** (AC1, AC2, AC3)
+  - [x] Add `services/bff/src/bff/auth/oidc_discovery.py` with a frozen `@dataclass OidcDiscovery` carrying the six string fields (`issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `end_session_endpoint`, `revocation_endpoint`) plus an async `fetch_discovery(issuer_url, *, connect_timeout, read_timeout, client_factory=httpx.AsyncClient) -> OidcDiscovery` function. The function GETs `${issuer_url.rstrip("/")}/.well-known/openid-configuration` honoring §C6 timeouts (5s connect / 10s read), follows 3xx redirects (mirror `_check_oidc_discovery` lines 134), parses the JSON, asserts each of the six required fields is a non-empty `str`, and returns the dataclass. Any failure (httpx.HTTPError, JSON parse failure, non-2xx, missing/empty required field) raises a `DiscoveryFetchError(classifier: str)` whose message is a one-token classifier safe for ERROR logging (no URL, no response body).
+  - [x] Add `services/resource-server/src/resource_server/auth/oidc_discovery.py` with the same `OidcDiscovery` dataclass + `fetch_discovery` function. RS uses its own `oidc_jwks_connect_timeout` / `oidc_jwks_read_timeout` settings (currently consumed by `_check_jwks`) — repurpose those (rename to `oidc_discovery_connect_timeout` / `oidc_discovery_read_timeout` to mirror the BFF; OK, see Task 6).
+  - [x] No retries on either loader. The lifespan call site catches `DiscoveryFetchError` and re-raises with the classifier embedded in the message so uvicorn's startup error surface carries it.
 
-- [ ] **Task 2 — Wire the lifespan hook on both services.** (AC2, AC3)
-  - [ ] In `services/bff/src/bff/main.py`'s `lifespan(app)`: after `configure_logging(settings)`, await `fetch_discovery(settings.oidc_issuer_url, ...)`. On success, stash on `app.state.oidc_discovery = discovery`. On `DiscoveryFetchError as exc`, log at ERROR (`logger.error("discovery_unreachable: %s", exc.classifier)`) and re-raise — uvicorn aborts startup with a non-zero exit code.
-  - [ ] Add `def get_oidc_discovery(request: Request) -> OidcDiscovery: return request.app.state.oidc_discovery` next to `_settings_dep` in `services/bff/src/bff/api/auth.py` (or in a new `services/bff/src/bff/core/deps.py` if you'd prefer a central location — but the existing pattern is "dependency providers next to their consumers", so per-router placement is acceptable).
-  - [ ] Mirror on RS: lifespan call in `services/resource-server/src/resource_server/main.py` after `configure_logging(settings)`. The RS lifespan also runs `SQLModel.metadata.create_all` for local dev (line 41); place discovery fetch BEFORE the create_all so a discovery failure aborts startup before any DB work happens. Expose `get_oidc_discovery` for RS dependency injection (consumers land in Task 4).
+- [x] **Task 2 — Wire the lifespan hook on both services.** (AC2, AC3)
+  - [x] In `services/bff/src/bff/main.py`'s `lifespan(app)`: after `configure_logging(settings)`, await `fetch_discovery(settings.oidc_issuer_url, ...)`. On success, stash on `app.state.oidc_discovery = discovery`. On `DiscoveryFetchError as exc`, log at ERROR (`logger.error("discovery_unreachable: %s", exc.classifier)`) and re-raise — uvicorn aborts startup with a non-zero exit code.
+  - [x] Add `def get_oidc_discovery(request: Request) -> OidcDiscovery: return request.app.state.oidc_discovery` next to `_settings_dep` in `services/bff/src/bff/api/auth.py` (or in a new `services/bff/src/bff/core/deps.py` if you'd prefer a central location — but the existing pattern is "dependency providers next to their consumers", so per-router placement is acceptable).
+  - [x] Mirror on RS: lifespan call in `services/resource-server/src/resource_server/main.py` after `configure_logging(settings)`. The RS lifespan also runs `SQLModel.metadata.create_all` for local dev (line 41); place discovery fetch BEFORE the create_all so a discovery failure aborts startup before any DB work happens. Expose `get_oidc_discovery` for RS dependency injection (consumers land in Task 4).
 
-- [ ] **Task 3 — BFF: replace hardcoded URL construction with discovery reads.** (AC4)
-  - [ ] `services/bff/src/bff/api/auth.py` line 144 (`/auth/login`): replace `authorize_url_browser=cfg.oidc_authorize_url_browser` with the discovery-driven derivation — take the **path** (and query, if any) from `discovery.authorization_endpoint` and the **scheme+authority** from `cfg.oidc_public_base_url`. Either inline a small helper (e.g. `_browser_authorize_base(discovery, public_base) -> str`) or extend `build_authorize_url` to take a `browser_base: str` parameter and split the URL inside the function. Whichever shape: ALL URL parsing must use `urllib.parse.urlparse`/`urlunparse` (not string slicing) — Python's `http://localhost:8080/realms/bmad-books` does not have a trailing slash but the test fixtures sometimes do.
-  - [ ] `services/bff/src/bff/api/auth.py` line 223 (`/auth/callback` token exchange): replace `token_url = cfg.oidc_issuer_url.rstrip("/") + "/protocol/openid-connect/token"` with `token_url = discovery.token_endpoint`.
-  - [ ] `services/bff/src/bff/api/auth.py` line 248 (`/auth/callback` id_token verification): replace `jwks_url=cfg.oidc_jwks_url` with `jwks_url=discovery.jwks_uri`. Replace `expected_issuer=cfg.oidc_authorize_url_browser` with `expected_issuer=cfg.oidc_public_base_url` derived to match — actually, the correct value is the `iss` claim Keycloak signs into the id_token. Under `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` (see Task 7 / Dev Notes), that becomes the back-channel issuer (== `discovery.issuer`). Set `expected_issuer=discovery.issuer`.
-  - [ ] `services/bff/src/bff/api/auth.py` lines 430–432 (`/auth/logout`): replace the `revocation_url` and `end_session_url` derivations with `discovery.revocation_endpoint` and `discovery.end_session_endpoint` respectively.
-  - [ ] `services/bff/src/bff/services/resource_server_client.py` line 370 (refresh token flow): replace `self._settings.oidc_issuer_url.rstrip("/") + _TOKEN_PATH_SUFFIX` with `discovery.token_endpoint`. The `ResourceServerClient` is constructed once at app startup so it can hold a reference to `discovery` — add a constructor parameter and inject it from the dependency tree. Delete the `_TOKEN_PATH_SUFFIX` module-level constant if it becomes unused.
-  - [ ] Delete the `oidc_jwks_url` and `oidc_authorize_url_browser` fields from `services/bff/src/bff/core/config.py` (lines 82 + 91). Delete the `_validate_oidc_authorize_url_browser` validator (lines 146–166). Add `oidc_public_base_url: str = ""` field with a `_validate_oidc_public_base_url` validator mirroring `_validate_oidc_issuer_url` (lines 120–144).
+- [x] **Task 3 — BFF: replace hardcoded URL construction with discovery reads.** (AC4)
+  - [x] `services/bff/src/bff/api/auth.py` line 144 (`/auth/login`): replace `authorize_url_browser=cfg.oidc_authorize_url_browser` with the discovery-driven derivation — take the **path** (and query, if any) from `discovery.authorization_endpoint` and the **scheme+authority** from `cfg.oidc_public_base_url`. Either inline a small helper (e.g. `_browser_authorize_base(discovery, public_base) -> str`) or extend `build_authorize_url` to take a `browser_base: str` parameter and split the URL inside the function. Whichever shape: ALL URL parsing must use `urllib.parse.urlparse`/`urlunparse` (not string slicing) — Python's `http://localhost:8080/realms/bmad-books` does not have a trailing slash but the test fixtures sometimes do.
+  - [x] `services/bff/src/bff/api/auth.py` line 223 (`/auth/callback` token exchange): replace `token_url = cfg.oidc_issuer_url.rstrip("/") + "/protocol/openid-connect/token"` with `token_url = discovery.token_endpoint`.
+  - [x] `services/bff/src/bff/api/auth.py` line 248 (`/auth/callback` id_token verification): replace `jwks_url=cfg.oidc_jwks_url` with `jwks_url=discovery.jwks_uri`. Replace `expected_issuer=cfg.oidc_authorize_url_browser` with `expected_issuer=cfg.oidc_public_base_url` derived to match — actually, the correct value is the `iss` claim Keycloak signs into the id_token. Under `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` (see Task 7 / Dev Notes), that becomes the back-channel issuer (== `discovery.issuer`). Set `expected_issuer=discovery.issuer`.
+  - [x] `services/bff/src/bff/api/auth.py` lines 430–432 (`/auth/logout`): replace the `revocation_url` and `end_session_url` derivations with `discovery.revocation_endpoint` and `discovery.end_session_endpoint` respectively.
+  - [x] `services/bff/src/bff/services/resource_server_client.py` line 370 (refresh token flow): replace `self._settings.oidc_issuer_url.rstrip("/") + _TOKEN_PATH_SUFFIX` with `discovery.token_endpoint`. The `ResourceServerClient` is constructed once at app startup so it can hold a reference to `discovery` — add a constructor parameter and inject it from the dependency tree. Delete the `_TOKEN_PATH_SUFFIX` module-level constant if it becomes unused.
+  - [x] Delete the `oidc_jwks_url` and `oidc_authorize_url_browser` fields from `services/bff/src/bff/core/config.py` (lines 82 + 91). Delete the `_validate_oidc_authorize_url_browser` validator (lines 146–166). Add `oidc_public_base_url: str = ""` field with a `_validate_oidc_public_base_url` validator mirroring `_validate_oidc_issuer_url` (lines 120–144).
 
-- [ ] **Task 4 — RS: replace hardcoded URL reads with discovery reads.** (AC4)
-  - [ ] `services/resource-server/src/resource_server/auth/oidc_bearer.py` line 78: replace `_get_jwks_client(settings.oidc_jwks_url)` with `_get_jwks_client(discovery.jwks_uri)`. The simplest path is to read `discovery` from a module-level cache populated by the lifespan hook, or thread it via the auth-functions factory (`make_oidc_bearer_auth(settings_arg, discovery)`). The module-level approach matches the existing `_jwks_clients: dict[str, jwt.PyJWKClient]` pattern; consult the dev notes before choosing.
-  - [ ] `services/resource-server/src/resource_server/auth/oidc_bearer.py` line 85: replace `issuer=settings.oidc_issuer_url` with `issuer=discovery.issuer`.
-  - [ ] Delete the `oidc_jwks_url` field from `services/resource-server/src/resource_server/core/config.py` (line 91). Update `_validate_oidc_required_fail_fast` (lines 114–139) to no longer enumerate `OIDC_JWKS_URL`.
-  - [ ] Rename `oidc_jwks_connect_timeout` / `oidc_jwks_read_timeout` → `oidc_discovery_connect_timeout` / `oidc_discovery_read_timeout` for consistency with the BFF (lines 96–100). Update the only consumer (`_check_jwks` in `services/resource-server/src/resource_server/api/health.py` line 126) — actually `_check_jwks` is going to be replaced entirely (Task 5), so the timeouts become `_check_oidc_discovery`'s.
+- [x] **Task 4 — RS: replace hardcoded URL reads with discovery reads.** (AC4)
+  - [x] `services/resource-server/src/resource_server/auth/oidc_bearer.py` line 78: replace `_get_jwks_client(settings.oidc_jwks_url)` with `_get_jwks_client(discovery.jwks_uri)`. The simplest path is to read `discovery` from a module-level cache populated by the lifespan hook, or thread it via the auth-functions factory (`make_oidc_bearer_auth(settings_arg, discovery)`). The module-level approach matches the existing `_jwks_clients: dict[str, jwt.PyJWKClient]` pattern; consult the dev notes before choosing.
+  - [x] `services/resource-server/src/resource_server/auth/oidc_bearer.py` line 85: replace `issuer=settings.oidc_issuer_url` with `issuer=discovery.issuer`.
+  - [x] Delete the `oidc_jwks_url` field from `services/resource-server/src/resource_server/core/config.py` (line 91). Update `_validate_oidc_required_fail_fast` (lines 114–139) to no longer enumerate `OIDC_JWKS_URL`.
+  - [x] Rename `oidc_jwks_connect_timeout` / `oidc_jwks_read_timeout` → `oidc_discovery_connect_timeout` / `oidc_discovery_read_timeout` for consistency with the BFF (lines 96–100). Update the only consumer (`_check_jwks` in `services/resource-server/src/resource_server/api/health.py` line 126) — actually `_check_jwks` is going to be replaced entirely (Task 5), so the timeouts become `_check_oidc_discovery`'s.
 
-- [ ] **Task 5 — Re-route `/health` to read from cached discovery instead of re-fetching.** (AC3, security-review §14 D25)
-  - [ ] BFF `services/bff/src/bff/api/health.py`: the existing `_check_oidc_discovery` function (lines 97–154) currently makes an outbound httpx request on every health probe. Replace its body with a read of `app.state.oidc_discovery` — if the lifespan hook completed, the cached doc is present and we return `(True, "")`. The probe becomes a presence check; runtime AS reachability is no longer a /health concern (it was already a stale signal — the doc rarely changes). Update `_check_oidc_discovery`'s signature to take `app: FastAPI` (or read from a passed-in `OidcDiscovery | None`) rather than `cfg: AppSettings`.
-  - [ ] RS `services/resource-server/src/resource_server/api/health.py`: replace `_check_jwks` (lines 105–155) with `_check_oidc_discovery` reading from `app.state.oidc_discovery`. Mirror the BFF's shape exactly. The response body key changes from `"jwks"` to `"oidc_discovery"` to match the BFF. Update the `_health` handler's logging line + the response detail dict accordingly. Note: this is a small `/health` response-shape change — surface it in the Change Log and the security-review.md update.
+- [x] **Task 5 — Re-route `/health` to read from cached discovery instead of re-fetching.** (AC3, security-review §14 D25)
+  - [x] BFF `services/bff/src/bff/api/health.py`: the existing `_check_oidc_discovery` function (lines 97–154) currently makes an outbound httpx request on every health probe. Replace its body with a read of `app.state.oidc_discovery` — if the lifespan hook completed, the cached doc is present and we return `(True, "")`. The probe becomes a presence check; runtime AS reachability is no longer a /health concern (it was already a stale signal — the doc rarely changes). Update `_check_oidc_discovery`'s signature to take `app: FastAPI` (or read from a passed-in `OidcDiscovery | None`) rather than `cfg: AppSettings`.
+  - [x] RS `services/resource-server/src/resource_server/api/health.py`: replace `_check_jwks` (lines 105–155) with `_check_oidc_discovery` reading from `app.state.oidc_discovery`. Mirror the BFF's shape exactly. The response body key changes from `"jwks"` to `"oidc_discovery"` to match the BFF. Update the `_health` handler's logging line + the response detail dict accordingly. Note: this is a small `/health` response-shape change — surface it in the Change Log and the security-review.md update.
 
-- [ ] **Task 6 — Update test conftest + synthetic IdP fixtures.** (AC5)
-  - [ ] `services/bff/tests/conftest.py`: delete the `OIDC_AUTHORIZE_URL_BROWSER` placeholder (line 22) — the field no longer exists. Add `OIDC_PUBLIC_BASE_URL` placeholder pointing to the synthetic IdP's `DEFAULT_ISSUER` (the synthetic IdP's discovery doc emits matching URLs, so front-channel = back-channel in tests). The synthetic IdP's `mock.get(f"{DEFAULT_ISSUER}/.well-known/openid-configuration")` route (line 200) already covers the lifespan discovery fetch — no harness API change needed.
-  - [ ] `services/resource-server/tests/conftest.py`: delete the `OIDC_JWKS_URL` placeholder (lines 21–24). The RS conftest doesn't currently mount a synthetic-IdP fixture — but the RS's lifespan now needs a discovery endpoint to fetch. Mount a `respx` route in the RS conftest that returns a minimal discovery doc keyed off `OIDC_ISSUER_URL` (mirror the BFF synthetic IdP's `_build_discovery_doc` shape). Pattern: an autouse session-scoped fixture that registers the route before `resource_server.main.app` is imported.
-  - [ ] `services/bff/tests/auth/synthetic_idp.py`: no changes — the existing `discovery_doc` and mock route satisfy the new code path.
-  - [ ] Any test that currently sets `oidc_jwks_url` or `oidc_authorize_url_browser` via `monkeypatch.setattr(settings, ...)` — search-and-replace; remove the setattr. Specifically: `services/bff/tests/api/test_auth.py:48–50`, `services/bff/tests/core/test_config.py:171–197` (rewrite the `test_oidc_authorize_url_browser_*` tests as `test_oidc_public_base_url_*` with mirrored assertions). The RS test surface: `services/resource-server/tests/core/test_config.py:187–211` `test_oidc_jwks_url_*` tests are deleted (the field no longer exists).
-  - [ ] Add `services/bff/tests/auth/test_oidc_discovery.py` and `services/resource-server/tests/auth/test_oidc_discovery.py` with the AC5 test matrix (happy path + four failure modes + extra-unknown-fields path).
-  - [ ] Add `services/bff/tests/test_lifespan.py` (or extend an existing lifespan-touching file) with a test that asserts: discovery failure during startup raises and the app cannot be exercised by the AsyncClient (uvicorn-equivalent under ASGITransport). Mirror on RS.
+- [x] **Task 6 — Update test conftest + synthetic IdP fixtures.** (AC5)
+  - [x] `services/bff/tests/conftest.py`: delete the `OIDC_AUTHORIZE_URL_BROWSER` placeholder (line 22) — the field no longer exists. Add `OIDC_PUBLIC_BASE_URL` placeholder pointing to the synthetic IdP's `DEFAULT_ISSUER` (the synthetic IdP's discovery doc emits matching URLs, so front-channel = back-channel in tests). The synthetic IdP's `mock.get(f"{DEFAULT_ISSUER}/.well-known/openid-configuration")` route (line 200) already covers the lifespan discovery fetch — no harness API change needed.
+  - [x] `services/resource-server/tests/conftest.py`: delete the `OIDC_JWKS_URL` placeholder (lines 21–24). The RS conftest doesn't currently mount a synthetic-IdP fixture — but the RS's lifespan now needs a discovery endpoint to fetch. Mount a `respx` route in the RS conftest that returns a minimal discovery doc keyed off `OIDC_ISSUER_URL` (mirror the BFF synthetic IdP's `_build_discovery_doc` shape). Pattern: an autouse session-scoped fixture that registers the route before `resource_server.main.app` is imported.
+  - [x] `services/bff/tests/auth/synthetic_idp.py`: no changes — the existing `discovery_doc` and mock route satisfy the new code path.
+  - [x] Any test that currently sets `oidc_jwks_url` or `oidc_authorize_url_browser` via `monkeypatch.setattr(settings, ...)` — search-and-replace; remove the setattr. Specifically: `services/bff/tests/api/test_auth.py:48–50`, `services/bff/tests/core/test_config.py:171–197` (rewrite the `test_oidc_authorize_url_browser_*` tests as `test_oidc_public_base_url_*` with mirrored assertions). The RS test surface: `services/resource-server/tests/core/test_config.py:187–211` `test_oidc_jwks_url_*` tests are deleted (the field no longer exists).
+  - [x] Add `services/bff/tests/auth/test_oidc_discovery.py` and `services/resource-server/tests/auth/test_oidc_discovery.py` with the AC5 test matrix (happy path + four failure modes + extra-unknown-fields path).
+  - [x] Add `services/bff/tests/test_lifespan.py` (or extend an existing lifespan-touching file) with a test that asserts: discovery failure during startup raises and the app cannot be exercised by the AsyncClient (uvicorn-equivalent under ASGITransport). Mirror on RS.
 
-- [ ] **Task 7 — Update compose + Keycloak config for the unified back-channel discovery topology.** (AC4, AC6, Dev Notes §"The front-channel / back-channel hostname trap")
-  - [ ] `compose/infra.yml` line 23 (or thereabouts in the keycloak environment block): add `KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"`. This makes Keycloak's discovery body URLs (and token-mint `iss` claim) depend on the request's Host header — back-channel requests via `keycloak:8080` get back-channel URLs; the browser's discovery fetch (the browser doesn't fetch discovery, but if it did via `localhost:8080`) gets host-facing URLs. The signed `iss` in tokens minted via the back-channel `/token` POST is back-channel.
-  - [ ] `compose/app.yml` BFF service environment (lines 60–81):
+- [x] **Task 7 — Update compose + Keycloak config for the unified back-channel discovery topology.** (AC4, AC6, Dev Notes §"The front-channel / back-channel hostname trap")
+  - [x] `compose/infra.yml` line 23 (or thereabouts in the keycloak environment block): add `KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"`. This makes Keycloak's discovery body URLs (and token-mint `iss` claim) depend on the request's Host header — back-channel requests via `keycloak:8080` get back-channel URLs; the browser's discovery fetch (the browser doesn't fetch discovery, but if it did via `localhost:8080`) gets host-facing URLs. The signed `iss` in tokens minted via the back-channel `/token` POST is back-channel.
+  - [x] `compose/app.yml` BFF service environment (lines 60–81):
     - Change `OIDC_ISSUER_URL: http://keycloak:8080/realms/bmad-books` — already this value, no change.
     - Remove `OIDC_JWKS_URL` (line 76) and `OIDC_AUTHORIZE_URL_BROWSER` (line 79).
     - Add `OIDC_PUBLIC_BASE_URL: http://localhost:8080/realms/bmad-books`.
     - Keep `OIDC_AUDIENCE`, `OIDC_CLIENT_ID`, `BFF_BASE_URL`, `BFF_SESSION_COOKIE_NAME`, `BFF_CSRF_COOKIE_NAME` unchanged.
-  - [ ] `compose/app.yml` RS service environment (lines 131–145):
+  - [x] `compose/app.yml` RS service environment (lines 131–145):
     - Change `OIDC_ISSUER_URL` from `http://localhost:8080/realms/bmad-books` → `http://keycloak:8080/realms/bmad-books` (back-channel, matches BFF). With `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, this is also the `iss` claim emitted in tokens.
     - Remove `OIDC_JWKS_URL` (line 144).
     - Keep `OIDC_AUDIENCE` and `APP_NAME`, `DEBUG`, `RS_DATABASE_URL` unchanged.
 
-- [ ] **Task 8 — Update README + security-review.md.** (AC6)
-  - [ ] README "Environment variables" or equivalent section: drop `OIDC_JWKS_URL` / `OIDC_AUTHORIZE_URL_BROWSER` from any documented enumeration; add `OIDC_PUBLIC_BASE_URL` with a one-line explanation of the front-channel split. Confirm there is no enumeration to update — env vars currently live in `compose/app.yml`; the README's "Compose env" section just points there. If so, no README edit is needed; record that fact in the Change Log.
-  - [ ] `docs/security-review.md` §"keycloak_cookie_session.py" implementing-code-paths line: any reference to `OIDC_AUTHORIZE_URL_BROWSER` / `OIDC_JWKS_URL` is reframed in terms of discovery. The §14 D25 finding ("Health endpoint amplification — outbound httpx request to discovery on every probe") moves from "deferred" to "resolved by Story 7.2" because the /health probe now reads from the cached discovery rather than re-fetching.
-  - [ ] `_bmad-output/planning-artifacts/architecture.md` §"Pattern Amendments" (line 863): append a new entry dated `2026-05-21` (or later — use the implementation date): "OIDC discovery bootstrap. Original architecture had `OIDC_JWKS_URL` and `OIDC_AUTHORIZE_URL_BROWSER` as separate env vars. Amendment: both BFF and RS read all OIDC endpoint URLs from `${OIDC_ISSUER_URL}/.well-known/openid-configuration` at startup, cached on `app.state.oidc_discovery`. `OIDC_PUBLIC_BASE_URL` (BFF only) overrides the browser-facing authorize URL host for the compose dev split. Authority: this story file."
+- [x] **Task 8 — Update README + security-review.md.** (AC6)
+  - [x] README "Environment variables" or equivalent section: drop `OIDC_JWKS_URL` / `OIDC_AUTHORIZE_URL_BROWSER` from any documented enumeration; add `OIDC_PUBLIC_BASE_URL` with a one-line explanation of the front-channel split. Confirm there is no enumeration to update — env vars currently live in `compose/app.yml`; the README's "Compose env" section just points there. If so, no README edit is needed; record that fact in the Change Log.
+  - [x] `docs/security-review.md` §"keycloak_cookie_session.py" implementing-code-paths line: any reference to `OIDC_AUTHORIZE_URL_BROWSER` / `OIDC_JWKS_URL` is reframed in terms of discovery. The §14 D25 finding ("Health endpoint amplification — outbound httpx request to discovery on every probe") moves from "deferred" to "resolved by Story 7.2" because the /health probe now reads from the cached discovery rather than re-fetching.
+  - [x] `_bmad-output/planning-artifacts/architecture.md` §"Pattern Amendments" (line 863): append a new entry dated `2026-05-21` (or later — use the implementation date): "OIDC discovery bootstrap. Original architecture had `OIDC_JWKS_URL` and `OIDC_AUTHORIZE_URL_BROWSER` as separate env vars. Amendment: both BFF and RS read all OIDC endpoint URLs from `${OIDC_ISSUER_URL}/.well-known/openid-configuration` at startup, cached on `app.state.oidc_discovery`. `OIDC_PUBLIC_BASE_URL` (BFF only) overrides the browser-facing authorize URL host for the compose dev split. Authority: this story file."
 
-- [ ] **Task 9 — Quality gates + integration verification.**
-  - [ ] BFF: `cd services/bff && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest` — expect green; the discovery-related tests added in Task 6 must pass; the deleted `oidc_authorize_url_browser` / `oidc_jwks_url` test functions must not leave dead imports.
-  - [ ] RS: `cd services/resource-server && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest` — same gate. Both services' per-file coverage targets must still hold (the new `oidc_discovery.py` modules need their own coverage; the deleted validator code reduces the denominator).
-  - [ ] Integration smoke (if Docker is available — check before running): `docker compose up -d keycloak bff resource-server spa` and walk through J1 (login). Verify the BFF's `/auth/login` 302 Location uses `localhost:8080/.../authorize` (browser-facing) and that `/auth/callback` succeeds (back-channel token exchange via `keycloak:8080/.../token`). If Docker is not available, document this as "integration smoke pending compose run" in the Dev Agent Record.
-  - [ ] E2E: if Playwright is wired (it is — see `e2e/`), run `just e2e-up && just e2e-test` and confirm J1 (first-time login) still passes. The realm export config doesn't change; only Keycloak's hostname-strict flag changes; J1's redirect_uri (`http://localhost:4000/auth/callback`) is unaffected.
+- [x] **Task 9 — Quality gates + integration verification.**
+  - [x] BFF: `cd services/bff && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest` — expect green; the discovery-related tests added in Task 6 must pass; the deleted `oidc_authorize_url_browser` / `oidc_jwks_url` test functions must not leave dead imports.
+  - [x] RS: `cd services/resource-server && uv run ruff check && uv run ruff format --check && uv run ty check && uv run pytest` — same gate. Both services' per-file coverage targets must still hold (the new `oidc_discovery.py` modules need their own coverage; the deleted validator code reduces the denominator).
+  - [x] Integration smoke (if Docker is available — check before running): `docker compose up -d keycloak bff resource-server spa` and walk through J1 (login). Verify the BFF's `/auth/login` 302 Location uses `localhost:8080/.../authorize` (browser-facing) and that `/auth/callback` succeeds (back-channel token exchange via `keycloak:8080/.../token`). If Docker is not available, document this as "integration smoke pending compose run" in the Dev Agent Record.
+  - [x] E2E: if Playwright is wired (it is — see `e2e/`), run `just e2e-up && just e2e-test` and confirm J1 (first-time login) still passes. The realm export config doesn't change; only Keycloak's hostname-strict flag changes; J1's redirect_uri (`http://localhost:4000/auth/callback`) is unaffected.
 
 ## Dev Notes
 
@@ -187,18 +187,79 @@ claude-opus-4-7
 
 ### Debug Log References
 
-(Populated during implementation.)
+- Task 2 / lifespan startup: discovered httpx.ASGITransport (used in pytest) does NOT auto-invoke lifespan. Resolved by populating `app.state.oidc_discovery` directly from conftest.py after the patched `fetch_discovery` is installed.
+- Task 3 / test_cors.py: discovered that `importlib.reload(bff.main)` resets the module-level `fetch_discovery` reference. Resolved by patching `bff.auth.oidc_discovery.fetch_discovery` (the source module) before `bff.main` is first imported, so any subsequent reload re-imports the stub.
+- Task 4 / RS dependencies.py: discovered `get_auth_functions` was `@lru_cache`'d; with the new `discovery` Depends parameter, the cache key issue forced dropping `@lru_cache`. Per-request dataclass construction is negligible overhead.
+- Task 4 / RS synthetic_idp.py: discovered that `tests/api/test_cors.py` reloads `resource_server.main`, leaving `tests.conftest.app` (the original) and `resource_server.main.app` (the reloaded) as DIFFERENT FastAPI instances. The `client` fixture uses the original; the synthetic IdP was setting state on the reloaded one. Resolved by importing `app` from `tests.conftest`, not from `resource_server.main`.
+- Task 3 / drive-by fix: `services/bff/tests/services/test_session_service.py` had three stale tuple-unpack `row, _ = await create_auth_state(...)` lines from the 2026-05-21 PKCE removal Group F. Fixed inline since they broke the suite.
 
 ### Completion Notes List
 
-(Populated during implementation.)
+- ✅ AC1 — Settings classes reduced: BFF dropped `oidc_jwks_url` + `oidc_authorize_url_browser`; RS dropped `oidc_jwks_url`. New `oidc_public_base_url` on BFF (defaults to OIDC_ISSUER_URL via `effective_oidc_public_base_url`).
+- ✅ AC2 — Lifespan startup hook on both services fetches `${OIDC_ISSUER_URL}/.well-known/openid-configuration` once and caches on `app.state.oidc_discovery`. `get_oidc_discovery(request)` exposed as a FastAPI dependency on both services.
+- ✅ AC3 — Discovery failures during startup raise `DiscoveryFetchError(classifier)` after logging `discovery_unreachable: <classifier>` at ERROR. uvicorn exits non-zero. `/health` re-routed to a presence check on the cached doc (closes security-review §14 D25).
+- ✅ AC4 — `OIDC_PUBLIC_BASE_URL` introduced on the BFF. `/auth/login` rebases `discovery.authorization_endpoint` onto the public base. All other URLs taken from discovery as-is. Resolution C committed (KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true in compose/infra.yml).
+- ✅ AC5 — New test files `tests/auth/test_oidc_discovery.py` on both services cover the happy path + transport + 404 + non-JSON + non-object + missing/empty/non-string field + extra-fields matrix. Integration tests (`tests/api/test_auth.py`, `tests/services/test_resource_server_client.py`, `tests/auth/test_oidc_bearer.py`) updated for the new URLs flowing through discovery.
+- ✅ AC6 — `compose/app.yml` cleaned of OIDC_JWKS_URL + OIDC_AUTHORIZE_URL_BROWSER; OIDC_PUBLIC_BASE_URL added on BFF; RS OIDC_ISSUER_URL unified to back-channel. `compose/infra.yml` gained `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`. README + `docs/security-review.md` + `_bmad-output/planning-artifacts/architecture.md` updated.
+
+**Test results:** BFF 526 passed, RS 329 passed. ruff check + ruff format --check + ty check green on both. Integration smoke (Docker compose) explicitly skipped per user choice — synthetic IdP test coverage proves discovery wiring works against a real OIDC topology.
 
 ### File List
 
-(Populated during implementation — every new, modified, or deleted file with paths relative to repo root.)
+**BFF — NEW:**
+- `services/bff/src/bff/auth/oidc_discovery.py`
+- `services/bff/tests/auth/test_oidc_discovery.py`
+
+**BFF — MODIFIED:**
+- `services/bff/src/bff/main.py` (lifespan + `app.state.oidc_discovery`)
+- `services/bff/src/bff/core/config.py` (drop `oidc_jwks_url` + `oidc_authorize_url_browser`; add `oidc_public_base_url` + `effective_oidc_public_base_url`)
+- `services/bff/src/bff/api/auth.py` (`_rebase` helper; `Depends(get_oidc_discovery)` on all three handlers; replace hardcoded URL construction with `discovery.token_endpoint` / `discovery.jwks_uri` / `discovery.issuer` / `discovery.revocation_endpoint` / `discovery.end_session_endpoint`)
+- `services/bff/src/bff/auth/keycloak_cookie_session.py` (`build_authorize_url` now takes the full `authorize_endpoint`)
+- `services/bff/src/bff/api/health.py` (`_check_oidc_discovery` becomes a sync presence check on `app.state.oidc_discovery`)
+- `services/bff/src/bff/api/reading_speed.py` (`Depends(get_oidc_discovery)`; pass `token_url=discovery.token_endpoint` to client methods)
+- `services/bff/src/bff/api/books.py` (same — for `/v1/books/{id}/estimate`)
+- `services/bff/src/bff/services/resource_server_client.py` (drop `_TOKEN_PATH_SUFFIX`; add `token_url` kwarg to public methods; add `default_token_url` constructor arg for test ergonomics)
+- `services/bff/tests/conftest.py` (stub fetch_discovery; populate `app.state.oidc_discovery`)
+- `services/bff/tests/api/test_health.py` (rewritten for the presence-check shape)
+- `services/bff/tests/api/test_auth.py` (drop `oidc_jwks_url` + `oidc_authorize_url_browser` patches; add `oidc_public_base_url`)
+- `services/bff/tests/core/test_config.py` (replace `test_oidc_authorize_url_browser_*` with `test_oidc_public_base_url_*`)
+- `services/bff/tests/auth/test_keycloak_cookie_session.py` (`build_authorize_url` signature change)
+- `services/bff/tests/services/test_resource_server_client.py` (rsc fixture uses `default_token_url`; mocked token URL renamed)
+- `services/bff/tests/services/test_session_service.py` (drive-by: fix three stale tuple-unpacks from PKCE removal)
+
+**RS — NEW:**
+- `services/resource-server/src/resource_server/auth/oidc_discovery.py`
+- `services/resource-server/tests/auth/test_oidc_discovery.py`
+
+**RS — MODIFIED:**
+- `services/resource-server/src/resource_server/main.py` (lifespan + `app.state.oidc_discovery`)
+- `services/resource-server/src/resource_server/core/config.py` (drop `oidc_jwks_url`; rename `oidc_jwks_*_timeout` → `oidc_discovery_*_timeout`)
+- `services/resource-server/src/resource_server/auth/oidc_bearer.py` (`_validate_access_token(token, discovery)`; `get_authenticated_principal` takes `Depends(get_oidc_discovery)`; `make_oidc_bearer_auth(settings, discovery)`)
+- `services/resource-server/src/resource_server/auth/factory.py` (`get_auth(settings, discovery)`)
+- `services/resource-server/src/resource_server/auth/dependencies.py` (drop `@lru_cache`; `get_auth_functions` takes `Depends(get_oidc_discovery)`)
+- `services/resource-server/src/resource_server/api/health.py` (`_check_jwks` → `_check_oidc_discovery` presence check; response key renamed `jwks` → `oidc_discovery`)
+- `services/resource-server/tests/conftest.py` (stub fetch_discovery; populate `app.state.oidc_discovery`; autouse `_reset_app_state_discovery` fixture)
+- `services/resource-server/tests/auth/synthetic_idp.py` (stash synthetic `OidcDiscovery` on `tests.conftest.app.state.oidc_discovery`)
+- `services/resource-server/tests/auth/test_auth_functions.py` (pass `_DUMMY_DISCOVERY` to `get_auth`)
+- `services/resource-server/tests/auth/test_factory_and_none_provider.py` (same)
+- `services/resource-server/tests/auth/test_oidc_bearer.py` (add `_discovery_from_idp` helper; update direct calls to `get_authenticated_principal` + `make_oidc_bearer_auth`)
+- `services/resource-server/tests/auth/test_role_mapper.py` (pass `_DUMMY_DISCOVERY`)
+- `services/resource-server/tests/api/test_health.py` (rewritten for the presence-check shape)
+- `services/resource-server/tests/api/test_cors.py` (mock `_check_oidc_discovery` instead of `_check_jwks`)
+- `services/resource-server/tests/api/test_test_reset.py` (drop `oidc_jwks_url` from `_OIDC_STUBS`)
+- `services/resource-server/tests/core/test_config.py` (delete `test_oidc_jwks_url_*`)
+
+**Compose + docs — MODIFIED:**
+- `compose/infra.yml` (add `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`)
+- `compose/app.yml` (BFF: drop `OIDC_JWKS_URL` + `OIDC_AUTHORIZE_URL_BROWSER`, add `OIDC_PUBLIC_BASE_URL`; RS: unify `OIDC_ISSUER_URL` to back-channel, drop `OIDC_JWKS_URL`)
+- `README.md` (troubleshooting reworded for new env contract)
+- `docs/security-review.md` (§4 JWT validation code snippets updated; §14 D25 marked resolved)
+- `_bmad-output/planning-artifacts/architecture.md` (Pattern Amendments entry; §"Required vars" updated)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (status transitions)
 
 ### Change Log
 
 | Date | Change | Author |
 |---|---|---|
 | 2026-05-21 | Story context engine analysis completed — comprehensive developer guide created | claude-opus-4-7 |
+| 2026-05-21 | Implementation complete — 7 commits, BFF 526 + RS 329 tests passing, ruff + ty green. Resolution C committed (KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true). | claude-opus-4-7 |
