@@ -27,6 +27,7 @@ import jwt
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from resource_server.aop.auth_logging import AuthDecision, emit_auth_decision
 from resource_server.auth.contracts import (
     AuthFeatureNotSupportedError,
     UnauthorizedError,
@@ -74,6 +75,33 @@ def _parse_scopes(claim: object) -> frozenset[str]:
     return frozenset()
 
 
+# Story 7.3: map PyJWT exception types to ACME-TS reason classifiers.
+# Order matters — MissingRequiredClaimError is a subclass of
+# InvalidTokenError, so it must be checked first. Any unmatched
+# InvalidTokenError subclass falls through to `"token_invalid"`.
+_JWT_DENY_REASONS: tuple[tuple[type[BaseException], str], ...] = (
+    (jwt.InvalidSignatureError, "signature_invalid"),
+    (jwt.InvalidAudienceError, "audience_mismatch"),
+    (jwt.InvalidIssuerError, "issuer_mismatch"),
+    (jwt.ExpiredSignatureError, "exp_past"),
+    (jwt.PyJWKClientError, "jwks_lookup_failed"),
+)
+
+
+def _classify_jwt_exception(exc: BaseException) -> str:
+    if isinstance(exc, jwt.MissingRequiredClaimError):
+        # `claim` is the missing claim name; PyJWT controls the value (RFC 7519
+        # token claim identifiers — `iss`, `aud`, `exp`, `sub` etc.), but we
+        # truncate defensively in case a future PyJWT release lengthens the
+        # range. 16 chars matches the AC3 spec.
+        claim = str(getattr(exc, "claim", ""))[:16]
+        return f"claim_missing:{claim}" if claim else "claim_missing"
+    for exc_type, reason in _JWT_DENY_REASONS:
+        if isinstance(exc, exc_type):
+            return reason
+    return "token_invalid"
+
+
 def _validate_access_token(token: str, discovery: OidcDiscovery) -> dict[str, Any]:
     try:
         jwks_client = _get_jwks_client(discovery.jwks_uri)
@@ -88,9 +116,19 @@ def _validate_access_token(token: str, discovery: OidcDiscovery) -> dict[str, An
         )
     except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
         logger.warning("JWT validation failed: %s", type(exc).__name__)
+        emit_auth_decision(
+            decision=AuthDecision.DENY,
+            reason=_classify_jwt_exception(exc),
+            sub=None,
+        )
         raise AppException(ErrorCode.SESSION_EXPIRED) from exc
     if not isinstance(decoded, dict):  # pragma: no cover -- PyJWT always returns dict
         raise AppException(ErrorCode.SESSION_EXPIRED)
+    emit_auth_decision(
+        decision=AuthDecision.ALLOW,
+        reason="jwt_valid",
+        sub=str(decoded.get("sub", "")),
+    )
     return decoded
 
 
@@ -121,9 +159,11 @@ async def get_authenticated_principal(
     discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> Principal:
     if credentials is None or credentials.scheme.lower() != "bearer":
+        emit_auth_decision(decision=AuthDecision.DENY, reason="token_missing", sub=None)
         raise AppException(ErrorCode.SESSION_EXPIRED)
     token = credentials.credentials
     if not token or not token.strip():
+        emit_auth_decision(decision=AuthDecision.DENY, reason="token_missing", sub=None)
         raise AppException(ErrorCode.SESSION_EXPIRED)
     claims = _validate_access_token(token, discovery)
     return _principal_from_claims(claims)
@@ -147,10 +187,10 @@ def require_scope(scope: str) -> Callable[..., Awaitable[Principal]]:
         principal: Annotated[Principal, Depends(get_authenticated_principal)],
     ) -> Principal:
         if scope not in principal.scopes:
-            logger.warning(
-                "Scope check failed: sub=%s requires %s",
-                principal.subject,
-                scope,
+            emit_auth_decision(
+                decision=AuthDecision.DENY,
+                reason=f"scope_insufficient:{scope}",
+                sub=principal.subject,
             )
             raise AppException(ErrorCode.FORBIDDEN_SCOPE)
         return principal

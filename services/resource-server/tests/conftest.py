@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import pytest
 from fastapi import APIRouter, Depends
@@ -146,6 +147,73 @@ async def session_fixture(engine):
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
+
+
+# ---------------------------------------------------------------------------
+# Story 7.3 AC5 — static analysis on every `emit_auth_decision` call.
+#
+# The helper at `resource_server.aop.auth_logging` is the only code path that
+# emits the ACME-schema {timestamp, sub, decision, reason} wire record.
+# Attaching a logging.Handler to that logger lets every existing test in the
+# suite re-assert the schema invariant ("no token material in `reason`") for
+# free.
+# ---------------------------------------------------------------------------
+
+_AUTH_DECISION_LOGGER = "resource_server.aop.auth_logging"
+# Word-bounded matching for OAuth concept identifiers so legitimate compound
+# reasons like `id_token_invalid` / `token_exchange_failed` are not false
+# positives. See BFF conftest for the full rationale.
+_BANNED_REGEXES = (
+    re.compile(r"\baccess_token\b"),
+    re.compile(r"\brefresh_token\b"),
+    re.compile(r"\bid_token\b"),
+    re.compile(r"Bearer "),
+    re.compile(r"eyJ"),
+)
+_JWT_SHAPE_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+_BASE64URLISH_RE = re.compile(r"[A-Za-z0-9_-]{33,}")
+
+
+class _AuthDecisionAssertHandler(logging.Handler):
+    """Validate every auth-decision record before any other handler sees it."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not hasattr(record, "decision"):
+            return
+        # Validate BOTH `reason` and `sub` (review-fix P2 — see BFF conftest
+        # for the full rationale).
+        for field_name in ("reason", "sub"):
+            value = getattr(record, field_name, None)
+            if value is None:
+                continue
+            assert isinstance(value, str), (
+                f"emit_auth_decision: {field_name} must be str|None, "
+                f"got {type(value).__name__}"
+            )
+            for pattern in _BANNED_REGEXES:
+                assert not pattern.search(value), (
+                    f"emit_auth_decision: {field_name} matches token-material "
+                    f"pattern {pattern.pattern!r}: {value!r}"
+                )
+            assert not _JWT_SHAPE_RE.search(value), (
+                f"emit_auth_decision: {field_name} looks like a JWT: {value!r}"
+            )
+            assert not _BASE64URLISH_RE.search(value), (
+                f"emit_auth_decision: {field_name} carries a long base64url-ish "
+                f"substring (>32 chars): {value!r}"
+            )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_no_token_material_in_auth_decisions():
+    """Install the AC5 static-analysis handler for the test-suite lifetime."""
+    handler = _AuthDecisionAssertHandler(level=logging.DEBUG)
+    target = logging.getLogger(_AUTH_DECISION_LOGGER)
+    target.addHandler(handler)
+    try:
+        yield
+    finally:
+        target.removeHandler(handler)
 
 
 @pytest.fixture(name="client")

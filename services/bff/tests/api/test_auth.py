@@ -19,6 +19,7 @@ from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from bff.aop.auth_logging import AuthDecision
 from bff.api.auth import BFF_AUTH_STATE_COOKIE_NAME
 from bff.auth.keycloak_cookie_session import sign_state_id, state_id_serializer
 from bff.core.config import settings
@@ -32,6 +33,18 @@ from tests.auth.synthetic_idp import (
     build_synthetic_idp,
     stash_authorization_code,
 )
+
+
+def _has_auth_decision(
+    records: list[logging.LogRecord], *, decision: AuthDecision, reason: str
+) -> bool:
+    """Return True iff any record carries the given structured decision+reason."""
+    return any(
+        getattr(r, "decision", None) == decision.value
+        and getattr(r, "reason", None) == reason
+        for r in records
+    )
+
 
 # ---------------------------------------------------------------------------
 # Test scaffolding
@@ -814,10 +827,11 @@ async def test_logout_revocation_5xx_still_returns_204(
     assert len(idp.captured_revocations) == 1
     assert len(idp.captured_end_sessions) == 1
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    assert any(
-        "auth_logout_revocation_failed" in rec.message
-        and "HTTPStatusError" in rec.message
-        for rec in caplog.records
+    # The ACME schema (Story 7.3) drops the upstream classifier from the
+    # wire — assert the structured DENY + reason instead of the legacy
+    # `auth_logout_revocation_failed: HTTPStatusError` substring.
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="revocation_failed"
     )
 
 
@@ -827,11 +841,11 @@ async def test_logout_revocation_5xx_still_returns_204(
 
 
 @pytest.mark.parametrize(
-    ("override", "classifier"),
+    "override",
     [
-        (httpx.ConnectError("refused"), "ConnectError"),
-        (httpx.ReadTimeout("slow"), "ReadTimeout"),
-        (httpx.ConnectTimeout("dns hang"), "ConnectTimeout"),
+        httpx.ConnectError("refused"),
+        httpx.ReadTimeout("slow"),
+        httpx.ConnectTimeout("dns hang"),
     ],
 )
 async def test_logout_revocation_transport_failure_still_returns_204(
@@ -840,14 +854,13 @@ async def test_logout_revocation_transport_failure_still_returns_204(
     logout_setup,
     caplog: pytest.LogCaptureFixture,
     override: httpx.HTTPError,
-    classifier: str,
 ) -> None:
     _, idp = logout_setup
     session_cookie, csrf_value, _ = await _seed_session(
         client_no_redirects, session, idp
     )
     idp.revocation_response_override = override
-    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
 
     response = await _logout(
         client_no_redirects,
@@ -862,9 +875,9 @@ async def test_logout_revocation_transport_failure_still_returns_204(
     assert len(idp.captured_revocations) == 1
     assert len(idp.captured_end_sessions) == 1
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    assert any(
-        f"auth_logout_revocation_failed: {classifier}" in rec.message
-        for rec in caplog.records
+    # ACME schema (Story 7.3) drops the transport classifier from the wire.
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="revocation_failed"
     )
 
 
@@ -874,10 +887,10 @@ async def test_logout_revocation_transport_failure_still_returns_204(
 
 
 @pytest.mark.parametrize(
-    ("override", "classifier"),
+    "override",
     [
-        (httpx.Response(500), "HTTPStatusError"),
-        (httpx.ConnectError("refused"), "ConnectError"),
+        httpx.Response(500),
+        httpx.ConnectError("refused"),
     ],
 )
 async def test_logout_end_session_failure_still_returns_204(
@@ -886,14 +899,13 @@ async def test_logout_end_session_failure_still_returns_204(
     logout_setup,
     caplog: pytest.LogCaptureFixture,
     override,
-    classifier: str,
 ) -> None:
     _, idp = logout_setup
     session_cookie, csrf_value, _ = await _seed_session(
         client_no_redirects, session, idp
     )
     idp.end_session_response_override = override
-    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
 
     response = await _logout(
         client_no_redirects,
@@ -905,9 +917,8 @@ async def test_logout_end_session_failure_still_returns_204(
     # Revocation still happened normally.
     assert len(idp.captured_revocations) == 1
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    assert any(
-        f"auth_logout_end_session_failed: {classifier}" in rec.message
-        for rec in caplog.records
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="end_session_failed"
     )
 
 
@@ -928,7 +939,7 @@ async def test_logout_both_upstream_failures_still_returns_204(
     )
     idp.revocation_response_override = httpx.Response(502)
     idp.end_session_response_override = httpx.ConnectError("down")
-    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
 
     response = await _logout(
         client_no_redirects,
@@ -943,9 +954,12 @@ async def test_logout_both_upstream_failures_still_returns_204(
     assert len(idp.captured_revocations) == 1
     assert len(idp.captured_end_sessions) == 1
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    messages = [rec.message for rec in caplog.records]
-    assert any("auth_logout_revocation_failed" in m for m in messages)
-    assert any("auth_logout_end_session_failed" in m for m in messages)
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="revocation_failed"
+    )
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="end_session_failed"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1246,13 +1260,11 @@ async def test_logout_empty_refresh_token_skips_revoke(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _, idp = logout_setup
     session_id = await _insert_logout_row(
         session, refresh_token="", id_token="some-id-token"
     )
-    caplog.set_level(logging.INFO, logger="bff.api.auth")
 
     response = await _logout(
         client_no_redirects,
@@ -1262,25 +1274,25 @@ async def test_logout_empty_refresh_token_skips_revoke(
 
     assert response.status_code == 204
     # No revocation request fired — the BFF didn't try to revoke ``.
+    # The legacy `auth_logout_no_refresh_token` progress marker was dropped
+    # in Story 7.3 (per Decision Pinned: flow-progress markers don't carry
+    # ACME-schema decision semantics; `LOG_LEVEL=DEBUG` surfaces log_io AOP
+    # I/O for operators who need per-method visibility).
     assert idp.captured_revocations == []
     # End-session still runs because id_token IS present.
     assert len(idp.captured_end_sessions) == 1
-    # Row deleted, classifier log emitted.
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    assert any("auth_logout_no_refresh_token" in r.message for r in caplog.records)
 
 
 async def test_logout_empty_id_token_skips_end_session(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _, idp = logout_setup
     session_id = await _insert_logout_row(
         session, refresh_token="some-refresh-token", id_token=""
     )
-    caplog.set_level(logging.INFO, logger="bff.api.auth")
 
     response = await _logout(
         client_no_redirects,
@@ -1290,11 +1302,12 @@ async def test_logout_empty_id_token_skips_end_session(
 
     assert response.status_code == 204
     # Revocation DID fire (refresh_token was present).
+    # The legacy `auth_logout_no_id_token` progress marker was dropped in
+    # Story 7.3 (same rationale as `auth_logout_no_refresh_token` above).
     assert len(idp.captured_revocations) == 1
     # End-session SKIPPED — no captured request.
     assert idp.captured_end_sessions == []
     assert (await session.execute(select(entities.Session))).scalars().all() == []
-    assert any("auth_logout_no_id_token" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1319,7 +1332,13 @@ async def test_logout_db_delete_failure_still_returns_204_and_clears_cookies(
     session_cookie, csrf_value, _ = await _seed_session(
         client_no_redirects, session, idp
     )
+    # Scope capture per logger so this test stays isolated from any other
+    # WARNING+ chatter in the suite (review-fix P6). Two scopes are needed:
+    # the stdlib ERROR `auth_logout_session_delete_failed` lives on
+    # `bff.api.auth`, and the structured DENY emit lives on
+    # `bff.aop.auth_logging`.
     caplog.set_level(logging.ERROR, logger="bff.api.auth")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
 
     async def _boom(*args, **kwargs):
         raise OperationalError("statement", {}, Exception("db connection lost"))
@@ -1341,17 +1360,29 @@ async def test_logout_db_delete_failure_still_returns_204_and_clears_cookies(
         line.startswith(f"{settings.bff_session_cookie_name}=") and "Max-Age=0" in line
         for line in raw_set_cookies
     )
+    # `logger.error("auth_logout_session_delete_failed: ...")` is kept by
+    # design (Decision Pinned, Story 7.3) — the stack trace surface is
+    # operationally load-bearing alongside the new structured `DENY` emit.
     assert any("auth_logout_session_delete_failed" in r.message for r in caplog.records)
+    # The structured DENY emit rides alongside the stdlib ERROR line.
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="session_delete_failed"
+    )
+    # Review-fix P8: on DB-delete failure the trailing `ALLOW reason=logout`
+    # MUST NOT fire — it would over-count this half-success as a clean logout.
+    assert not _has_auth_decision(
+        caplog.records, decision=AuthDecision.ALLOW, reason="logout"
+    )
 
 
 # ---------------------------------------------------------------------------
-# Status-code classifier (post-review P6): HTTPStatusError WARN log carries
-# the response status code so 401 / 429 / 5xx are distinguishable from each
-# other in operations.
+# Logout revocation 4xx — Story 7.3 ACME schema drops the upstream status
+# code from the wire; the test verifies the structured DENY decision lands
+# regardless of the upstream HTTPStatusError's status code.
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_revocation_4xx_classifier_includes_status_code(
+async def test_logout_revocation_4xx_still_emits_deny(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -1362,7 +1393,7 @@ async def test_logout_revocation_4xx_classifier_includes_status_code(
         client_no_redirects, session, idp
     )
     idp.revocation_response_override = httpx.Response(401)
-    caplog.set_level(logging.WARNING, logger="bff.api.auth")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
 
     response = await _logout(
         client_no_redirects,
@@ -1371,7 +1402,6 @@ async def test_logout_revocation_4xx_classifier_includes_status_code(
     )
 
     assert response.status_code == 204
-    assert any(
-        "auth_logout_revocation_failed: HTTPStatusError(401)" in rec.message
-        for rec in caplog.records
+    assert _has_auth_decision(
+        caplog.records, decision=AuthDecision.DENY, reason="revocation_failed"
     )

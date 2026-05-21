@@ -495,18 +495,31 @@ async def test_scope_rejection_emits_warning_log_with_sub_and_scope(
     oidc_client: AsyncClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.WARNING, logger="resource_server.auth.oidc_bearer")
+    # Story 7.3: scope rejection now emits via the structured auth-decision
+    # helper (`resource_server.aop.auth_logging`); the legacy
+    # `logger.warning("Scope check failed: ...")` line was converted.
+    caplog.set_level(logging.WARNING, logger="resource_server.aop.auth_logging")
     sub = random_subject()
     token = synthetic_rs_idp.make_access_token(sub=sub, scope="openid")
     response = await oidc_client.get(_TEST_ROUTE_READ, headers=_auth_header(token))
     assert response.status_code == 403
 
     records = [
-        r for r in caplog.records if r.name == "resource_server.auth.oidc_bearer"
+        r for r in caplog.records if r.name == "resource_server.aop.auth_logging"
     ]
-    assert any("Scope check failed" in r.getMessage() for r in records)
+    # The structured DENY carries sub + scope via wire fields, not via the
+    # legacy log-message substring.
     assert any(
-        sub in r.getMessage() and "reading-speed:read" in r.getMessage()
+        getattr(r, "decision", None) == "deny"
+        and getattr(r, "reason", None) == "scope_insufficient:reading-speed:read"
+        for r in records
+    )
+    # `sub` is truncated by the helper to first-8 + ellipsis when > 12 chars
+    # (random_subject() returns a long UUID-ish identifier).
+    sub_prefix = sub[:8]
+    assert any(
+        getattr(r, "sub", None) is not None
+        and str(getattr(r, "sub", "")).startswith(sub_prefix)
         for r in records
     )
 

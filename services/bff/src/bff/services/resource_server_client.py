@@ -57,6 +57,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bff.aop.auth_logging import AuthDecision, emit_auth_decision
 from bff.core.config import AppSettings, settings
 from bff.models.entities.session import Session
 from bff.services.session_service import SessionService
@@ -288,11 +289,12 @@ class ResourceServerClient:
             )
         except _RefreshFailed as exc:
             # Refresh itself failed — clear session row + emit cookie-clearing 401.
-            logger.warning(
-                "refresh_failed cause=%s sub=%s session=%s...",
-                exc.cause,
-                session_row.sub,
-                session_row.id[:8],
+            # ACME schema is a tight 4-field shape; the `cause` classifier is
+            # dropped from the wire by design.
+            emit_auth_decision(
+                decision=AuthDecision.DENY,
+                reason="refresh_failed",
+                sub=session_row.sub,
             )
             await self._session_service.delete_session(db, session_id=session_row.id)
             raise RsSessionTerminated(clear_cookies=True) from exc
@@ -310,10 +312,10 @@ class ResourceServerClient:
             # AC4 case 5: leave session in place; emit 401 without
             # clearing cookies. The SPA's /login redirect produces a new
             # login that overwrites the session on success.
-            logger.warning(
-                "rs_401_after_refresh sub=%s session=%s...",
-                session_row.sub,
-                session_row.id[:8],
+            emit_auth_decision(
+                decision=AuthDecision.DENY,
+                reason="rs_401_after_refresh",
+                sub=session_row.sub,
             )
             raise RsSessionTerminated(clear_cookies=False)
         return retry_status, retry_parsed
@@ -470,10 +472,10 @@ class ResourceServerClient:
         db.add(session_row)
         await db.commit()
         await db.refresh(session_row)
-        logger.info(
-            "access_token_refreshed sub=%s session=%s...",
-            session_row.sub,
-            session_row.id[:8],
+        emit_auth_decision(
+            decision=AuthDecision.REFRESH,
+            reason="access_token_refreshed",
+            sub=session_row.sub,
         )
 
 

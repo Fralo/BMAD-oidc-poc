@@ -346,7 +346,7 @@ async def test_refresh_failure_emits_warn_log(
     rs_settings: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.WARNING, logger="bff.services.resource_server_client")
+    caplog.set_level(logging.WARNING, logger="bff.aop.auth_logging")
     row = await _seed_session(session)
     client = _build_client()
     with respx.mock(assert_all_called=False) as mock:
@@ -356,8 +356,13 @@ async def test_refresh_failure_emits_warn_log(
         )
         with pytest.raises(RsSessionTerminated):
             await client.get_reading_speed(session, row)
-    assert "refresh_failed" in caplog.text
-    assert "keycloak_4xx" in caplog.text
+    # Story 7.3 ACME schema: structured DENY with reason="refresh_failed".
+    # The legacy `cause=keycloak_4xx:401` classifier is dropped from the wire.
+    assert any(
+        getattr(rec, "decision", None) == "deny"
+        and getattr(rec, "reason", None) == "refresh_failed"
+        for rec in caplog.records
+    )
 
 
 async def test_refresh_happy_path_emits_info_log(
@@ -365,7 +370,7 @@ async def test_refresh_happy_path_emits_info_log(
     rs_settings: None,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="bff.services.resource_server_client")
+    caplog.set_level(logging.INFO, logger="bff.aop.auth_logging")
     row = await _seed_session(session)
     client = _build_client()
     with respx.mock(assert_all_called=False) as mock:
@@ -386,7 +391,12 @@ async def test_refresh_happy_path_emits_info_log(
             )
         )
         await client.get_reading_speed(session, row)
-    assert "access_token_refreshed" in caplog.text
+    # Story 7.3 ACME schema: structured REFRESH with reason="access_token_refreshed".
+    assert any(
+        getattr(rec, "decision", None) == "refresh"
+        and getattr(rec, "reason", None) == "access_token_refreshed"
+        for rec in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import pytest
 from fastapi import APIRouter
@@ -158,6 +159,87 @@ async def client_with_csrf_fixture(session, monkeypatch: pytest.MonkeyPatch):
             yield c
     finally:
         app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Story 7.3 AC5 — static analysis on every `emit_auth_decision` call.
+#
+# The helper at `bff.aop.auth_logging` is the only code path that emits the
+# ACME-schema {timestamp, sub, decision, reason} wire record. Attaching a
+# logging.Handler to that logger lets every existing test in the suite
+# re-assert the schema invariant ("no token material in `reason`") for free.
+# ---------------------------------------------------------------------------
+
+_AUTH_DECISION_LOGGER = "bff.aop.auth_logging"
+# OAuth concept identifiers MUST be matched with word boundaries: the legitimate
+# reasons `id_token_missing` / `id_token_invalid` etc. are concept names, NOT
+# leaked token values. `\b` between `id_token` and `_invalid` is suppressed
+# because `_` is a word char, so `\bid_token\b` only matches `id_token` as a
+# free-standing identifier (e.g. `id_token=eyJ...`), not as a prefix in a
+# compound reason. The two non-word-bounded patterns — `Bearer ` (with trailing
+# space) and `eyJ` (JWT header prefix) — keep their literal-substring semantics.
+_BANNED_REGEXES = (
+    re.compile(r"\baccess_token\b"),
+    re.compile(r"\brefresh_token\b"),
+    re.compile(r"\bid_token\b"),
+    re.compile(r"Bearer "),
+    re.compile(r"eyJ"),
+)
+_JWT_SHAPE_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+_BASE64URLISH_RE = re.compile(r"[A-Za-z0-9_-]{33,}")
+
+
+class _AuthDecisionAssertHandler(logging.Handler):
+    """Validate every auth-decision record before any other handler sees it.
+
+    Asserts that the `reason` string does not carry token *material* — a
+    literal `access_token` / `refresh_token` / `id_token` standalone (token
+    field name preceding a value), a `Bearer ` prefix, an `eyJ` JWT-header
+    prefix, or a JWT-shaped / long-base64url-ish substring. OAuth concept
+    identifiers used inside compound reasons (`id_token_invalid`,
+    `token_exchange_failed`) are allowed.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not hasattr(record, "decision"):
+            return
+        # Validate BOTH `reason` and `sub` — the helper truncates `sub` to
+        # first-8 + ellipsis, but those 8 chars are still observable on the
+        # wire, so an `eyJ` JWT-header prefix surfacing as a leaked `sub`
+        # would defeat the schema invariant unless we also check this field
+        # (review-fix P2).
+        for field_name in ("reason", "sub"):
+            value = getattr(record, field_name, None)
+            if value is None:
+                continue
+            assert isinstance(value, str), (
+                f"emit_auth_decision: {field_name} must be str|None, "
+                f"got {type(value).__name__}"
+            )
+            for pattern in _BANNED_REGEXES:
+                assert not pattern.search(value), (
+                    f"emit_auth_decision: {field_name} matches token-material "
+                    f"pattern {pattern.pattern!r}: {value!r}"
+                )
+            assert not _JWT_SHAPE_RE.search(value), (
+                f"emit_auth_decision: {field_name} looks like a JWT: {value!r}"
+            )
+            assert not _BASE64URLISH_RE.search(value), (
+                f"emit_auth_decision: {field_name} carries a long base64url-ish "
+                f"substring (>32 chars): {value!r}"
+            )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_no_token_material_in_auth_decisions():
+    """Install the AC5 static-analysis handler for the test-suite lifetime."""
+    handler = _AuthDecisionAssertHandler(level=logging.DEBUG)
+    target = logging.getLogger(_AUTH_DECISION_LOGGER)
+    target.addHandler(handler)
+    try:
+        yield
+    finally:
+        target.removeHandler(handler)
 
 
 @pytest.fixture(name="client_no_redirects")

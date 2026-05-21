@@ -78,6 +78,53 @@ def _extract_exc_info(
     return event_dict
 
 
+# Story 7.3: optional auth-decision fields lifted from `extra=` kwargs (see
+# `resource_server/aop/auth_logging.py`). The structured emit attaches them
+# to the `LogRecord` via stdlib's `extra={...}`; `_lift_auth_decision_fields`
+# runs in the foreign_pre_chain (BEFORE structlog's `remove_processors_meta`
+# strips `_record`) and copies the fields onto the top-level `event_dict`, so
+# the renderer can read them after `_record` is gone. The sentinel attribute
+# `_is_auth_decision` keeps the lift namespaced to records emitted by the
+# helper, so any unrelated caller passing `extra={"decision": ...}` cannot
+# accidentally produce a malformed ACME line.
+_AUTH_DECISION_FIELDS = ("decision", "sub", "reason")
+_AUTH_DECISION_SENTINEL = "_is_auth_decision"
+
+
+def _lift_auth_decision_fields(
+    _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Structlog processor: lift decision/sub/reason onto event_dict.
+
+    Runs in `foreign_pre_chain` before `remove_processors_meta` deletes
+    `_record`. Gated on the helper's sentinel attribute so unrelated
+    `extra={"decision": ...}` records cannot trigger the lift.
+    """
+    record = event_dict.get("_record")
+    if not isinstance(record, logging.LogRecord):
+        return event_dict
+    if not getattr(record, _AUTH_DECISION_SENTINEL, False):
+        return event_dict
+    for field in _AUTH_DECISION_FIELDS:
+        event_dict[field] = getattr(record, field, None)
+    event_dict[_AUTH_DECISION_SENTINEL] = True
+    return event_dict
+
+
+def _auth_decision_fields(
+    event_dict: MutableMapping[str, Any],
+) -> dict[str, object]:
+    """Return decision/sub/reason from event_dict when present.
+
+    Returns an empty dict for non-decision log lines so the renderer's prior
+    fixed shape is preserved byte-for-byte. The lift is performed earlier by
+    `_lift_auth_decision_fields` in the foreign_pre_chain.
+    """
+    if not event_dict.get(_AUTH_DECISION_SENTINEL):
+        return {}
+    return {field: event_dict.get(field) for field in _AUTH_DECISION_FIELDS}
+
+
 def _plain_renderer(
     _logger: Any, _method: str, event_dict: MutableMapping[str, Any]
 ) -> str:
@@ -90,6 +137,12 @@ def _plain_renderer(
     event = str(event_dict.get("event", ""))
 
     line = f"{timestamp} [{trace_id}] [{span_id}] {level} {logger_name} {event}"
+
+    # Story 7.3: append decision/sub/reason when present. Omit None values so
+    # the line stays terse for pre-validation deny paths (sub is None).
+    for field, value in _auth_decision_fields(event_dict).items():
+        if value is not None:
+            line = f"{line} {field}={value}"
 
     exc_info = event_dict.get("exc_info")
     if exc_info and isinstance(exc_info, tuple) and exc_info[1] is not None:
@@ -113,6 +166,10 @@ def _json_renderer(
         "spanId": event_dict.get("spanId", NO_SPAN_ID),
     }
 
+    # Story 7.3: surface the 4-field ACME schema (decision/sub/reason ride
+    # alongside the archetype's timestamp/level/logger/traceId/spanId).
+    entry.update(_auth_decision_fields(event_dict))
+
     exc_info = event_dict.get("exc_info")
     if exc_info and isinstance(exc_info, tuple) and exc_info[1] is not None:
         exc_type, exc_val, exc_tb = exc_info
@@ -135,6 +192,7 @@ def configure_logging(settings: AppSettings) -> None:
         _add_timestamp,
         _inject_trace_context,
         _extract_exc_info,
+        _lift_auth_decision_fields,
     ]
 
     formatter = structlog.stdlib.ProcessorFormatter(

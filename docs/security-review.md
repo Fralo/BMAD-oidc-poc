@@ -432,6 +432,74 @@ The dependency hygiene point in PRD §9 is satisfied by stating these versions a
 
 ---
 
+## 7. Auth-decision audit trail
+
+**Origin.** ACME-TS design principle **P8** — *observability* — mandates that every authorization decision in the BFF and Resource Server emit a structured log entry following the wire schema `{timestamp, sub, decision, reason}`. The PRD requires structured logging to be the project's only operational-visibility surface (PRD §12); a tight, grep-able decision schema is what makes that surface useful. The principle was carried forward as Story 7.3 under the Sprint Change Proposal at [`_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-21.md`](../_bmad-output/planning-artifacts/sprint-change-proposal-2026-05-21.md) — Group D / §3 / §4 / §5.
+
+**Schema.** Every emitted record carries the four ACME-mandated fields *plus* the archetype's `level`, `logger`, `traceId`, and `spanId` for OTEL correlation:
+
+```json
+{"timestamp": "2026-05-21T12:34:56.789012+00:00",
+ "level": "info",
+ "logger": "bff.aop.auth_logging",
+ "decision": "login_success",
+ "sub": "abc12345...",
+ "reason": "session_created",
+ "traceId": "...",
+ "spanId": "..."}
+```
+
+`timestamp` is UTC ISO-8601 with `+00:00` offset. `sub` is truncated to first-8 chars + `...` when longer than 12 chars (matching the project's existing `_safe_session_id_log` convention at [`services/bff/src/bff/api/auth.py:83-87`](../services/bff/src/bff/api/auth.py)); `None` and empty string pass through as JSON `null` / `""`. `reason` is a short classifier — never a token value, never an exception message, never a claim value.
+
+### Decision vocabulary and reason classifiers
+
+The `AuthDecision` `StrEnum` defines exactly six values; the level mapping is enforced inside the helper.
+
+| Decision | Level | Reasons (BFF) | Reasons (RS) |
+|---|---|---|---|
+| `allow` | `INFO` | `auth_state_created`, `logout` | `jwt_valid` |
+| `login_success` | `INFO` | `session_created` | — |
+| `login_failure` | `WARNING` | `missing_state`, `state_cookie_invalid`, `state_row_missing_or_expired`, `cookie_row_id_mismatch`, `missing_code`, `token_exchange_failed`, `id_token_missing`, `id_token_invalid`, `exp_invalid` | — |
+| `token_exchange` | `INFO` | *(reserved — no current call site)* | — |
+| `refresh` | `INFO` | `access_token_refreshed` | — |
+| `deny` | `WARNING` | `logout_missing_session_cookie`, `logout_unknown_session`, `logout_expired_session`, `revocation_failed`, `end_session_failed`, `session_delete_failed`, `refresh_failed`, `rs_401_after_refresh` | `token_missing`, `signature_invalid`, `audience_mismatch`, `issuer_mismatch`, `exp_past`, `claim_missing[:<name>]`, `jwks_lookup_failed`, `token_invalid`, `scope_insufficient:<scope>`, `auth_unexpected_error`, `role_denied:<role>` |
+
+Two pinning decisions for ACME-schema fidelity (Story 7.3 Dev Notes):
+- **Logout failure paths emit `DENY`, not `LOGIN_FAILURE`.** The ACME schema lacks a `LOGOUT_*` value; logout failures are categorically "deny-this-decision," not "login-failed."
+- **`oidc_bearer.py` DENY emits leave `sub=None`.** At rejection time no validated `sub` exists; reading `sub` from a failed-validation JWT body would be reading-untrusted-data.
+
+### Code paths
+
+The helper module is the **only** code path that emits decision events. No `logger.info("auth_X")` / `logger.warning("auth_X")` calls survive in the BFF auth surface; the RS keeps its existing `logger.warning(...)` lines as upstream classifiers alongside the new structured emits where they carry exception detail the structured emit drops by schema (`session_delete_failed` keeps its `logger.error(..., exc_info=True)`; `auth_unexpected_error` and `role_denied` keep their original WARN lines).
+
+**Implementing code paths:**
+- [`services/bff/src/bff/aop/auth_logging.py`](../services/bff/src/bff/aop/auth_logging.py) — `AuthDecision` + `emit_auth_decision`.
+- [`services/resource-server/src/resource_server/aop/auth_logging.py`](../services/resource-server/src/resource_server/aop/auth_logging.py) — byte-identical RS mirror.
+- [`services/bff/src/bff/observability/logging.py`](../services/bff/src/bff/observability/logging.py) and the RS mirror — `_json_renderer` / `_plain_renderer` extended with a 3-key `decision/sub/reason` lift from the `LogRecord`'s `extra=` attributes.
+- [`services/bff/src/bff/api/auth.py`](../services/bff/src/bff/api/auth.py) — 17 converted call sites (4 logout flow-progress markers deleted per Decision Pinned).
+- [`services/bff/src/bff/services/resource_server_client.py`](../services/bff/src/bff/services/resource_server_client.py) — refresh / replay / 401 cycle.
+- [`services/resource-server/src/resource_server/auth/oidc_bearer.py`](../services/resource-server/src/resource_server/auth/oidc_bearer.py) — `_validate_access_token` happy + failure paths, `get_authenticated_principal` missing-token, `require_scope` scope rejection.
+- [`services/resource-server/src/resource_server/auth/dependencies.py`](../services/resource-server/src/resource_server/auth/dependencies.py) — unexpected-auth-error and role-rejection paths.
+
+### Enforcement — no token material in `reason`
+
+A session-scoped autouse `pytest` fixture in each service's `tests/conftest.py` installs a `logging.Handler` on the helper's logger that runs on every emitted record. The handler asserts the `reason` string does not match any of:
+
+- `\baccess_token\b`, `\brefresh_token\b`, `\bid_token\b` — word-bounded matches so OAuth concept names inside compound reasons (`id_token_invalid`, `token_exchange_failed`) are not false positives, but token-bearing forms like `id_token=eyJ...` would trigger.
+- `Bearer ` (trailing space) — the HTTP scheme prefix.
+- `eyJ` — the standard JWT header prefix for `{"alg"...}`.
+- A JWT-shaped regex `[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`.
+- A long base64url-ish regex `[A-Za-z0-9_-]{33,}` (>32 chars; real tokens are 200+).
+
+Because the helper is the sole emit path, every integration test in the suite (BFF: ~535, RS: ~347) re-asserts the schema invariant for free.
+
+**Pin-test references:**
+- [`services/bff/tests/aop/test_auth_logging.py`](../services/bff/tests/aop/test_auth_logging.py) + RS mirror — AC1 level mapping (6 cases), AC4 truncation (5 cases), AC4a name-agnostic truncation, wire-field shape.
+- [`services/bff/tests/observability/test_auth_decision_json.py`](../services/bff/tests/observability/test_auth_decision_json.py) + RS mirror — JSON renderer integration test driving each `AuthDecision` value through the helper.
+- [`services/bff/tests/conftest.py`](../services/bff/tests/conftest.py) + [`services/resource-server/tests/conftest.py`](../services/resource-server/tests/conftest.py) — AC5 session-scoped autouse fixture (`_assert_no_token_material_in_auth_decisions`).
+
+---
+
 ## Accepted Risks
 
 The architecture explicitly accepts the following risks for the educational reference. Each is named here with mitigation, the production-deployment alternative, and the architectural authority that ratified the trade-off. They are NOT bugs and they are NOT items the project failed to address — they are scope decisions the PRD §4 ("Production hardening beyond what the course's success criteria require") puts out of bounds.

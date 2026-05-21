@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bff.aop.auth_logging import AuthDecision, emit_auth_decision
 from bff.auth.keycloak_cookie_session import (
     OidcVerificationError,
     build_authorize_url,
@@ -180,10 +181,10 @@ async def auth_login(
         secure=cfg.bff_session_cookie_secure,
         path="/",
     )
-    logger.info(
-        "auth_state_created id=%s return_to=%s",
-        _safe_session_id_log(row.id),
-        row.return_to,
+    emit_auth_decision(
+        decision=AuthDecision.ALLOW,
+        reason="auth_state_created",
+        sub=None,
     )
     _ = request  # currently unused; FastAPI provides it for future hooks (CSRF, etc.)
     return response
@@ -202,7 +203,7 @@ async def auth_callback(
 
     # ---- 1) State + state-id cookie validation -----------------------------
     if not state:
-        logger.warning("auth_callback_missing_state")
+        emit_auth_decision(decision=AuthDecision.LOGIN_FAILURE, reason="missing_state")
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -213,14 +214,19 @@ async def auth_callback(
         serializer, cookie_value, max_age_seconds=_STATE_COOKIE_MAX_AGE
     )
     if cookie_row_id is None:
-        logger.warning("auth_callback_state_cookie_invalid")
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE, reason="state_cookie_invalid"
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
 
     row = await _session_service.consume_auth_state(db, state=state)
     if row is None:
-        logger.warning("auth_callback_state_row_missing_or_expired")
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE,
+            reason="state_row_missing_or_expired",
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -229,14 +235,16 @@ async def auth_callback(
         # Tampered query/state pair — state matched a real row, but the
         # signed cookie pointed at a different one. The row is already
         # consumed (deleted) which prevents replay.
-        logger.warning("auth_callback_cookie_row_id_mismatch")
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE, reason="cookie_row_id_mismatch"
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
 
     # ---- 2) Token exchange + id_token verification -------------------------
     if not code:
-        logger.warning("auth_callback_missing_code")
+        emit_auth_decision(decision=AuthDecision.LOGIN_FAILURE, reason="missing_code")
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -249,15 +257,19 @@ async def auth_callback(
             client_id=cfg.oidc_client_id,
             client_secret=cfg.bff_client_secret,
         )
-    except OidcVerificationError as exc:
-        logger.warning("auth_callback_token_exchange_failed: %s", exc)
+    except OidcVerificationError:
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE, reason="token_exchange_failed"
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
 
     id_token_jwt = token.get("id_token")
     if not isinstance(id_token_jwt, str):
-        logger.warning("auth_callback_id_token_missing")
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE, reason="id_token_missing"
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -274,8 +286,10 @@ async def auth_callback(
             expected_audience=cfg.oidc_client_id,
             expected_nonce=row.nonce,
         )
-    except OidcVerificationError as exc:
-        logger.warning("auth_callback_id_token_invalid: %s", exc)
+    except OidcVerificationError:
+        emit_auth_decision(
+            decision=AuthDecision.LOGIN_FAILURE, reason="id_token_invalid"
+        )
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -283,8 +297,8 @@ async def auth_callback(
     sub = claims["sub"]
     try:
         expires_at = datetime.fromtimestamp(int(claims["exp"]), tz=UTC)
-    except (ValueError, OSError) as exc:
-        logger.warning("auth_callback_exp_invalid: %s", exc)
+    except ValueError, OSError:
+        emit_auth_decision(decision=AuthDecision.LOGIN_FAILURE, reason="exp_invalid")
         return _auth_state_invalid_response(
             BFF_AUTH_STATE_COOKIE_NAME, secure=cfg.bff_session_cookie_secure
         )
@@ -328,11 +342,10 @@ async def auth_callback(
         secure=cfg.bff_session_cookie_secure,
         path="/",
     )
-    logger.info(
-        "auth_callback_success sub=%s session_id=%s return_to=%s",
-        _safe_session_id_log(sub),
-        _safe_session_id_log(session_row.id),
-        row.return_to,
+    emit_auth_decision(
+        decision=AuthDecision.LOGIN_SUCCESS,
+        reason="session_created",
+        sub=sub,
     )
     return redirect
 
@@ -423,34 +436,35 @@ async def auth_logout(
     """
     session_id = request.cookies.get(cfg.bff_session_cookie_name)
     if not session_id:
-        logger.warning("auth_logout_missing_session_cookie")
+        emit_auth_decision(
+            decision=AuthDecision.DENY, reason="logout_missing_session_cookie"
+        )
         return _session_expired_with_cookie_clear(cfg)
 
     row = await _session_service.get_session(db, session_id=session_id)
     if row is None:
-        logger.warning(
-            "auth_logout_unknown_session session_id=%s",
-            _safe_session_id_log(session_id),
-        )
+        emit_auth_decision(decision=AuthDecision.DENY, reason="logout_unknown_session")
         return _session_expired_with_cookie_clear(cfg)
 
     if _as_utc_aware(row.expires_at) < datetime.now(UTC):
         # Lazy cleanup of the expired row; caller still gets 401.
         await _session_service.delete_expired_session(db, session_id=session_id)
-        logger.warning(
-            "auth_logout_expired_session session_id=%s",
-            _safe_session_id_log(session_id),
+        emit_auth_decision(
+            decision=AuthDecision.DENY,
+            reason="logout_expired_session",
+            sub=row.sub,
         )
         return _session_expired_with_cookie_clear(cfg)
 
-    logger.info(
-        "auth_logout_start sub=%s session_id=%s",
-        _safe_session_id_log(row.sub),
-        _safe_session_id_log(session_id),
-    )
-
     revocation_url = discovery.revocation_endpoint
     end_session_url = discovery.end_session_endpoint
+
+    # Review-fix P8: gate the trailing ALLOW emit on the success of the local
+    # teardown. The user-facing logout still returns 204 with cookies cleared
+    # even on DB failure, but the audit trail must distinguish a clean logout
+    # from a half-success: operators counting `decision=allow reason=logout`
+    # would otherwise over-count DB-failed logouts as fully successful.
+    session_delete_succeeded = False
 
     try:
         if row.refresh_token:
@@ -461,23 +475,17 @@ async def auth_logout(
                     client_id=cfg.oidc_client_id,
                     client_secret=cfg.bff_client_secret,
                 )
-            except httpx.HTTPError as exc:
+            except httpx.HTTPError:
                 # Captures HTTPStatusError (from non-2xx — including 3xx)
                 # AND transport subclasses (ConnectError, ReadTimeout,
                 # ConnectTimeout). Local teardown still runs — A7 contract.
-                logger.warning(
-                    "auth_logout_revocation_failed: %s",
-                    _http_error_classifier(exc),
+                # ACME schema is a tight 4-field shape — the exception
+                # classifier is dropped from the wire by design.
+                emit_auth_decision(
+                    decision=AuthDecision.DENY,
+                    reason="revocation_failed",
+                    sub=row.sub,
                 )
-        else:
-            # Row was created without a refresh_token (Story 1.5 stores
-            # `str(token.get("refresh_token", ""))`). POSTing an empty
-            # `token` would 400 at the AS and pollute the log with a
-            # phantom "AS failure". Skip the call and log a real classifier.
-            logger.info(
-                "auth_logout_no_refresh_token session_id=%s",
-                _safe_session_id_log(session_id),
-            )
 
         if row.id_token:
             try:
@@ -487,16 +495,12 @@ async def auth_logout(
                     client_id=cfg.oidc_client_id,
                     client_secret=cfg.bff_client_secret,
                 )
-            except httpx.HTTPError as exc:
-                logger.warning(
-                    "auth_logout_end_session_failed: %s",
-                    _http_error_classifier(exc),
+            except httpx.HTTPError:
+                emit_auth_decision(
+                    decision=AuthDecision.DENY,
+                    reason="end_session_failed",
+                    sub=row.sub,
                 )
-        else:
-            logger.info(
-                "auth_logout_no_id_token session_id=%s",
-                _safe_session_id_log(session_id),
-            )
     finally:
         # UX §J5 invariant: tear down local state EVERY time, even on
         # client cancellation or unexpected upstream errors. shield() keeps
@@ -505,18 +509,29 @@ async def auth_logout(
             await asyncio.shield(
                 _session_service.delete_session(db, session_id=session_id)
             )
+            session_delete_succeeded = True
         except SQLAlchemyError as exc:
             # Without this guard, a DB failure here would crash the handler
             # AFTER upstream revocation succeeded — leaving the user
             # half-logged-out (cookies still in browser, row still in DB
             # if commit failed). Log ERROR and continue to cookie clear.
+            # The structured DENY emit tells operators *that* the delete
+            # failed; the stdlib ERROR keeps the stack trace alongside.
             logger.error("auth_logout_session_delete_failed: %s", type(exc).__name__)
+            emit_auth_decision(
+                decision=AuthDecision.DENY,
+                reason="session_delete_failed",
+                sub=row.sub,
+            )
 
     response = Response(status_code=204)
     _clear_session_cookies(response, cfg)
-    logger.info(
-        "auth_logout_complete sub=%s session_id=%s",
-        _safe_session_id_log(row.sub),
-        _safe_session_id_log(session_id),
-    )
+    # ALLOW only on full success — the DENY paths above already record the
+    # audit-trail outcome for revocation/end_session/session_delete failures.
+    if session_delete_succeeded:
+        emit_auth_decision(
+            decision=AuthDecision.ALLOW,
+            reason="logout",
+            sub=row.sub,
+        )
     return response

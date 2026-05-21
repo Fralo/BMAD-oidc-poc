@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from resource_server.aop.auth_logging import AuthDecision, emit_auth_decision
 from resource_server.auth.contracts import UnauthorizedError
 from resource_server.auth.factory import get_auth
 from resource_server.auth.models import AuthFunctions, Principal, Role
@@ -51,6 +52,11 @@ async def get_current_principal(
         raise
     except Exception as exc:
         logger.warning("Unexpected authentication error: %s", exc)
+        emit_auth_decision(
+            decision=AuthDecision.DENY,
+            reason="auth_unexpected_error",
+            sub=None,
+        )
         raise AppException(ErrorCode.UNAUTHORIZED) from exc
     return principal
 
@@ -74,6 +80,11 @@ def require_role(required_role: Role):
                 principal.subject,
                 required_role.value,
                 len(roles),
+            )
+            emit_auth_decision(
+                decision=AuthDecision.DENY,
+                reason=f"role_denied:{required_role.value}",
+                sub=principal.subject,
             )
             raise AppException(ErrorCode.FORBIDDEN)
         return principal

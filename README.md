@@ -78,6 +78,8 @@ For the per-surface coverage snapshot and thresholds, see [`docs/coverage-report
 
 For the OAuth/OIDC security review (PRD §9 envelope: token storage, cookie attributes, CSRF, JWT validation, scope enforcement, SPA concerns), see [`docs/security-review.md`](docs/security-review.md).
 
+For the structured auth-decision audit trail (ACME-TS principle P8 — `{timestamp, sub, decision, reason}` wire schema, Story 7.3), see [`docs/security-review.md §7`](docs/security-review.md).
+
 ## Dev workflow
 
 The dev workflow runs the full stack — including the SPA SSR edge — in compose. The two-terminal `docker compose up` + host-side `ng serve` model was retired by Story 6.1 (deletion of `spa/proxy.conf.json` and the legacy `ng serve` proxy harness); the canonical dev path is now single-terminal.
