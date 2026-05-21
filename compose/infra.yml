@@ -21,6 +21,14 @@ services:
       KC_HOSTNAME: localhost
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
+      # Story 7.2: Keycloak emits back-channel URLs in discovery responses
+      # when the request's Host header is a back-channel hostname (e.g.
+      # the BFF's `http://keycloak:8080/.../well-known` fetch returns
+      # URLs using `keycloak:8080`). The browser side still sees
+      # `localhost:8080` because `KC_HOSTNAME=localhost` drives the
+      # frontend URL. Resolves the front-channel/back-channel split
+      # without per-endpoint URL rebasing on the BFF.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       # Exposes /health, /health/ready, /health/live on management port 9000.
       KC_HEALTH_ENABLED: "true"
       # AR29 mandates `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` as the
