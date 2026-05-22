@@ -29,8 +29,8 @@ context:
 
 **Never:**
 - No in-app "logged out" / "session expired" page.
-- No changes to `/auth/login|callback|logout` contracts.
-- No structured auth event logging or RP-initiated end_session in this story.
+- No changes to `/auth/login` or `/auth/callback` contracts.
+- No structured auth event logging in this story.
 - No widening of `SSR_PROXIED_PREFIXES`.
 
 ## I/O & Edge-Case Matrix
@@ -42,7 +42,7 @@ context:
 | Authenticated SSR | `GET /books` w/ session | `200` + rendered page |
 | In-app nav, authed | router `→/settings` | guard reads cached `me`, chunk loads, no `/auth/login` call |
 | Mid-session 401 | XHR `/api/v1/*` → 401 | browser `window.location.href = '/auth/login?return_to=<router.url>'`; `/api/me` and `/auth/logout` excluded |
-| Logout | click Log out | `POST /auth/logout` (any outcome) → `window.location.href = '/'` → guard 302s to `/auth/login` |
+| Logout | click Log out | `POST /auth/logout` → BFF returns `200 {logout_redirect_url}` → SPA navigates browser to Keycloak's `end_session_endpoint` (front-channel RP-initiated logout) → Keycloak clears SSO cookie → 302 back to SPA root → guard redirects to `/auth/login` → fresh authentication required. Degrade-open: any HTTP failure → fallback `'/'`. |
 
 </frozen-after-approval>
 
@@ -56,6 +56,12 @@ context:
 - `spa/src/app/shared/chrome/top-chrome.ts` — replace post-logout `router.navigateByUrl('/login')` with `window.location.href = '/'`
 - `spa/src/app/{books/estimate-cell.ts, settings/reading-speed-service.ts, shared/errors/app-error.types.ts}` — comments only: update `/login?return_to=...` → `/auth/login?return_to=...`
 - `e2e/fixtures/helpers.ts` + `e2e/tests/{j1-first-login,j5-logout,j4-adjust-speed}.spec.ts` — update flows and URL assertions to traverse `/auth/login` → Keycloak directly (no `/login` step)
+- `spa/src/app/app.config.ts` — drop `withEventReplay()` from `provideClientHydration()` (its inline `ng-event-dispatch-contract` script violated `script-src 'self'`)
+- `spa/src/app/shared/chrome/top-chrome.ts` — read `logout_redirect_url` from BFF response, navigate the browser via `window.location.href` (RP-initiated front-channel logout)
+- `services/bff/src/bff/api/auth.py` — `POST /auth/logout` returns `200 JSON {logout_redirect_url}` (was 204); helper `_session_expired_with_cookie_clear` returns `{logout_redirect_url: '/'}` (was `401 session_expired`)
+- `services/bff/src/bff/auth/keycloak_cookie_session.py` — new `build_end_session_url` helper
+- `services/bff/src/bff/core/config.py` — new `spa_public_origin` field + validator
+- `compose/app.yml` — `SPA_PUBLIC_ORIGIN` env var added to the `bff` service block
 
 ## Tasks & Acceptance
 
@@ -65,6 +71,10 @@ context:
 - [x] `app.routes.ts` — restructure to `[{ path: 'auth/login', component: AuthRedirectStub }, { path: '', canMatch: [authGuard], children: [books, settings] }, { path: '**', redirectTo: 'books' }]`
 - [x] Delete `login/` and `redirect-if-authed-guard*`
 - [x] `with-credentials-interceptor.ts` + spec — swap router-nav for `window.location.href`; exclude both `/api/me` and `/auth/logout` from the 401 redirect
+- [x] `app.config.ts` — drop `withEventReplay()` from `provideClientHydration()` (CSP-incompatible inline script)
+- [x] `top-chrome.ts` + spec — consume BFF's `{logout_redirect_url}` JSON; `window.location.href = target`; degrade-open
+- [x] BFF `POST /auth/logout` — return `200 JSON {logout_redirect_url}`; new `build_end_session_url` helper; new `spa_public_origin` config
+- [x] `compose/app.yml` — `SPA_PUBLIC_ORIGIN` on the `bff` service
 - [x] `top-chrome.ts` — `window.location.href = '/'` post-logout; drop unused `Router` if orphaned
 - [x] Three comment-only updates
 - [x] E2E helpers + j1/j5/j4 specs updated for new flow
@@ -79,6 +89,25 @@ context:
 - Given post-build SPA, when grep `dist/spa/browser/*.js` for `LoginView|login-view|redirectIfAuthedGuard|'/login'`, then zero matches.
 
 ## Spec Change Log
+
+### 2026-05-22 — RP-initiated front-channel logout + CSP/hydration fix (iteration 3)
+
+**Trigger:** runtime verification revealed (a) Keycloak's SSO cookie persisted after `POST /auth/logout`, causing silent re-auth to land the user back on `/books` immediately — visible symptom: "clicking logout does not log me out"; and (b) `provideClientHydration(withEventReplay())` baked an inline `<script id="ng-event-dispatch-contract">` into `index.server.html` that violated the existing `script-src 'self'` CSP (pre-existing tech debt, surfaced by the new full-reload logout flow).
+
+**Amended:** with explicit user authorization, the frozen `Never` rule was relaxed from "No structured auth event logging or RP-initiated end_session in this story" → "No structured auth event logging in this story" (end_session moved into scope). The frozen I/O matrix row for Logout was rewritten to describe the new front-channel chain. Code Map expanded to include BFF + compose changes.
+
+**Implementation:**
+- BFF `POST /auth/logout` now returns `200 JSON {logout_redirect_url}` (was 204). The URL is built via a new `build_end_session_url` helper combining `discovery.end_session_endpoint` + `id_token_hint` + a `post_logout_redirect_uri` derived from a new `SPA_PUBLIC_ORIGIN` config var. Missing/expired-session branches return `{logout_redirect_url: '/'}` (no-op fallback).
+- `_session_expired_with_cookie_clear` helper changed from emitting `401 SESSION_EXPIRED` to `200 {logout_redirect_url: '/'}` — used by only the 3 logout call-sites (verified via grep; no other callers).
+- SPA `TopChrome.logout()` reads the JSON response and `window.location.href = response.logout_redirect_url`; degrade-open → `'/'` on any failure.
+- Compose: `SPA_PUBLIC_ORIGIN` env var added to the `bff` service block (mirrors the SPA service value at `compose/app.yml:216`).
+- CSP fix: `withEventReplay()` dropped from `provideClientHydration()` call in `app.config.ts`. Cost: events dispatched during the ~ms hydration window are lost — negligible in practice.
+
+**Known-bad state avoided:** user clicks Logout, Keycloak silently re-auths, user is back on `/books` having seen nothing change. Now: Logout clears Keycloak's SSO cookie, the next visit to any protected route requires a fresh password entry.
+
+**KEEP:** the BFF's back-channel `revoke_refresh_token` + `end_session` calls (defense-in-depth alongside the new front-channel logout); POST + CSRF token on `/auth/logout` (front-channel-as-GET would have lost CSRF protection); the `200 JSON` envelope shape (clean contract, SPA controls the navigation).
+
+**Test impact:** 9 BFF tests in `test_auth.py` flipped from `204` / `401 session_expired` assertions to `200` + `logout_redirect_url` body assertions. SPA `top-chrome.spec.ts` got 2 new tests (defensive empty-body fallback + degrade-open).
 
 ### 2026-05-22 — SSR redirect mechanism + four review patches (iteration 2)
 

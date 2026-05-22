@@ -739,12 +739,17 @@ def _cookie_attr(set_cookie_line: str, attr: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_happy_path_returns_204_and_clears_session(
+async def test_logout_happy_path_returns_front_channel_url_and_clears_session(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, idp = logout_setup
+    # Story 7.4 follow-up: SPA_PUBLIC_ORIGIN gates the front-channel logout
+    # URL — set it so the happy path returns the Keycloak end_session URL
+    # rather than the relative `/` fallback.
+    monkeypatch.setattr(settings, "spa_public_origin", "http://localhost:4000")
     session_cookie, csrf_value, row = await _seed_session(
         client_no_redirects, session, idp
     )
@@ -756,12 +761,19 @@ async def test_logout_happy_path_returns_204_and_clears_session(
         csrf_value=csrf_value,
     )
 
-    # 204 with empty body (AC2 + AC8 scenario 13). Per RFC 7230 §3.3.2 a 204
-    # response MUST NOT carry a content-length header; FastAPI omits it
-    # correctly, so we only assert the body is empty.
-    assert response.status_code == 204
-    assert response.content == b""
-    assert "content-length" not in response.headers
+    # Story 7.4 follow-up: 200 JSON `{logout_redirect_url}` with the
+    # front-channel RP-initiated logout URL (replaces the prior 204).
+    assert response.status_code == 200
+    body = response.json()
+    assert "logout_redirect_url" in body
+    logout_url = body["logout_redirect_url"]
+    # Built from discovery.end_session_endpoint + id_token_hint + redirect_uri.
+    assert logout_url.startswith(
+        "http://idp.test/realms/test/protocol/openid-connect/logout"
+    )
+    assert f"id_token_hint={stored_id_token}" in logout_url
+    assert "post_logout_redirect_uri=" in logout_url
+    assert "localhost%3A4000" in logout_url
 
     # Revocation captured with correct form fields (AC8 scenario 1).
     assert len(idp.captured_revocations) == 1
@@ -815,11 +827,11 @@ async def test_logout_uses_http_basic_auth_on_revocation(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 2: revocation 5xx → 204; end-session still called
+# Scenario 2: revocation 5xx → 200 JSON; end-session still called
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_revocation_5xx_still_returns_204(
+async def test_logout_revocation_5xx_still_returns_200(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -838,7 +850,8 @@ async def test_logout_revocation_5xx_still_returns_204(
         csrf_value=csrf_value,
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     # Both upstream calls happened — revocation 500'd (caught) and end-session
     # still ran per A7. Without explicitly asserting captured_revocations, a
     # regression that no-ops the revoke call would slip through silently.
@@ -866,7 +879,7 @@ async def test_logout_revocation_5xx_still_returns_204(
         httpx.ConnectTimeout("dns hang"),
     ],
 )
-async def test_logout_revocation_transport_failure_still_returns_204(
+async def test_logout_revocation_transport_failure_still_returns_200(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -886,7 +899,8 @@ async def test_logout_revocation_transport_failure_still_returns_204(
         csrf_value=csrf_value,
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     # Revocation transport call DID happen (it threw before reaching the AS,
     # but the BFF still attempted it — captured by the synthetic IdP's
     # handler-raise path before the request_content was even parsed).
@@ -911,7 +925,7 @@ async def test_logout_revocation_transport_failure_still_returns_204(
         httpx.ConnectError("refused"),
     ],
 )
-async def test_logout_end_session_failure_still_returns_204(
+async def test_logout_end_session_failure_still_returns_200(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -931,7 +945,8 @@ async def test_logout_end_session_failure_still_returns_204(
         csrf_value=csrf_value,
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     # Revocation still happened normally.
     assert len(idp.captured_revocations) == 1
     assert (await session.execute(select(entities.Session))).scalars().all() == []
@@ -945,7 +960,7 @@ async def test_logout_end_session_failure_still_returns_204(
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_both_upstream_failures_still_returns_204(
+async def test_logout_both_upstream_failures_still_returns_200(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -965,7 +980,8 @@ async def test_logout_both_upstream_failures_still_returns_204(
         csrf_value=csrf_value,
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     # Both upstream calls were attempted before being short-circuited by
     # their respective overrides; assert the captures so a regression that
     # silently skips either call is detected.
@@ -981,31 +997,32 @@ async def test_logout_both_upstream_failures_still_returns_204(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 8: missing session cookie → 401 session_expired
+# Scenario 8: missing session cookie → 200 with logout_redirect_url=/
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_missing_session_cookie_returns_401(
+async def test_logout_missing_session_cookie_returns_root_fallback(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
 ) -> None:
     _, idp = logout_setup
     # Send a CSRF cookie+header so the CSRF middleware lets the request through;
-    # the handler then sees a missing session cookie and emits the 401 envelope.
+    # the handler then sees a missing session cookie and returns the fallback.
     response = await _logout(
         client_no_redirects,
         session_cookie=None,
         csrf_value="csrf-without-session",
     )
 
-    assert response.status_code == 401
-    body = response.json()
-    assert body["errorCode"] == "session_expired"
+    # Story 7.4 follow-up: missing-session path now returns 200 JSON with the
+    # relative `/` fallback (replaces the prior 401 session_expired envelope).
+    assert response.status_code == 200
+    assert response.json() == {"logout_redirect_url": "/"}
     # No IdP calls.
     assert idp.captured_revocations == []
     assert idp.captured_end_sessions == []
-    # Defensive cookie clears emitted.
+    # Defensive cookie clears still emitted.
     session_clears = _parse_set_cookies(response, settings.bff_session_cookie_name)
     csrf_clears = _parse_set_cookies(response, settings.bff_csrf_cookie_name)
     assert session_clears and csrf_clears
@@ -1014,11 +1031,11 @@ async def test_logout_missing_session_cookie_returns_401(
 
 
 # ---------------------------------------------------------------------------
-# Scenario 9: unknown session cookie → 401 session_expired
+# Scenario 9: unknown session cookie → 200 with logout_redirect_url=/
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_unknown_session_cookie_returns_401(
+async def test_logout_unknown_session_cookie_returns_root_fallback(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -1030,18 +1047,18 @@ async def test_logout_unknown_session_cookie_returns_401(
         csrf_value="csrf-irrelevant",
     )
 
-    assert response.status_code == 401
-    assert response.json()["errorCode"] == "session_expired"
+    assert response.status_code == 200
+    assert response.json() == {"logout_redirect_url": "/"}
     assert idp.captured_revocations == []
     assert idp.captured_end_sessions == []
 
 
 # ---------------------------------------------------------------------------
-# Scenario 10: expired session row → 401, row deleted lazily
+# Scenario 10: expired session row → 200 with `/` fallback, row deleted lazily
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_expired_session_returns_401_and_deletes_row(
+async def test_logout_expired_session_returns_root_fallback_and_deletes_row(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -1066,8 +1083,8 @@ async def test_logout_expired_session_returns_401_and_deletes_row(
         csrf_value="csrf-irrelevant",
     )
 
-    assert response.status_code == 401
-    assert response.json()["errorCode"] == "session_expired"
+    assert response.status_code == 200
+    assert response.json() == {"logout_redirect_url": "/"}
     # No IdP calls; row was cleaned up lazily.
     assert idp.captured_revocations == []
     assert idp.captured_end_sessions == []
@@ -1290,7 +1307,8 @@ async def test_logout_empty_refresh_token_skips_revoke(
         csrf_value="csrf-empty",
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     # No revocation request fired — the BFF didn't try to revoke ``.
     # The legacy `auth_logout_no_refresh_token` progress marker was dropped
     # in Story 7.3 (per Decision Pinned: flow-progress markers don't carry
@@ -1318,7 +1336,9 @@ async def test_logout_empty_id_token_skips_end_session(
         csrf_value="csrf-empty",
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    # Empty id_token AND no SPA origin configured → fallback `/`.
+    assert response.json() == {"logout_redirect_url": "/"}
     # Revocation DID fire (refresh_token was present).
     # The legacy `auth_logout_no_id_token` progress marker was dropped in
     # Story 7.3 (same rationale as `auth_logout_no_refresh_token` above).
@@ -1335,7 +1355,7 @@ async def test_logout_empty_id_token_skips_end_session(
 # ---------------------------------------------------------------------------
 
 
-async def test_logout_db_delete_failure_still_returns_204_and_clears_cookies(
+async def test_logout_db_delete_failure_still_returns_200_and_clears_cookies(
     client_no_redirects: AsyncClient,
     session: AsyncSession,
     logout_setup,
@@ -1370,9 +1390,10 @@ async def test_logout_db_delete_failure_still_returns_204_and_clears_cookies(
     )
 
     # UX §J5: a half-logged-out state is forbidden. Even though the DB
-    # delete failed, the user receives 204 with cookie-clear headers — the
-    # browser-side session ends, and operations sees the failure in logs.
-    assert response.status_code == 204
+    # delete failed, the user receives 200 + JSON with cookie-clear headers —
+    # the browser-side session ends, and operations sees the failure in logs.
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     raw_set_cookies = response.headers.get_list("set-cookie")
     assert any(
         line.startswith(f"{settings.bff_session_cookie_name}=") and "Max-Age=0" in line
@@ -1419,7 +1440,8 @@ async def test_logout_revocation_4xx_still_emits_deny(
         csrf_value=csrf_value,
     )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    assert "logout_redirect_url" in response.json()
     assert _has_auth_decision(
         caplog.records, decision=AuthDecision.DENY, reason="revocation_failed"
     )

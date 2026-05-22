@@ -278,6 +278,26 @@ async def revoke_refresh_token(
             )
 
 
+def build_end_session_url(
+    *,
+    end_session_url: str,
+    id_token: str,
+    post_logout_redirect_uri: str,
+) -> str:
+    """Build a front-channel RP-initiated logout URL per OIDC RP-Initiated Logout 1.0.
+
+    Keycloak validates `post_logout_redirect_uri` against the realm's
+    `post.logout.redirect.uris` attribute. The browser is redirected here;
+    Keycloak clears its SSO cookie and 302s back to the post-logout URI.
+    """
+    params = urlencode({
+        "id_token_hint": id_token,
+        "post_logout_redirect_uri": post_logout_redirect_uri,
+    })
+    separator = "&" if "?" in end_session_url else "?"
+    return f"{end_session_url}{separator}{params}"
+
+
 async def end_session(
     *,
     id_token: str,

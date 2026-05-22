@@ -99,6 +99,10 @@ class AppSettings(BaseSettings):
     # while back-channel calls go to `http://keycloak:8080/realms/...`.
     # Story 7.2 replaces the prior `OIDC_AUTHORIZE_URL_BROWSER` env var.
     oidc_public_base_url: str = ""
+    # Story 7.4 follow-up: browser-facing SPA origin used as the
+    # `post_logout_redirect_uri` on the RP-initiated front-channel logout URL.
+    # Empty → relative `/` (no front-channel logout; back-channel teardown only).
+    spa_public_origin: str = ""
     bff_session_cookie_name: str = "bff_session"
     bff_csrf_cookie_name: str = "csrf_token"
     bff_session_cookie_secure: bool = False
@@ -215,6 +219,33 @@ class AppSettings(BaseSettings):
                 msg = (
                     "OIDC_PUBLIC_BASE_URL must include a host "
                     f"(got: '{val[:40]}'; expected e.g. http://localhost:8080)"
+                )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_spa_public_origin(self) -> AppSettings:
+        # Story 7.4 follow-up: SPA_PUBLIC_ORIGIN feeds the
+        # `post_logout_redirect_uri` query param on the RP-initiated logout
+        # URL. Keycloak validates this against the realm's
+        # `post.logout.redirect.uris`; a malformed value would yield a
+        # confusing "Invalid redirect uri" error at logout time. Fail-fast on
+        # http(s) prefix + non-empty netloc when a value is supplied. Empty
+        # is allowed — the logout response then falls back to a relative `/`.
+        val = self.spa_public_origin.strip()
+        if val and not val.startswith(("http://", "https://")):
+            msg = (
+                "SPA_PUBLIC_ORIGIN must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
+            )
+            raise ValueError(msg)
+        if val:
+            from urllib.parse import urlparse
+
+            if not urlparse(val).netloc:
+                msg = (
+                    "SPA_PUBLIC_ORIGIN must include a host "
+                    f"(got: '{val[:40]}'; expected e.g. http://localhost:4000)"
                 )
                 raise ValueError(msg)
         return self

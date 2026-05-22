@@ -16,11 +16,13 @@ Flow (PKCE removed 2026-05-21 — confidential client uses client_secret_basic):
    to `return_to`.
 5. Any failure on the callback path returns 400 `auth_state_invalid` AND
    clears the state-id cookie.
-6. On `POST /auth/logout`: revoke refresh token at Keycloak, call the
-   end-session endpoint, delete the local `sessions` row, clear both the
-   session and CSRF cookies, and return 204. Per architecture §A7, transport
-   failures at Keycloak do NOT block local session teardown — the user
-   perceives a successful logout even when the AS is unreachable.
+6. On `POST /auth/logout`: revoke refresh token at Keycloak (back-channel),
+   call the end-session endpoint (back-channel), delete the local `sessions`
+   row, clear both the session and CSRF cookies, and return 200 JSON
+   `{logout_redirect_url}` for the SPA to drive the browser to (front-channel
+   RP-initiated logout — Story 7.4 follow-up). Per architecture §A7,
+   transport failures at Keycloak do NOT block local session teardown — the
+   user perceives a successful logout even when the AS is unreachable.
 """
 
 import asyncio
@@ -39,6 +41,7 @@ from bff.aop.auth_logging import AuthDecision, emit_auth_decision
 from bff.auth.keycloak_cookie_session import (
     OidcVerificationError,
     build_authorize_url,
+    build_end_session_url,
     end_session,
     exchange_code,
     revoke_refresh_token,
@@ -421,40 +424,38 @@ def _clear_session_cookies(response: Response, cfg: AppSettings) -> None:
 
 
 def _session_expired_with_cookie_clear(cfg: AppSettings) -> JSONResponse:
-    """Build the canonical 401 `session_expired` envelope AND clear both cookies.
+    """Build the RP-initiated logout fallback envelope AND clear both cookies.
 
     Used by `/auth/logout` for the missing/unknown/expired-session paths
-    (AC5). Defensively clears the (now-useless) cookies even when there was
-    no matching session row — leaves the browser in a clean unauthenticated
-    state for a fresh login.
+    (AC5). Returns 200 with `{"logout_redirect_url": "/"}` so the SPA's
+    degrade-open path lands the user on root (the auth guard then bounces
+    through `/auth/login` as a fresh login). Defensively clears the (now-
+    useless) cookies even when there was no matching session row — leaves
+    the browser in a clean unauthenticated state for a fresh login.
     """
-    response = JSONResponse(
-        status_code=ErrorCode.SESSION_EXPIRED.http_status,
-        content={
-            "errorCode": ErrorCode.SESSION_EXPIRED.code,
-            "message": ErrorCode.SESSION_EXPIRED.message,
-            "detail": None,
-        },
-    )
+    response = JSONResponse(content={"logout_redirect_url": "/"})
     _clear_session_cookies(response, cfg)
     return response
 
 
-@router.post("/auth/logout", status_code=204)
+@router.post("/auth/logout")
 async def auth_logout(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_session)],
     cfg: Annotated[AppSettings, Depends(_settings_dep)],
     discovery: Annotated[OidcDiscovery, Depends(get_oidc_discovery)],
 ) -> Response:
-    """Tear down the user's session — locally and at the AS — and return 204.
+    """Tear down the user's session — locally and at the AS — and return JSON
+    `{logout_redirect_url}` for the SPA to drive the browser to.
 
     Order matters (architecture §A7):
-      1. revoke refresh_token at Keycloak  (best effort)
-      2. call end_session_endpoint        (best effort)
+      1. revoke refresh_token at Keycloak  (best effort, back-channel)
+      2. call end_session_endpoint        (best effort, back-channel)
       3. delete local `sessions` row       (always)
       4. clear `bff_session` + `csrf_token` cookies (always)
-      5. return 204 No Content
+      5. return 200 JSON with the front-channel RP-initiated logout URL
+         (Story 7.4 follow-up); the SPA navigates the browser there so
+         Keycloak's SSO cookie is cleared and silent re-auth is prevented.
 
     Steps 1 + 2 degrade honestly: any transport or HTTP failure is logged at
     WARN with a classifier (the exception type name) and the flow continues.
@@ -551,7 +552,19 @@ async def auth_logout(
                 sub=row.sub,
             )
 
-    response = Response(status_code=204)
+    # Front-channel RP-initiated logout URL: only built when we have a valid
+    # id_token AND a configured SPA origin AND the AS exposes end_session.
+    # Otherwise fall back to relative `/` so the SPA still navigates the user
+    # to a clean state — the auth guard will then bounce through /auth/login.
+    if row.id_token and cfg.spa_public_origin and end_session_url:
+        logout_redirect_url = build_end_session_url(
+            end_session_url=end_session_url,
+            id_token=row.id_token,
+            post_logout_redirect_uri=cfg.spa_public_origin.rstrip("/") + "/",
+        )
+    else:
+        logout_redirect_url = "/"
+    response = JSONResponse(content={"logout_redirect_url": logout_redirect_url})
     _clear_session_cookies(response, cfg)
     # ALLOW only on full success — the DENY paths above already record the
     # audit-trail outcome for revocation/end_session/session_delete failures.

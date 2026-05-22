@@ -119,7 +119,7 @@ describe('TopChrome', () => {
     expect(link?.getAttribute('href')).toBe('/books');
   });
 
-  it('clicking Log out POSTs /auth/logout, clears auth state, and navigates to /', async () => {
+  it('clicking Log out POSTs /auth/logout, clears auth state, and navigates to the front-channel logout URL', async () => {
     const { router, http, authStub } = await setupHarness({
       sub: 's1',
       preferred_username: 'alice',
@@ -143,15 +143,17 @@ describe('TopChrome', () => {
 
     const req = http.expectOne('/auth/logout');
     expect(req.request.method).toBe('POST');
-    req.flush({});
+    const frontChannelUrl =
+      'http://localhost:8080/realms/bmad-books/protocol/openid-connect/logout?id_token_hint=eyJ.fake.jwt&post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A4000%2F';
+    req.flush({ logout_redirect_url: frontChannelUrl });
 
     await clickPromise;
 
     expect(authStub.clear).toHaveBeenCalledTimes(1);
-    expect(assignedHref).toBe('/');
+    expect(assignedHref).toBe(frontChannelUrl);
   });
 
-  it('logout still clears state + navigates even when /auth/logout fails (degrade-open per J5)', async () => {
+  it('logout still clears state + navigates to / when /auth/logout fails (degrade-open per J5)', async () => {
     const { router, http, authStub } = await setupHarness({
       sub: 's1',
       preferred_username: 'alice',
@@ -175,6 +177,37 @@ describe('TopChrome', () => {
 
     const req = http.expectOne('/auth/logout');
     req.flush({ errorCode: 'oops', message: 'no' }, { status: 500, statusText: 'ISE' });
+
+    await clickPromise;
+
+    expect(authStub.clear).toHaveBeenCalledTimes(1);
+    expect(assignedHref).toBe('/');
+  });
+
+  it('logout falls back to / when /auth/logout returns an empty body (defensive)', async () => {
+    const { router, http, authStub } = await setupHarness({
+      sub: 's1',
+      preferred_username: 'alice',
+    });
+    await router.navigateByUrl('/books');
+
+    const fixture = TestBed.createComponent(TopChrome);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const component = fixture.componentInstance as TopChrome;
+    const logoutSpy = vi.spyOn(component, 'logout');
+
+    const logoutBtn = (fixture.nativeElement as HTMLElement).querySelector(
+      '.top-chrome-logout',
+    ) as HTMLButtonElement;
+    logoutBtn.click();
+
+    expect(logoutSpy).toHaveBeenCalledTimes(1);
+    const clickPromise = logoutSpy.mock.results[0]!.value as Promise<void>;
+
+    const req = http.expectOne('/auth/logout');
+    req.flush({});
 
     await clickPromise;
 

@@ -47,14 +47,21 @@ export class TopChrome {
   });
 
   async logout(): Promise<void> {
+    // Story 7.4 follow-up: BFF responds with the front-channel RP-initiated
+    // logout URL so the browser clears Keycloak's SSO cookie (prevents silent
+    // re-auth). Falls back to '/' on any failure — degrade-open per J5.
+    let target = '/';
     try {
-      await firstValueFrom(this.http.post('/auth/logout', null));
+      const resp = await firstValueFrom(
+        this.http.post<{ logout_redirect_url: string }>('/auth/logout', null),
+      );
+      if (resp?.logout_redirect_url) {
+        target = resp.logout_redirect_url;
+      }
     } catch {
       // J5: degrade open — local session is cleared regardless of remote outcome.
     }
     this.authService.clear();
-    // Full-page navigation to '/' lets the auth guard re-evaluate and emit
-    // a fresh redirect to /auth/login.
-    window.location.href = '/';
+    window.location.href = target;
   }
 }

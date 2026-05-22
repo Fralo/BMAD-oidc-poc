@@ -8,7 +8,7 @@ import {
   provideBrowserGlobalErrorListeners,
   provideZonelessChangeDetection,
 } from '@angular/core';
-import { provideClientHydration, withEventReplay } from '@angular/platform-browser';
+import { provideClientHydration } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 
 import { AuthService } from './auth/auth-service';
@@ -52,6 +52,11 @@ export const appConfig: ApplicationConfig = {
           })
         : bootstrap;
     }),
-    provideClientHydration(withEventReplay()),
+    // No `withEventReplay()` — its inline `<script id="ng-event-dispatch-contract">`
+    // violates `script-src 'self'` in `csp.middleware.ts`. Without nonces/hashes
+    // wired through Angular's `CSP_NONCE` provider, the event-replay shim is
+    // blocked anyway; dropping it removes the console noise. Cost: events
+    // dispatched during the ~ms hydration window are lost — negligible UX impact.
+    provideClientHydration(),
   ],
 };
