@@ -81,6 +81,15 @@ class AppSettings(BaseSettings):
     oidc_issuer_url: str = ""
     oidc_audience: str = ""
     oidc_client_id: str = ""
+    # Back-channel URL used to GET `.well-known/openid-configuration`.
+    # Decoupled from `oidc_issuer_url` because Keycloak's
+    # `hostname-backchannel-dynamic=true` makes endpoint URLs dynamic but
+    # always emits the front-channel hostname in the discovery doc's
+    # `issuer` field (OIDC §4.3 requires `issuer` to be canonical). In
+    # compose dev the BFF fetches from `http://keycloak:8080/...` but the
+    # expected `issuer` is `http://localhost:8080/...`. When unset, falls
+    # back to `oidc_issuer_url` (front-channel = back-channel deployments).
+    oidc_discovery_url: str = ""
     # Browser-facing OIDC base URL — used to derive the `/auth/login` 302
     # target by combining this scheme+authority with the *path* from
     # `discovery.authorization_endpoint`. Defaults to `${OIDC_ISSUER_URL}`
@@ -152,6 +161,31 @@ class AppSettings(BaseSettings):
         if not urlparse(val).netloc:
             msg = (
                 "OIDC_ISSUER_URL must include a host "
+                f"(got: '{val[:40]}'; expected e.g. http://keycloak:8080/realms/<realm>)"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_oidc_discovery_url(self) -> AppSettings:
+        # Optional: when supplied, must be a well-formed http(s) URL with a
+        # host. Mirrors `_validate_oidc_issuer_url` — a path-only value would
+        # cause `fetch_discovery` to fail at startup with an opaque
+        # `transport_error:UnsupportedProtocol`.
+        val = self.oidc_discovery_url.strip()
+        if not val:
+            return self
+        if not val.startswith(("http://", "https://")):
+            msg = (
+                "OIDC_DISCOVERY_URL must start with 'http://' or 'https://' "
+                f"(got: '{val[:40]}...')"
+            )
+            raise ValueError(msg)
+        from urllib.parse import urlparse
+
+        if not urlparse(val).netloc:
+            msg = (
+                "OIDC_DISCOVERY_URL must include a host "
                 f"(got: '{val[:40]}'; expected e.g. http://keycloak:8080/realms/<realm>)"
             )
             raise ValueError(msg)
@@ -260,6 +294,16 @@ class AppSettings(BaseSettings):
     @property
     def cors_expose_headers_list(self) -> list[str]:
         return self._parse_csv(self.cors_expose_headers)
+
+    @property
+    def effective_oidc_discovery_url(self) -> str:
+        """Back-channel URL to fetch the OIDC discovery doc from.
+
+        Falls back to `oidc_issuer_url` for deployments where front-channel
+        and back-channel hosts coincide (production / single-host dev).
+        """
+        val = self.oidc_discovery_url.strip()
+        return val if val else self.oidc_issuer_url
 
     @property
     def effective_oidc_public_base_url(self) -> str:

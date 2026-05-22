@@ -34,7 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # first /auth/login.
     try:
         app.state.oidc_discovery = await fetch_discovery(
-            settings.oidc_issuer_url,
+            settings.effective_oidc_discovery_url,
+            expected_issuer=settings.oidc_issuer_url,
             connect_timeout=settings.oidc_discovery_connect_timeout,
             read_timeout=settings.oidc_discovery_read_timeout,
         )

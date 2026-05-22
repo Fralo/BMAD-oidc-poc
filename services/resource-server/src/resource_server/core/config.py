@@ -81,6 +81,15 @@ class AppSettings(BaseSettings):
     #   - ENABLE_TEST_RESET / TEST_RESET_TOKEN gate the test-reset endpoint.
     rs_database_url: str = ""
     oidc_issuer_url: str = ""
+    # Back-channel URL used to GET `.well-known/openid-configuration`.
+    # Decoupled from `oidc_issuer_url` because Keycloak's
+    # `hostname-backchannel-dynamic=true` makes endpoint URLs dynamic but
+    # always emits the front-channel hostname in the discovery doc's
+    # `issuer` field (OIDC §4.3 requires `issuer` to be canonical). In
+    # compose dev the RS fetches from `http://keycloak:8080/...` while the
+    # expected `issuer` is `http://localhost:8080/...`. When unset, falls
+    # back to `oidc_issuer_url` (front-channel = back-channel deployments).
+    oidc_discovery_url: str = ""
     oidc_audience: str = ""
     enable_test_reset: bool = False
     test_reset_token: str = "change-me"
@@ -155,6 +164,16 @@ class AppSettings(BaseSettings):
             )
             raise ValueError(msg)
         return self
+
+    @property
+    def effective_oidc_discovery_url(self) -> str:
+        """Back-channel URL to fetch the OIDC discovery doc from.
+
+        Falls back to `oidc_issuer_url` for deployments where front-channel
+        and back-channel hosts coincide (production / single-host dev).
+        """
+        val = self.oidc_discovery_url.strip()
+        return val if val else self.oidc_issuer_url
 
     @staticmethod
     def _parse_csv(value: str) -> list[str]:

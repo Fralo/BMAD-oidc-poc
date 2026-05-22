@@ -66,18 +66,25 @@ services:
       # internally (set via `BFF_INTERNAL_URL` on the `spa` service below).
       BFF_BASE_URL: http://localhost:${SPA_HOST_PORT:-4000}
       RS_BASE_URL: http://resource-server:8000
-      # Story 7.2: OIDC_ISSUER_URL is the discovery fetch target and the
-      # source of every back-channel URL (token / revoke / end_session /
-      # JWKS) — sourced from `app.state.oidc_discovery` after the lifespan
-      # startup hook reads the .well-known document. With Keycloak's
-      # `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` (compose/infra.yml), the
-      # discovery doc returned to back-channel callers uses back-channel
-      # hostnames, so no rebasing is needed for back-channel URLs.
-      # `OIDC_PUBLIC_BASE_URL` is the browser-facing base (`localhost`
-      # is the only host the browser can resolve); the BFF combines it
-      # with the *path* from `discovery.authorization_endpoint` to build
-      # the `/auth/login` 302 target.
-      OIDC_ISSUER_URL: http://keycloak:8080/realms/bmad-books
+      # Story 7.2 (corrected): with `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`
+      # (compose/infra.yml) Keycloak emits dynamic back-channel endpoint
+      # URLs in discovery responses, but the discovery doc's `issuer`
+      # field stays pinned to `KC_HOSTNAME` (front-channel) — required by
+      # OIDC §4.3 (the issuer URL must be canonical, not per-request).
+      # So we set:
+      #   - OIDC_ISSUER_URL    = front-channel host. The expected value
+      #     of the discovery doc's `issuer` field AND the `iss` claim on
+      #     access tokens. Token validation (PyJWT) compares against this.
+      #   - OIDC_DISCOVERY_URL = back-channel host. The URL the BFF GETs
+      #     `.well-known/openid-configuration` from. Reachable on the
+      #     compose network; `localhost` is not.
+      # When unset, OIDC_DISCOVERY_URL falls back to OIDC_ISSUER_URL — the
+      # production case where front-channel = back-channel.
+      # `OIDC_PUBLIC_BASE_URL` is the browser-facing base; the BFF combines
+      # it with the *path* from `discovery.authorization_endpoint` to
+      # build the `/auth/login` 302 target.
+      OIDC_ISSUER_URL: http://localhost:8080/realms/bmad-books
+      OIDC_DISCOVERY_URL: http://keycloak:8080/realms/bmad-books
       OIDC_PUBLIC_BASE_URL: http://localhost:8080/realms/bmad-books
       OIDC_AUDIENCE: bmad-books-resource-server
       OIDC_CLIENT_ID: bmad-books-bff
@@ -133,21 +140,25 @@ services:
     env_file:
       - ../.env
     environment:
-      # Story 7.2: RS's OIDC_ISSUER_URL is now the back-channel URL (matches
-      # the BFF's value). With Keycloak's `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`
-      # (compose/infra.yml), back-channel discovery responses use back-channel
-      # hostnames AND back-channel-minted tokens embed `iss=back-channel` —
-      # so the discovery doc's `issuer` field matches the token's `iss` claim
-      # for the JWT validation path. JWKS likewise comes from
-      # `discovery.jwks_uri` (back-channel URL the RS can resolve over the
-      # compose network). AUTH_TYPE is left at the archetype default (none);
-      # the `e2e` overlay flips it to `oidc_bearer` for scope-enforcement
-      # coverage. D142 remains the deferred follow-up for flipping
-      # AUTH_TYPE=oidc_bearer on the default stack.
+      # Story 7.2 (corrected): with `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`
+      # Keycloak emits dynamic back-channel endpoint URLs in discovery but
+      # keeps the `issuer` field pinned to KC_HOSTNAME (front-channel —
+      # OIDC §4.3 requires `issuer` to be canonical). The `iss` claim on
+      # access tokens follows the same rule, so the RS's JWT-validation
+      # path expects `iss == OIDC_ISSUER_URL == front-channel host`.
+      # OIDC_DISCOVERY_URL is the back-channel host the RS fetches
+      # `.well-known/openid-configuration` from (`localhost` is not
+      # reachable from inside the RS container). JWKS comes from
+      # `discovery.jwks_uri` (back-channel URL on the compose network).
+      # AUTH_TYPE is left at the archetype default (none); the `e2e` overlay
+      # flips it to `oidc_bearer` for scope-enforcement coverage. D142
+      # remains the deferred follow-up for flipping AUTH_TYPE=oidc_bearer
+      # on the default stack.
       APP_NAME: resource-server
       DEBUG: "false"
       RS_DATABASE_URL: sqlite+aiosqlite:////data/rs.db
-      OIDC_ISSUER_URL: http://keycloak:8080/realms/bmad-books
+      OIDC_ISSUER_URL: http://localhost:8080/realms/bmad-books
+      OIDC_DISCOVERY_URL: http://keycloak:8080/realms/bmad-books
       OIDC_AUDIENCE: bmad-books-resource-server
     volumes:
       - rs_data:/data

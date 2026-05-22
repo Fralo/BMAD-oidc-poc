@@ -18,7 +18,10 @@ services:
       # Public-facing hostname (browser-side OIDC redirects + admin console).
       # Internal back-channel calls from the BFF/RS still resolve `keycloak:8080`
       # via Docker DNS; the iss-vs-redirect reconciliation lands in Stories 1.4/1.5.
-      KC_HOSTNAME: localhost
+      # Must be a full URL (scheme + host + port) because
+      # KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true requires it — Keycloak 26 refuses
+      # to start with a bare hostname when backchannel-dynamic is enabled.
+      KC_HOSTNAME: http://localhost:8080
       KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       # Story 7.2: Keycloak emits back-channel URLs in discovery responses

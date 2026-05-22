@@ -56,22 +56,31 @@ class DiscoveryFetchError(Exception):
 
 
 async def fetch_discovery(
-    issuer_url: str,
+    discovery_url: str,
     *,
     connect_timeout: float,
     read_timeout: float,
+    expected_issuer: str | None = None,
     client_factory: Callable[..., httpx.AsyncClient] | None = None,
 ) -> OidcDiscovery:
-    """GET `${issuer_url}/.well-known/openid-configuration` and parse it.
+    """GET `${discovery_url}/.well-known/openid-configuration` and parse it.
+
+    `discovery_url` is where we fetch from; `expected_issuer` is what the
+    `issuer` field of the doc must equal. When `expected_issuer` is omitted
+    they coincide (front-channel = back-channel deployments). They diverge
+    when Keycloak's `hostname-backchannel-dynamic=true` makes back-channel
+    endpoints dynamic but keeps `issuer` pinned to the front-channel host:
+    the BFF then fetches at `keycloak:8080` while expecting `issuer` to be
+    `localhost:8080`.
 
     Architecture §C6 timeouts; `follow_redirects=True` so a Keycloak ingress
     with trailing-slash normalization (302 on the well-known path) works.
     Trust in the redirect target is anchored by the `issuer_mismatch` check
     in `_validated`: a redirected discovery doc must still sign its own
-    `issuer` field as the canonical issuer URL, or startup aborts.
+    `issuer` field as the configured canonical issuer URL, or startup aborts.
     """
-    canonical_issuer = issuer_url.rstrip("/")
-    url = canonical_issuer + "/.well-known/openid-configuration"
+    canonical_issuer = (expected_issuer or discovery_url).rstrip("/")
+    url = discovery_url.rstrip("/") + "/.well-known/openid-configuration"
     timeout = httpx.Timeout(
         connect=connect_timeout,
         read=read_timeout,

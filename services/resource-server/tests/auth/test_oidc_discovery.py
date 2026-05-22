@@ -200,3 +200,42 @@ def test_discovery_fetch_error_exposes_classifier() -> None:
     exc = DiscoveryFetchError("http_503")
     assert exc.classifier == "http_503"
     assert str(exc) == "http_503"
+
+
+async def test_fetch_discovery_decouples_fetch_url_from_expected_issuer() -> None:
+    # Compose-dev case: fetch via back-channel host (`keycloak:8080`) while
+    # the discovery doc's `issuer` is the front-channel host
+    # (`localhost:8080`). Keycloak's `hostname-backchannel-dynamic=true` only
+    # dynamicizes endpoint URLs; `issuer` stays pinned to KC_HOSTNAME.
+    fetch_url = "http://keycloak:8080/realms/x"
+    expected_issuer = "http://localhost:8080/realms/x"
+    payload = {**_good_payload(), "issuer": expected_issuer}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == f"{fetch_url}/.well-known/openid-configuration"
+        return httpx.Response(200, json=payload)
+
+    discovery = await fetch_discovery(
+        fetch_url,
+        expected_issuer=expected_issuer,
+        connect_timeout=5.0,
+        read_timeout=10.0,
+        client_factory=_factory_for(httpx.MockTransport(_handler)),
+    )
+    assert discovery.issuer == expected_issuer
+
+
+async def test_fetch_discovery_raises_on_issuer_mismatch() -> None:
+    payload = {**_good_payload(), "issuer": "http://attacker.example/realms/x"}
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    with pytest.raises(DiscoveryFetchError) as excinfo:
+        await fetch_discovery(
+            _ISSUER,
+            connect_timeout=5.0,
+            read_timeout=10.0,
+            client_factory=_factory_for(httpx.MockTransport(_handler)),
+        )
+    assert excinfo.value.classifier == "issuer_mismatch"
