@@ -6,11 +6,13 @@ import { testuser } from '../fixtures/users';
 /**
  * E2E spec for journey J1 (first-time login) — Story 1.13.
  *
- * Drives the real Keycloak OAuth round-trip from the SPA's `LoginView`
- * (Story 1.10) through the BFF's cookie-session OIDC plugin (Story 1.5),
- * back to the SPA's `/books` placeholder. Every test starts with the
- * BFF's auth tables truncated via the test-reset endpoint (Story 1.12)
- * so the OAuth code/state pair issued by Keycloak has nowhere to collide.
+ * Story 7.4 removed the in-app `LoginView`: anonymous traffic now lands
+ * directly on Keycloak via the auth guard's redirect to `/auth/login`.
+ * The BFF's cookie-session OIDC plugin (Story 1.5) handles the OAuth
+ * round-trip and lands the user back on `/books`. Every test starts with
+ * the BFF's auth tables truncated via the test-reset endpoint
+ * (Story 1.12) so the OAuth code/state pair issued by Keycloak has
+ * nowhere to collide.
  */
 /**
  * Required env vars (fail-fast on missing). The compose `e2e` profile
@@ -34,29 +36,21 @@ test.describe('J1: first-time login', () => {
     await resetState(request, { resetToken: requireEnv('TEST_RESET_TOKEN') });
   });
 
-  test('unauthenticated user navigating to / is redirected to /login', async ({ page }) => {
+  test('unauthenticated user navigating to / is redirected to Keycloak', async ({ page }) => {
+    // Story 7.4: the auth guard (`CanMatch`) sees no session, mutates the
+    // SSR RESPONSE_INIT to 302 → /auth/login?return_to=%2F (or %2Fbooks
+    // for any protected route). The BFF /auth/login endpoint then
+    // immediately redirects to Keycloak's OIDC auth endpoint. We assert
+    // we end up on Keycloak rather than poking the intermediate hop.
     await page.goto('/');
-
-    // The route table maps `/` → `redirectTo: 'books'` (Story 1.10 /
-    // app.routes.ts:7), then `authGuard` builds /login?return_to=<state.url>
-    // (auth-guard.ts:20) on the 401 from /api/me. state.url is /books at
-    // that point, so the encoded query string is ?return_to=%2Fbooks.
-    // Accept both `/login` and `/login?return_to=...` to keep this AC
-    // resilient to future redirect-chain refactors.
-    await expect(page).toHaveURL(/\/login(\?|$)/);
-
-    await expect(page.getByRole('button', { name: 'Log in' })).toBeVisible();
-    // Identity block must NOT be present in TopChrome when unauthenticated.
+    await page.waitForURL(/\/realms\/bmad-books\/protocol\/openid-connect\/auth/);
+    // No identity block on Keycloak — the SPA chrome isn't rendered here.
     await expect(page.getByText(/Signed in as /)).toHaveCount(0);
   });
 
-  test('clicking Log in completes the OAuth round-trip and returns the user to /books', async ({
-    page,
-  }) => {
-    await page.goto('/login');
-
-    // inline form fill — exercises the assertions logInAs hides
-    await page.getByRole('button', { name: 'Log in' }).click();
+  test('completing the OAuth round-trip returns the user to /books', async ({ page }) => {
+    await page.goto('/books');
+    // Auth guard redirects to /auth/login → BFF redirects to Keycloak.
     await page.waitForURL(/\/realms\/bmad-books\/protocol\/openid-connect\/auth/);
     await page.locator('input[name="username"]').fill(testuser.username);
     await page.locator('input[name="password"]').fill(testuser.password);
@@ -68,20 +62,14 @@ test.describe('J1: first-time login', () => {
     await expect(page.getByRole('heading', { name: 'Books' })).toBeVisible();
   });
 
-  test('protected route while unauthenticated redirects with return_to and returns user after login', async ({
+  test('deep-link to a protected route while unauthenticated still returns user to /books after login', async ({
     page,
   }) => {
-    await page.goto('/books');
-    // `authGuard` builds /login?return_to=${encodeURIComponent('/books')} —
-    // encoded path is %2Fbooks (auth-guard.ts:20).
-    await expect(page).toHaveURL(/\/login\?return_to=%2Fbooks/);
-
+    // Story 7.4: the auth guard builds `return_to` from the requested
+    // segments, so a deep-link to /books winds through Keycloak and back
+    // to /books. The BFF's `/auth/callback` reads return_to from the
+    // signed auth_state row (Story 1.5) and Location-redirects there.
     await logInAs(page, testuser);
-
-    // `redirectIfAuthedGuard` (Story 1.10) bounces the now-authed visitor
-    // from /login to /books — same destination the user originally asked
-    // for, so the return_to is functionally honored even though the SPA
-    // does not consume it through the LoginView path.
     await expect(page).toHaveURL(/\/books$/);
   });
 });

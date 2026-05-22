@@ -19,7 +19,7 @@ import { ReadingSpeedOut } from './reading-speed.types';
  * 401 handling is delegated to the global `withCredentialsInterceptor`
  * (Story 1.9) — this service's catch blocks for 401 just reset
  * `loading` / `saving` and return silently while the interceptor navigates
- * to `/login?return_to=...`.
+ * to `/auth/login?return_to=...`.
  */
 const READING_SPEED_URL = '/v1/reading-speed';
 const JUST_SAVED_PULSE_MS = 1000;

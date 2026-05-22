@@ -10,11 +10,26 @@ import { withCredentialsInterceptor } from './with-credentials-interceptor';
 describe('withCredentialsInterceptor', () => {
   let http: HttpClient;
   let httpTesting: HttpTestingController;
-  let routerNavigate: ReturnType<typeof vi.fn>;
   let authClear: ReturnType<typeof vi.fn>;
+  let originalLocationDescriptor: PropertyDescriptor | undefined;
+  let assignedHref: string | null;
 
   beforeEach(() => {
-    routerNavigate = vi.fn();
+    assignedHref = null;
+    originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: {
+        set href(value: string) {
+          assignedHref = value;
+        },
+        get href(): string {
+          return assignedHref ?? '';
+        },
+      },
+    });
+
     authClear = vi.fn();
 
     TestBed.configureTestingModule({
@@ -23,7 +38,7 @@ describe('withCredentialsInterceptor', () => {
         provideHttpClientTesting(),
         {
           provide: Router,
-          useValue: { url: '/books', navigateByUrl: routerNavigate },
+          useValue: { url: '/books' },
         },
         {
           provide: AuthService,
@@ -37,6 +52,9 @@ describe('withCredentialsInterceptor', () => {
 
   afterEach(() => {
     httpTesting.verify();
+    if (originalLocationDescriptor) {
+      Object.defineProperty(window, 'location', originalLocationDescriptor);
+    }
   });
 
   it('sets withCredentials=true on every request', () => {
@@ -46,12 +64,12 @@ describe('withCredentialsInterceptor', () => {
     req.flush([]);
   });
 
-  it('a non-/api/me 401 clears auth state and navigates to /login with return_to', () => {
+  it('a non-/api/me 401 clears auth state and assigns window.location.href to /auth/login with return_to', () => {
     http.get('/v1/books').subscribe({ error: () => undefined });
     const req = httpTesting.expectOne('/v1/books');
     req.flush(null, { status: 401, statusText: 'Unauthorized' });
     expect(authClear).toHaveBeenCalledTimes(1);
-    expect(routerNavigate).toHaveBeenCalledWith('/login?return_to=%2Fbooks');
+    expect(assignedHref).toBe('/auth/login?return_to=%2Fbooks');
   });
 
   it('a /api/me 401 does NOT trigger clear() or navigate()', () => {
@@ -59,7 +77,15 @@ describe('withCredentialsInterceptor', () => {
     const req = httpTesting.expectOne('/api/me');
     req.flush(null, { status: 401, statusText: 'Unauthorized' });
     expect(authClear).not.toHaveBeenCalled();
-    expect(routerNavigate).not.toHaveBeenCalled();
+    expect(assignedHref).toBeNull();
+  });
+
+  it('a /auth/logout 401 does NOT trigger clear() or navigate() (top-chrome owns the redirect)', () => {
+    http.post('/auth/logout', null).subscribe({ error: () => undefined });
+    const req = httpTesting.expectOne('/auth/logout');
+    req.flush(null, { status: 401, statusText: 'Unauthorized' });
+    expect(authClear).not.toHaveBeenCalled();
+    expect(assignedHref).toBeNull();
   });
 
   it('a 5xx is propagated unchanged (no navigate, no clear)', () => {
@@ -68,15 +94,27 @@ describe('withCredentialsInterceptor', () => {
     const req = httpTesting.expectOne('/v1/books');
     req.flush(null, { status: 503, statusText: 'Service Unavailable' });
     expect(authClear).not.toHaveBeenCalled();
-    expect(routerNavigate).not.toHaveBeenCalled();
+    expect(assignedHref).toBeNull();
     expect(observed).not.toBeNull();
   });
 
   it('on the server platform: 401 clears auth state but DOES NOT navigate', () => {
     httpTesting.verify();
     TestBed.resetTestingModule();
-    const serverNavigate = vi.fn();
     const serverClear = vi.fn();
+    let serverAssignedHref: string | null = null;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: {
+        set href(value: string) {
+          serverAssignedHref = value;
+        },
+        get href(): string {
+          return serverAssignedHref ?? '';
+        },
+      },
+    });
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withFetch(), withInterceptors([withCredentialsInterceptor])),
@@ -84,7 +122,7 @@ describe('withCredentialsInterceptor', () => {
         { provide: PLATFORM_ID, useValue: 'server' },
         {
           provide: Router,
-          useValue: { url: '/books', navigateByUrl: serverNavigate },
+          useValue: { url: '/books' },
         },
         {
           provide: AuthService,
@@ -99,7 +137,7 @@ describe('withCredentialsInterceptor', () => {
     const req = ctrlServer.expectOne('/v1/books');
     req.flush(null, { status: 401, statusText: 'Unauthorized' });
     expect(serverClear).toHaveBeenCalledTimes(1);
-    expect(serverNavigate).not.toHaveBeenCalled();
+    expect(serverAssignedHref).toBeNull();
     ctrlServer.verify();
   });
 });

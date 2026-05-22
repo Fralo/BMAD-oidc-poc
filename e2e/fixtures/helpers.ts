@@ -11,14 +11,16 @@ import { SeededUser } from './users';
 /**
  * Drives the SPA + Keycloak through the J1 login round-trip.
  *
- * Precondition: the BFF and Keycloak are reachable at `baseURL` and the
- * SPA's `LoginView` (Story 1.10) and `TopChrome` (Story 1.10) are
- * rendered. The user must already be seeded in the realm
- * (see `keycloak/realm-bmad-books.json`).
+ * Story 7.4 removed the in-app `/login` view: navigating to any protected
+ * route while anonymous now triggers the auth guard to redirect straight
+ * to the BFF's `/auth/login` (Keycloak). This helper hits `/books` and
+ * follows the redirect chain into the Keycloak login form.
+ *
+ * Precondition: the BFF and Keycloak are reachable at `baseURL`. The user
+ * must already be seeded in the realm (see `keycloak/realm-bmad-books.json`).
  */
 export async function logInAs(page: Page, user: SeededUser): Promise<void> {
-  await page.goto('/login');
-  await page.getByRole('button', { name: 'Log in' }).click();
+  await page.goto('/books');
   await page.waitForURL(/\/realms\/bmad-books\/protocol\/openid-connect\/auth/);
   await page.locator('input[name="username"]').fill(user.username);
   await page.locator('input[name="password"]').fill(user.password);
@@ -88,11 +90,11 @@ export async function resetState(
 
 /**
  * Drives the SPA-side logout flow from any page where the authenticated
- * TopChrome is rendered (e.g., /books). Clicks the `Log out` button,
- * waits for the SPA to land on `/login`. The BFF's /auth/logout call
- * happens synchronously inside TopChrome.logout() (top-chrome.ts:49);
- * waiting for the URL transition is sufficient to know the
- * `bff_session` cookie has been cleared (Story 1.7).
+ * TopChrome is rendered (e.g., /books). Clicks the `Log out` button, then
+ * waits for the identity block to disappear. Post-logout the SPA does a
+ * full-page navigation to `/`, where the auth guard either bounces back
+ * to Keycloak (if Keycloak SSO cleared) or silently re-authenticates and
+ * lands on `/books` (Story 7.4 accepts either outcome).
  *
  * Counterpart to `logInAs`. Used by the J2 spec's cross-user isolation
  * case (Story 2.7) and by any future spec that needs a mid-test user
@@ -100,7 +102,7 @@ export async function resetState(
  */
 export async function logOut(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Log out' }).click();
-  await page.waitForURL(/\/login$/);
+  await expect(page.getByText(/Signed in as /)).toHaveCount(0);
 }
 
 /**

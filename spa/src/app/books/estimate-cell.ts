@@ -113,7 +113,7 @@ export class EstimateCell {
    * embedded `RouterLink` to `/settings` which `<app-error-message>` cannot
    * project). The `session_expired` branch is defensively mapped to the
    * generic copy — at runtime the global `withCredentialsInterceptor`
-   * (Story 1.9) redirects to `/login?return_to=...` before the rejection
+   * (Story 1.9) redirects to `/auth/login?return_to=...` before the rejection
    * reaches this component, so the branch is effectively dead, but typed
    * exhaustiveness requires it.
    *

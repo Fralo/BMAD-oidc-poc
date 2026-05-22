@@ -7,7 +7,7 @@
  *
  * `session_expired` (401) is included as a variant for defense-in-depth:
  * the global `withCredentialsInterceptor` (Story 1.9) navigates the user
- * to `/login?return_to=...` before any feature service observes the error,
+ * to `/auth/login?return_to=...` before any feature service observes the error,
  * but exposing the kind lets components reason about it when needed.
  *
  * Reference: architecture.md lines 714-731.

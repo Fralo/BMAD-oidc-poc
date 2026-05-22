@@ -27,7 +27,6 @@ async function setupHarness(initialMe: Me | null) {
       provideRouter([
         { path: 'books', children: [] },
         { path: 'settings', children: [] },
-        { path: 'login', children: [] },
       ]),
       provideHttpClientTesting(),
       { provide: AuthService, useValue: authStub },
@@ -40,9 +39,35 @@ async function setupHarness(initialMe: Me | null) {
 }
 
 describe('TopChrome', () => {
+  let originalLocationDescriptor: PropertyDescriptor | undefined;
+  let assignedHref: string | null;
+
+  beforeEach(() => {
+    assignedHref = null;
+    originalLocationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: {
+        set href(value: string) {
+          assignedHref = value;
+        },
+        get href(): string {
+          return assignedHref ?? '';
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (originalLocationDescriptor) {
+      Object.defineProperty(window, 'location', originalLocationDescriptor);
+    }
+  });
+
   it('unauthenticated variant renders product name only — no identity, no link', async () => {
     const { router } = await setupHarness(null);
-    await router.navigateByUrl('/login');
+    await router.navigateByUrl('/');
 
     const fixture = TestBed.createComponent(TopChrome);
     fixture.detectChanges();
@@ -94,7 +119,7 @@ describe('TopChrome', () => {
     expect(link?.getAttribute('href')).toBe('/books');
   });
 
-  it('clicking Log out POSTs /auth/logout, clears auth state, and navigates to /login', async () => {
+  it('clicking Log out POSTs /auth/logout, clears auth state, and navigates to /', async () => {
     const { router, http, authStub } = await setupHarness({
       sub: 's1',
       preferred_username: 'alice',
@@ -105,7 +130,6 @@ describe('TopChrome', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    const navSpy = vi.spyOn(router, 'navigateByUrl');
     const component = fixture.componentInstance as TopChrome;
     const logoutSpy = vi.spyOn(component, 'logout');
 
@@ -124,7 +148,7 @@ describe('TopChrome', () => {
     await clickPromise;
 
     expect(authStub.clear).toHaveBeenCalledTimes(1);
-    expect(navSpy).toHaveBeenCalledWith('/login');
+    expect(assignedHref).toBe('/');
   });
 
   it('logout still clears state + navigates even when /auth/logout fails (degrade-open per J5)', async () => {
@@ -138,7 +162,6 @@ describe('TopChrome', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    const navSpy = vi.spyOn(router, 'navigateByUrl');
     const component = fixture.componentInstance as TopChrome;
     const logoutSpy = vi.spyOn(component, 'logout');
 
@@ -156,6 +179,6 @@ describe('TopChrome', () => {
     await clickPromise;
 
     expect(authStub.clear).toHaveBeenCalledTimes(1);
-    expect(navSpy).toHaveBeenCalledWith('/login');
+    expect(assignedHref).toBe('/');
   });
 });

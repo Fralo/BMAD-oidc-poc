@@ -6,12 +6,17 @@ import { testuser } from '../fixtures/users';
 /**
  * E2E spec for journey J5 (logout and re-protection) — Story 1.13.
  *
- * Each test enters with a fresh authenticated session via `logInAs`. AC2.1
- * exercises the SPA-side logout flow (cookie clear + /login redirect +
- * protected-route re-protection). AC2.2 captures the refresh_token via
- * the test-only `GET /v1/test/session-debug` endpoint (Story 1.13 BFF
- * extension), then asserts Keycloak rejects the refresh-grant request
- * with `error=invalid_grant` — wire-level proof that BFF /auth/logout
+ * Each test enters with a fresh authenticated session via `logInAs`.
+ * AC2.1 exercises the SPA-side logout flow: the SPA clears local state,
+ * does a full-page nav to `/` (Story 7.4), and the auth guard then
+ * either bounces the user back to Keycloak (SSO cleared) or silently
+ * re-authenticates. The cookie clear + protected-route re-protection
+ * assertion is the durable contract.
+ *
+ * AC2.2 captures the refresh_token via the test-only
+ * `GET /v1/test/session-debug` endpoint (Story 1.13 BFF extension),
+ * then asserts Keycloak rejects the refresh-grant request with
+ * `error=invalid_grant` — wire-level proof that BFF /auth/logout
  * actually revoked at the AS (Story 1.7).
  */
 
@@ -40,17 +45,15 @@ test.describe('J5: logout and re-protection', () => {
     await logInAs(page, testuser);
   });
 
-  test('clicking Log out terminates session and re-protects routes', async ({ page }) => {
+  test('clicking Log out terminates the local session and re-protects routes', async ({ page }) => {
     await page.getByRole('button', { name: 'Log out' }).click();
 
-    // TopChrome.logout() navigates via router.navigateByUrl('/login')
-    // (top-chrome.ts:56). No return_to is appended on this path.
-    await page.waitForURL(/\/login$/);
-
-    // Product name remains; identity affordances disappear.
-    // `{ exact: true }` disambiguates the top-chrome brand span from the
-    // LoginView heading 'Sign in to Reading Time Estimator' (added by Story 1.10).
-    await expect(page.getByText('Reading Time Estimator', { exact: true })).toBeVisible();
+    // Story 7.4: TopChrome.logout() POSTs /auth/logout then sets
+    // window.location.href = '/'. The auth guard re-evaluates and either
+    // redirects to Keycloak (SSO cleared) or silently re-authenticates.
+    // The durable assertion: the SPA chrome no longer renders an identity
+    // block (we may end up on Keycloak's login form, where the SPA chrome
+    // isn't rendered at all).
     await expect(page.getByText(/Signed in as /)).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Log out' })).toHaveCount(0);
 
@@ -59,10 +62,12 @@ test.describe('J5: logout and re-protection', () => {
     const cookies = await page.context().cookies();
     expect(cookies.find((c) => c.name === 'bff_session')).toBeUndefined();
 
-    // Re-protection: navigating to /books bounces back to /login with the
-    // standard return_to construction.
+    // Re-protection: navigating to /books bounces back to Keycloak with
+    // the auth guard's return_to. We don't assert the intermediate
+    // /auth/login hop because the BFF immediately follows it with a 302
+    // to Keycloak.
     await page.goto('/books');
-    await expect(page).toHaveURL(/\/login\?return_to=%2Fbooks/);
+    await page.waitForURL(/\/realms\/bmad-books\/protocol\/openid-connect\/auth/);
   });
 
   test('refresh token is revoked at Keycloak after logout', async ({ page, request }) => {
@@ -86,10 +91,12 @@ test.describe('J5: logout and re-protection', () => {
     expect(captured.refresh_token).toBeTruthy();
     const capturedRefreshToken = captured.refresh_token;
 
-    // 2. Click Log out and wait for the SPA to land on /login (same shape
-    //    as the first J5 test).
+    // 2. Click Log out and wait for the SPA's identity block to clear.
+    //    Story 7.4: post-logout lands either on Keycloak (SSO cleared) or
+    //    /books (silent re-auth); the durable signal is "Signed in as"
+    //    disappearing from the chrome.
     await page.getByRole('button', { name: 'Log out' }).click();
-    await page.waitForURL(/\/login$/);
+    await expect(page.getByText(/Signed in as /)).toHaveCount(0);
 
     // 3. Attempt to use the captured refresh_token directly against
     //    Keycloak's /token endpoint. Use KEYCLOAK_INTERNAL_URL (compose-

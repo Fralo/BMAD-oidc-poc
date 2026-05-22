@@ -51,10 +51,10 @@ test.describe('J4: adjust reading speed', () => {
     // Override the default testuser login from beforeEach. Order matters:
     //   1. resetState — truncates BFF sessions/auth_states + RS reading_speeds.
     //   2. context.clearCookies() — drops the testuser bff_session cookie that
-    //      the beforeEach just set. Without this, the next page.goto('/login')
+    //      the beforeEach just set. Without this, the next logInAs call
     //      runs with a stale cookie that points to a now-deleted DB row;
     //      authGuard's /api/me call gets 401, the interceptor clears the
-    //      cookie and redirects to /login — works through the chain, but
+    //      cookie and redirects to /auth/login — works through the chain, but
     //      flakes under slow CI conditions. Clearing up front is deterministic.
     //   3. logInAs(freshuser) — fresh OAuth round-trip as freshuser.
     await resetState(request, { resetToken: requireEnv('TEST_RESET_TOKEN') });

@@ -1,8 +1,0 @@
-<section class="login-view">
-  <h1 class="login-headline">Sign in to Reading Time Estimator</h1>
-  <p class="login-copy">You'll be redirected to authenticate, then returned here.</p>
-  @if (showAuthError()) {
-    <app-error-message [message]="authErrorCopy" />
-  }
-  <button type="button" class="login-button" (click)="onLogin()">Log in</button>
-</section>

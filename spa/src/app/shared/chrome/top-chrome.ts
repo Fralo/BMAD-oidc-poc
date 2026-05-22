@@ -53,6 +53,8 @@ export class TopChrome {
       // J5: degrade open — local session is cleared regardless of remote outcome.
     }
     this.authService.clear();
-    await this.router.navigateByUrl('/login');
+    // Full-page navigation to '/' lets the auth guard re-evaluate and emit
+    // a fresh redirect to /auth/login.
+    window.location.href = '/';
   }
 }
