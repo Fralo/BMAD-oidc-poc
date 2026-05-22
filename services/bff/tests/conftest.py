@@ -20,6 +20,11 @@ os.environ.setdefault("BFF_CLIENT_SECRET", "pytest-placeholder")
 # BFF→Keycloak refresh-token call (ResourceServerClient._refresh_access_token)
 # cannot silently emit a relative URL on a misconfigured deployment.
 os.environ.setdefault("OIDC_ISSUER_URL", "http://keycloak:8080/realms/test")
+# Story 7.2: OIDC_PUBLIC_BASE_URL is optional (effective_oidc_public_base_url
+# falls back to OIDC_ISSUER_URL), but explicit placeholder matches Task 6
+# subitem 1 and points at the synthetic IdP's DEFAULT_ISSUER so per-test
+# monkeypatching is the exception rather than a silent fallback.
+os.environ.setdefault("OIDC_PUBLIC_BASE_URL", "http://idp.test/realms/test")
 
 # Story 7.2: replace the lifespan's outbound discovery fetch with an
 # in-process stub so AsyncClient(transport=ASGITransport(app=app)) startup
@@ -27,8 +32,8 @@ os.environ.setdefault("OIDC_ISSUER_URL", "http://keycloak:8080/realms/test")
 # `bff.auth.oidc_discovery` module BEFORE `bff.main` is first imported, so
 # bff.main's `from ... import fetch_discovery` captures the stub. This also
 # survives `importlib.reload(bff.main)` (used by tests/api/test_cors.py).
-# Tests that need the real function (tests/auth/test_oidc_discovery.py)
-# pull it via the preserved `_real_fetch_discovery` attribute below.
+# Tests that need the real function import `_real_fetch_discovery` directly
+# from the source module — it's defined there as a stable alias.
 from bff.auth import oidc_discovery as _oidc_discovery_module
 from bff.auth.oidc_discovery import OidcDiscovery
 
@@ -46,7 +51,6 @@ async def _stub_fetch_discovery(*_args: object, **_kwargs: object) -> OidcDiscov
     return _TEST_DISCOVERY
 
 
-_oidc_discovery_module._real_fetch_discovery = _oidc_discovery_module.fetch_discovery  # type: ignore[attr-defined]
 _oidc_discovery_module.fetch_discovery = _stub_fetch_discovery  # type: ignore[assignment]
 
 from bff.core.config import settings  # noqa: E402  # patch must precede bff.main import

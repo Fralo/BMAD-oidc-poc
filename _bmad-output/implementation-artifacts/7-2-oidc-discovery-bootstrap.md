@@ -1,6 +1,6 @@
 # Story 7.2: OIDC discovery bootstrap (no more hardcoded endpoint URLs)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -263,3 +263,35 @@ claude-opus-4-7
 |---|---|---|
 | 2026-05-21 | Story context engine analysis completed — comprehensive developer guide created | claude-opus-4-7 |
 | 2026-05-21 | Implementation complete — 7 commits, BFF 526 + RS 329 tests passing, ruff + ty green. Resolution C committed (KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true). | claude-opus-4-7 |
+| 2026-05-21 | RS `/health` response key renamed `"jwks"` → `"oidc_discovery"` to match BFF (Task 5 sub-2 tail). Public-shape change documented in `docs/security-review.md §14 D25`. | claude-opus-4-7 |
+| 2026-05-22 | Code review patches applied (10 patches resolving Blind / Edge Case / Acceptance Auditor findings — issuer-binding check, discovery URL-shape validation, RS engine-leak fix on `create_all` failure, validator netloc check, `_rebase` query/fragment guard, `_real_fetch_discovery` source-alias, `OIDC_PUBLIC_BASE_URL` placeholder, `OIDC_PUBLIC_BASE_URL` host-only semantics documented, lifespan fail-fast tests added). | claude-opus-4-7 |
+
+### Review Findings
+
+_Code review run 2026-05-22 via `bmad-code-review`. Three reviewer layers: Blind Hunter (diff-only), Edge Case Hunter (diff + read), Acceptance Auditor (diff + spec + context docs). Diff range `377128a..78a3d05` (7 implementation commits)._
+
+**Decision-needed (4)** — resolved 2026-05-22:
+
+- [x] [Review][Decision] **RS conftest stubs `fetch_discovery` instead of mounting respx discovery route** — _Resolved: keep stub._ Dev Agent Record already discloses the rationale (ASGITransport doesn't auto-invoke lifespan). RS lifespan real-fetch coverage will land via the new `test_lifespan.py` (patch #2) which invokes `app.router.lifespan_context()` explicitly.
+- [x] [Review][Decision] **`ResourceServerClient` does not hold `discovery`; callers thread `token_url` per call + unconditional `ValueError` on empty** — _Resolved: keep per-call threading + hard-raise._ Per-request DI is cleaner architecturally; the unconditional raise is fail-fast hygiene against future callers forgetting the kwarg. The pre-7.2 lazy URL construction is intentionally retired.
+- [x] [Review][Decision] **`OIDC_PUBLIC_BASE_URL` semantics — host-only override vs full base URL** — _Resolved: host-only is intentional; document explicitly._ Path component dropping is intentional behavior (compose dev's path coincidence makes the drop invisible). Added as patch #10 below: update field comment + Pattern Amendments + `_rebase` docstring to spell out "scheme+authority only; path is taken from discovery".
+- [x] [Review][Decision] **Discovery fetch follows 3xx redirects (`follow_redirects=True`)** — _Resolved: keep `follow_redirects=True`._ Patch #5 (issuer-binding check) is the mitigation — a redirected discovery doc would have to fake the `issuer` claim, which the check catches. Trailing-slash handling continues to work.
+
+**Patches (10)** — applied 2026-05-22:
+
+- [x] [Review][Patch] **Test imports `_real_fetch_discovery` planted by conftest as a side-effect** — _Fixed: added `_real_fetch_discovery = fetch_discovery` as a stable module-level alias in both `bff.auth.oidc_discovery` and `resource_server.auth.oidc_discovery`. Tests now import a real symbol; conftest plant + `# ty: ignore` removed._
+- [x] [Review][Patch] **Missing lifespan fail-fast tests — Task 6 deliverable absent** — _Fixed: added `services/bff/tests/test_lifespan.py` + `services/resource-server/tests/test_lifespan.py`. Each drives `app.router.lifespan_context(app)` with a monkeypatched raising `fetch_discovery`, asserts `DiscoveryFetchError` propagates, classifier matches, and the `discovery_unreachable: <classifier>` ERROR log is emitted (captured via a locally-attached handler since `configure_logging` bypasses pytest caplog)._
+- [x] [Review][Patch] **BFF conftest missing `OIDC_PUBLIC_BASE_URL` placeholder** — _Fixed: added `os.environ.setdefault("OIDC_PUBLIC_BASE_URL", "http://idp.test/realms/test")` next to the existing `OIDC_ISSUER_URL` placeholder._
+- [x] [Review][Patch] **`_validate_oidc_public_base_url` missing urlparse netloc check** — _Fixed: added netloc check to both `_validate_oidc_public_base_url` (when value supplied) and `_validate_oidc_issuer_url` (always required). Mirrors `_validate_rs_base_url`'s pattern._
+- [x] [Review][Patch] **Discovery doc's `issuer` field not verified against canonical issuer** — _Fixed: `_validated()` now takes a `canonical_issuer` kwarg and raises `DiscoveryFetchError("issuer_mismatch")` if `payload["issuer"].rstrip("/")` doesn't match. Applied to both services. This also closes the residual risk from `follow_redirects=True` (Decision 4)._
+- [x] [Review][Patch] **Discovery URL fields not validated as absolute http(s) URLs** — _Fixed: `_validated()` now `urlparse`'s each URL field (`authorization_endpoint`, `token_endpoint`, `jwks_uri`, `end_session_endpoint`, `revocation_endpoint`) and raises `DiscoveryFetchError(f"invalid_url:{field_name}")` if scheme isn't http(s) or netloc is empty._
+- [x] [Review][Patch] **RS engine leak when `create_all` fails after discovery succeeds** — _Fixed: moved `get_engine(settings)` + `create_all` block inside the `try/finally` that owns `dispose_engine`. A `create_all` failure now disposes the engine before propagating._
+- [x] [Review][Patch] **`discovery.authorization_endpoint` query/fragment not handled by `_rebase`** — _Fixed: `_rebase` now raises `ValueError` if the discovery URL carries a query string or fragment, and explicitly drops them from the output. `build_authorize_url` continues to be the sole producer of the URL's query string._
+- [x] [Review][Patch] **`/health` response key rename (`jwks` → `oidc_discovery`) absent from Change Log + security-review.md** — _Fixed: appended a Change Log entry on 2026-05-21 noting the rename; updated `docs/security-review.md §14 D25` text to call out the response-key change explicitly._
+- [x] [Review][Patch] **Document `OIDC_PUBLIC_BASE_URL` host-only semantics explicitly** — _Fixed: `_validate_oidc_public_base_url` field comment, `_rebase` docstring, and `architecture.md` Pattern Amendments entry all now state that `OIDC_PUBLIC_BASE_URL` contributes scheme+authority only; path comes from `discovery.authorization_endpoint`._
+
+**Deferred (1)** — pre-existing or out-of-scope:
+
+- [x] [Review][Defer] **No discovery-refresh mechanism for long-running stale endpoints** [services/bff/src/bff/services/resource_server_client.py refresh path] — deferred, consistent with architecture §C6 ("zero retries; operator restarts on failure"). Long-running BFF + Keycloak realm reconfig → stale token endpoint → silent logout loops until process restart. Restart-driven recovery is the documented policy.
+
+_Dismissed: 1 (the `effective_oidc_public_base_url` property pattern — pydantic-settings cannot reference another field as default, so the property is the idiomatic resolution; already disclosed in Completion Notes)._

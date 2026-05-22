@@ -111,12 +111,30 @@ def _rebase(url: str, base: str) -> str:
     Story 7.2 / Dev Notes §"The front-channel / back-channel hostname trap":
     discovery returns back-channel URLs; the `/auth/login` 302 must use a
     browser-resolvable host. Swap the host:port using `urllib.parse.urlparse`
-    so the path / query / fragment stay byte-identical (avoids slicing bugs
-    when the discovery URL has a trailing slash or query string).
+    so the path stays byte-identical.
+
+    Note — `base` (OIDC_PUBLIC_BASE_URL) contributes only its scheme+netloc.
+    Any path component on `base` is intentionally discarded; the authorize
+    URL path is always taken from `url` (`discovery.authorization_endpoint`).
+    See `config.py::_validate_oidc_public_base_url` for the rationale.
+
+    Raises `ValueError` if `url` carries a query string or fragment —
+    `build_authorize_url` appends its own query params with `?`, so passing
+    a discovery URL with `?existing=...` would yield a malformed `?a?b`
+    target. No AS we currently target emits these on `authorization_endpoint`;
+    the guard catches future drift loudly rather than silently producing a
+    broken 302.
     """
     u = urlparse(url)
     b = urlparse(base)
-    return urlunparse((b.scheme, b.netloc, u.path, u.params, u.query, u.fragment))
+    if u.query or u.fragment:
+        msg = (
+            f"discovery authorization_endpoint must have no query/fragment "
+            f"(build_authorize_url appends its own params); "
+            f"got query={u.query!r} fragment={u.fragment!r}"
+        )
+        raise ValueError(msg)
+    return urlunparse((b.scheme, b.netloc, u.path, u.params, "", ""))
 
 
 def _auth_state_invalid_response(

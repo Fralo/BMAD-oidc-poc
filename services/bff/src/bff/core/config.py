@@ -142,18 +142,31 @@ class AppSettings(BaseSettings):
                 f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)
+        # Mirror `_validate_rs_base_url`: reject path-only URLs like
+        # `http://` or `http:///foo` where urlparse yields an empty netloc.
+        # Without this guard, `fetch_discovery` issues a GET against
+        # `/.well-known/openid-configuration` (a relative path) and httpx
+        # raises an opaque `UnsupportedProtocol` at startup.
+        from urllib.parse import urlparse
+
+        if not urlparse(val).netloc:
+            msg = (
+                "OIDC_ISSUER_URL must include a host "
+                f"(got: '{val[:40]}'; expected e.g. http://keycloak:8080/realms/<realm>)"
+            )
+            raise ValueError(msg)
         return self
 
     @model_validator(mode="after")
     def _validate_oidc_public_base_url(self) -> AppSettings:
-        # Story 7.2: OIDC_PUBLIC_BASE_URL is the browser-facing base URL used
-        # to construct `/auth/login` 302 targets (consumers combine it with
-        # the *path* from `discovery.authorization_endpoint`). When unset, it
-        # falls back to OIDC_ISSUER_URL via `effective_oidc_public_base_url`
-        # — that's the production case where front-channel = back-channel.
-        # In compose dev it MUST be overridden to a browser-resolvable host.
-        # Fail-fast on http(s) prefix when a value is supplied; the all-empty
-        # case is the fall-through to OIDC_ISSUER_URL (already validated).
+        # Story 7.2: OIDC_PUBLIC_BASE_URL contributes only its scheme+authority
+        # to the `/auth/login` 302 target. The path component is intentionally
+        # discarded — the authorize URL path is always taken from
+        # `discovery.authorization_endpoint`. When unset,
+        # `effective_oidc_public_base_url` falls back to OIDC_ISSUER_URL
+        # (the production case where front-channel = back-channel). In compose
+        # dev it MUST be overridden to a browser-resolvable host. Fail-fast on
+        # http(s) prefix + non-empty netloc when a value is supplied.
         val = self.oidc_public_base_url.strip()
         if val and not val.startswith(("http://", "https://")):
             msg = (
@@ -161,6 +174,15 @@ class AppSettings(BaseSettings):
                 f"(got: '{val[:40]}...')"
             )
             raise ValueError(msg)
+        if val:
+            from urllib.parse import urlparse
+
+            if not urlparse(val).netloc:
+                msg = (
+                    "OIDC_PUBLIC_BASE_URL must include a host "
+                    f"(got: '{val[:40]}'; expected e.g. http://localhost:8080)"
+                )
+                raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

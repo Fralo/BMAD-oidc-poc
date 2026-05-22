@@ -16,7 +16,7 @@ from bff.auth.oidc_discovery import (
     OidcDiscovery,
 )
 from bff.auth.oidc_discovery import (
-    _real_fetch_discovery as fetch_discovery,  # ty: ignore[unresolved-import]
+    _real_fetch_discovery as fetch_discovery,
 )
 
 _ISSUER = "http://kc/realms/x"

@@ -26,8 +26,8 @@ os.environ.setdefault("OIDC_AUDIENCE", "bmad-books-resource-server")
 # `resource_server.auth.oidc_discovery` module BEFORE `resource_server.main`
 # is first imported, so the main module's `from ... import fetch_discovery`
 # captures the stub (and survives an `importlib.reload`). Tests that need
-# the real function (tests/auth/test_oidc_discovery.py) pull it via the
-# preserved `_real_fetch_discovery` attribute below.
+# the real function import `_real_fetch_discovery` directly from the source
+# module — it's defined there as a stable alias.
 from resource_server.auth import oidc_discovery as _oidc_discovery_module
 from resource_server.auth.oidc_discovery import OidcDiscovery
 
@@ -51,7 +51,6 @@ async def _stub_fetch_discovery(*_args: object, **_kwargs: object) -> OidcDiscov
     return _TEST_DISCOVERY
 
 
-_oidc_discovery_module._real_fetch_discovery = _oidc_discovery_module.fetch_discovery  # type: ignore[attr-defined]
 _oidc_discovery_module.fetch_discovery = _stub_fetch_discovery  # type: ignore[assignment]
 
 from resource_server.auth.dependencies import (  # noqa: E402  # patch must precede main import

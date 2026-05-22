@@ -17,6 +17,7 @@ process if Keycloak is flaky at startup).
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Request
@@ -66,6 +67,9 @@ async def fetch_discovery(
 
     Architecture §C6 timeouts; `follow_redirects=True` so a Keycloak ingress
     with trailing-slash normalization (302 on the well-known path) works.
+    Trust in the redirect target is anchored by the `issuer_mismatch` check
+    in `_validated`: a redirected discovery doc must still sign its own
+    `issuer` field as the canonical issuer URL, or startup aborts.
     """
     canonical_issuer = issuer_url.rstrip("/")
     url = canonical_issuer + "/.well-known/openid-configuration"
@@ -89,17 +93,47 @@ async def fetch_discovery(
         raise DiscoveryFetchError("non_json_body") from exc
     if not isinstance(payload, dict):
         raise DiscoveryFetchError("non_object_body")
-    return _validated(payload)
+    return _validated(payload, canonical_issuer=canonical_issuer)
 
 
-def _validated(payload: dict[str, Any]) -> OidcDiscovery:
+_URL_FIELDS: tuple[str, ...] = (
+    "authorization_endpoint",
+    "token_endpoint",
+    "jwks_uri",
+    "end_session_endpoint",
+    "revocation_endpoint",
+)
+
+
+def _validated(payload: dict[str, Any], *, canonical_issuer: str) -> OidcDiscovery:
     resolved: dict[str, str] = {}
     for field_name in _REQUIRED_FIELDS:
         value = payload.get(field_name)
         if not isinstance(value, str) or not value:
             raise DiscoveryFetchError(f"missing_field:{field_name}")
         resolved[field_name] = value
+    # OIDC Discovery §4.3: clients MUST verify the doc's `issuer` matches the
+    # URL it was fetched from. Without this check, a redirected / MITM'd
+    # discovery doc could swap the issuer + endpoint URLs and the RS would
+    # trust attacker-supplied JWKS endpoints + issuer claims.
+    if resolved["issuer"].rstrip("/") != canonical_issuer:
+        raise DiscoveryFetchError("issuer_mismatch")
+    # Each required URL must be an absolute http(s) URL with a host. Catches
+    # pathological `"jwks_uri": "/foo"` or `"javascript:..."` payloads at
+    # startup rather than late at first JWKS fetch with an opaque
+    # `transport_error:UnsupportedProtocol`.
+    for field_name in _URL_FIELDS:
+        parsed = urlparse(resolved[field_name])
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise DiscoveryFetchError(f"invalid_url:{field_name}")
     return OidcDiscovery(**resolved)
+
+
+# Stable test-facing alias for the production loader. Tests stub
+# `fetch_discovery` for in-process AsyncClient runs; importing
+# `_real_fetch_discovery` lets them call the real implementation without
+# relying on conftest side-effects to plant the attribute.
+_real_fetch_discovery = fetch_discovery
 
 
 def get_oidc_discovery(request: Request) -> OidcDiscovery:

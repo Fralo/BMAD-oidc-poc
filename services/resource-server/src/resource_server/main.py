@@ -52,11 +52,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     except DiscoveryFetchError as exc:
         logger.error("discovery_unreachable: %s", exc.classifier)
         raise
+    # Engine creation + `create_all` are inside the try so a failure during
+    # local-dev table creation still calls `dispose_engine` — otherwise the
+    # async engine + connection pool leak across every failed boot loop.
     engine = get_engine(settings)
-    if is_local_dev_mode(settings):
-        async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
     try:
+        if is_local_dev_mode(settings):
+            async with engine.begin() as conn:
+                await conn.run_sync(SQLModel.metadata.create_all)
         yield
     finally:
         await dispose_engine()
